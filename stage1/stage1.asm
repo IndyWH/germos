@@ -579,7 +579,9 @@ efi_main:
         call    setup_trampoline
         call    wake_cores
 
-        lock inc dword [checkin]        ; the BSP checks itself in
+        xor     eax, eax                ; the BSP paints band 0
+        call    paint_band
+        lock inc dword [checkin]        ; and then checks itself in
 
         ; Bounded wait, about a second. A core that never arrives then shows up
         ; as woken disagreeing with found, in one second, with a readable
@@ -776,6 +778,102 @@ get_memory_map:
         ret
 
 ; ---------------------------------------------------------------------------
+; paint_band - EAX = band index. Preserves every register it touches.
+;
+; Band i is rows i*H/N up to (i+1)*H/N, integer division - the same rule the
+; pixel checker uses, so "equal bands" is one formula applied twice rather than
+; two that have to agree. It covers every row exactly once for any H and N, and
+; bands differ by at most one row when N does not divide H.
+;
+; Every core runs this concurrently, on disjoint rows, with no lock. The only
+; shared writes in the whole stage remain the two locked counters.
+; ---------------------------------------------------------------------------
+paint_band:
+        push    rax
+        push    rbx
+        push    rcx
+        push    rdx
+        push    rsi
+        push    rdi
+        push    r8
+        push    r9
+        push    r10
+        push    r11
+
+        mov     r10d, eax               ; our band index
+        mov     r11d, [core_count]      ; N
+
+        mov     eax, r10d               ; lo = i * H / N
+        mul     dword [fb_height]
+        div     r11d
+        mov     r8d, eax
+
+        mov     eax, r10d               ; hi = (i+1) * H / N
+        inc     eax
+        mul     dword [fb_height]
+        div     r11d
+        mov     r9d, eax
+
+        mov     eax, r10d               ; colour = table[i mod 8]
+        and     eax, 7
+        lea     rcx, [band_colours]
+        mov     ebx, [rcx + rax*4]      ; our table is 0x00RRGGBB
+
+        ; PixelFormat 1 (blue, green, red, reserved) stores B,G,R in ascending
+        ; bytes, so a little-endian dword of 0x00RRGGBB lands correctly as is.
+        ; PixelFormat 0 stores R,G,B, so red and blue swap places.
+        cmp     dword [fb_format], 0
+        jne     .encoded
+        mov     eax, ebx
+        mov     ecx, eax
+        and     ecx, 0x0000FF00         ; green stays where it is
+        mov     edx, eax
+        and     edx, 0x000000FF         ; blue up to the top
+        shl     edx, 16
+        or      ecx, edx
+        mov     edx, eax
+        shr     edx, 16
+        and     edx, 0x000000FF         ; red down to the bottom
+        or      ecx, edx
+        mov     ebx, ecx
+.encoded:
+
+        mov     eax, [fb_pps]           ; stride is PixelsPerScanLine, not width
+        shl     rax, 2
+        mov     rsi, rax
+
+        mov     eax, r8d
+        imul    rax, rsi
+        mov     rdi, [fb_base]
+        add     rdi, rax                ; first byte of our first row
+
+        mov     r10d, r9d
+        sub     r10d, r8d               ; how many rows are ours
+.row:
+        test    r10d, r10d
+        jz      .done
+        mov     rdx, rdi
+        mov     eax, ebx
+        mov     ecx, [fb_width]         ; only the visible pixels, not the stride
+        rep     stosd
+        mov     rdi, rdx
+        add     rdi, rsi
+        dec     r10d
+        jmp     .row
+.done:
+        pop     r11
+        pop     r10
+        pop     r9
+        pop     r8
+        pop     rdi
+        pop     rsi
+        pop     rdx
+        pop     rcx
+        pop     rbx
+        pop     rax
+        ret
+
+; ---------------------------------------------------------------------------
 ; Waking the other processors.
 ; ---------------------------------------------------------------------------
 
@@ -926,8 +1024,11 @@ ap_entry:
         mov     gs, ax
 
         ; Take a band index. This needs no stack, which is why it comes first.
+        cld                             ; rep stosd below depends on it
+
         mov     eax, 1
         lock xadd [next_index], eax     ; EAX = the index that is now ours
+        mov     r14d, eax               ; paint_band does not touch R14
 
         cmp     eax, MAX_CORES
         jae     .park                   ; more cores than stacks: park quietly
@@ -937,6 +1038,11 @@ ap_entry:
         lea     rsp, [ap_stacks_top]
         sub     rsp, rcx
 
+        mov     eax, r14d
+        call    paint_band
+
+        ; Checking in AFTER painting is the point: when the BSP sees the count
+        ; reach N, every band is already on the screen.
         lock inc dword [checkin]
 .park:
         cli
@@ -1219,6 +1325,20 @@ err_madt_len:   db      'MADT has an entry of length zero', 0
 err_too_many:   db      'more enabled processors than MAX_CORES - raise it', 0
 err_no_cores:   db      'MADT lists no enabled processors at all', 0
 err_ap_high:    db      'ap_entry sits above 4GB - the trampoline cannot reach it', 0
+
+; The band colours, cycling. Neighbours differ strongly and so does the wrap
+; from white back to red, which is what keeps the picture readable at -smp 32
+; where the table goes round four times.
+        align   4
+band_colours:
+        dd      0x00FF0000              ; red
+        dd      0x0000FFFF              ; cyan
+        dd      0x00FFFF00              ; yellow
+        dd      0x000000FF              ; blue
+        dd      0x0000FF00              ; green
+        dd      0x00FF00FF              ; magenta
+        dd      0x00FF7F00              ; orange
+        dd      0x00FFFFFF              ; white
 
 ; Our own GDT. Four descriptors, flat, base 0, limit 4 GB.
 ;
