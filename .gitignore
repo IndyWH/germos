@@ -1,0 +1,15 @@
+# Build outputs
+*.img
+*.bin
+*.o
+*.elf
+*.lst
+*.map
+
+# Test artefacts
+stage0/out/
+out/
+*.ppm
+*.png
+*.log
+serial.txt
