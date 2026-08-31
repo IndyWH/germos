@@ -3,11 +3,12 @@
 Rolling state of the AI OS project. Read this first, then `ai-os-foundation.md`
 (the single source of truth), then the current stage's `spec.md` and `plan.md`.
 
-**Last updated:** 1 September 2026 — **Stage 2 implemented, all four automated
-tests green.** Plan items 1–11 are committed: the acceptance machinery went in
-red and frozen before any code, then the implementation grew on Stage 1's body
-and the gate closed at item 10, exactly where the plan predicted. **Awaiting
-test 5 — Wajira's eyeball on the windowed run.**
+**Last updated:** 1 September 2026 — **Stage 2 closed.** Wajira ran test 5
+windowed, typed, and watched his keystrokes land; his word closes the stage.
+The machine is interactive. Next: Stage 3 — Memory of its own (block storage,
+virtio first, and a simple filesystem), which opens with a Cowork spec and
+carries the foundation's hard safety rule: storage code touches only QEMU disk
+images until Stage 7, never any disk holding real data.
 
 ---
 
@@ -15,8 +16,8 @@ test 5 — Wajira's eyeball on the windowed run.**
 
 | | |
 |---|---|
-| Stage | 2 — Senses (implemented) |
-| Status | Tests 1–4 **GREEN**. Test 5 (the oracle) **pending Wajira**. |
+| Stage | 3 — Memory of its own (not yet opened) |
+| Status | Stage 2 **CLOSED**. No Stage 3 spec yet. |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3, OVMF, mtools — Stage 2 needs no new packages |
@@ -74,7 +75,7 @@ burns its 60-second timeout, which is the expected outcome, not a fault).
 
 ---
 
-## Stage 2 — Senses · implemented, awaiting the oracle
+## Stage 2 — Senses · closed 1 September 2026
 
 **Goal (foundation §7):** keyboard input and a text console on the framebuffer;
 the serial debug channel becomes permanent. Proves the machine is interactive.
@@ -98,7 +99,7 @@ handler only buffers; the BSP main loop draws. On this machine the console is
 | 2 | Serial — nine `S2:` lines in order, found = woken = smp, console = W/16 x H/16 | **PASS** |
 | 3 | Typing — monitor `sendkey` hello+Enter; echo exactly `hello` CRLF, at `-smp 2` and `-smp 8` | **PASS** |
 | 4 | Pixels — `> hello` pixel-correct per the shared font, prompt+cursor below, only the two console colours on screen | **PASS** |
-| 5 | **Oracle — Wajira's eyeball** | **PENDING** |
+| 5 | **Oracle — Wajira's eyeball** | **PASS — confirmed 1 September 2026** |
 
 Tests 1–4 were committed **red** before any of `stage2.asm` existed and went
 green exactly where the plan predicted: test 1 at item 7, tests 2–4 at item 10.
@@ -159,12 +160,11 @@ verified against the sha256 pins recorded in `stage2/plan.md`.
 
 ## Next action
 
-**Wajira runs test 5** — windowed, from the repo root:
-
-```
-qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
-  -drive format=raw,file=stage2/out/esp.img -serial stdio
-```
-
-types whatever he likes, and watches his own keystrokes land on the console
-(and echo raw on the terminal's serial). His word closes the stage.
+Cowork writes the Stage 3 spec — Memory of its own: block storage (virtio
+first, NVMe second) and a simple filesystem, per foundation §7. The hard
+safety rule is already standing and gets restated in the spec: **storage code
+touches only QEMU disk images until Stage 7, and never any disk holding real
+data.** Wajira approves the spec; then a fresh Claude Code session starts in
+plan mode, commits `stage3/plan.md` for approval, and implements one commit
+per numbered item — acceptance tests first and committed red, as ever. All
+three closed stages' `test.sh` remain standing regression checks.
