@@ -2,9 +2,8 @@
 #
 # Stage 2 acceptance tests - the gate for the stage.
 #
-# Implements acceptance tests 1 and 2 from stage2/spec.md; tests 3 and 4 are
-# added by later plan items, before any implementation code exists. Test 5 is
-# Wajira's
+# Implements acceptance tests 1 to 3 from stage2/spec.md; test 4 is added by a
+# later plan item, before any implementation code exists. Test 5 is Wajira's
 # eyeball on a windowed run and stays manual: his word is the gate for the
 # stage.
 #
@@ -271,6 +270,28 @@ elif serial_check 8; then
   pass "test 2: serial log matches the spec at -smp 8"
 else
   fail "test 2: serial log does not match the spec at -smp 8"
+fi
+echo
+
+# ------------------------------------------------ test 3: the type test ------
+# The spec: via the QEMU monitor, sendkey types hello then Enter; the serial
+# capture after "S2: keyboard ready" is exactly hello and CRLF. Runs at -smp 2
+# and -smp 8 - the echo must follow the machine, not the core count. The work
+# is in stage2/checktext.py, which drives the whole run and prints its own
+# diagnosis on failure.
+
+echo "Test 3 - Typing: sendkey hello + Enter, echoed exactly, at -smp 2 and -smp 8"
+if [ ! -f "$ESP" ]; then
+  fail "test 3: no image was built"
+else
+  typed=0
+  python3 "$REPO/stage2/checktext.py" --type 2 || typed=1
+  python3 "$REPO/stage2/checktext.py" --type 8 || typed=1
+  if [ "$typed" -eq 0 ]; then
+    pass "test 3: the echo is exactly hello CRLF, at both -smp 2 and -smp 8"
+  else
+    fail "test 3: the machine does not echo what was typed (see above)"
+  fi
 fi
 echo
 
