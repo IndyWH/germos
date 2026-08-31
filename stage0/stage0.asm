@@ -67,6 +67,60 @@ start:
         mov     si, msg_alive
         call    serial_print
 
+; --------------------------------------------------------------- mode 13h ---
+; VGA 320x200, 256 colours, linear framebuffer at segment 0xA000. The mode
+; switch clears the framebuffer, so it must happen before any pixel is written.
+
+        mov     ax, 0x0013
+        int     0x10
+
+; --------------------------------------------------------------- stripes -----
+; The Spectrum loading border: a slow pilot tone on top, fast data below.
+; Each of the 200 rows is filled with one palette colour, 320 bytes at a time.
+;
+;   rows 0-99    red (4) / cyan (3),   swapping every 4 rows  - pilot
+;   rows 100-199 blue (1) / yellow (14), swapping every 2 rows - data
+;
+; 200 x 320 = 64000 bytes, so DI never wraps the 64 KB segment. Mode 13h just
+; fits in one segment, which is why the spec chose it.
+
+        mov     ax, 0xA000
+        mov     es, ax
+        xor     di, di
+        xor     bx, bx                  ; bx = row number, 0..199
+.row:
+        cmp     bx, 100
+        jae     .data_band
+
+.pilot_band:                            ; rows 0-99, swap every 4 rows
+        mov     ax, bx
+        shr     ax, 2
+        test    al, 1                   ; MOV does not touch flags, so the
+        mov     al, 4                   ;   JZ below still reads this TEST
+        jz      .fill                   ; even quarter -> red
+        mov     al, 3                   ; odd quarter  -> cyan
+        jmp     .fill
+
+.data_band:                             ; rows 100-199, swap every 2 rows
+        mov     ax, bx
+        shr     ax, 1
+        test    al, 1
+        mov     al, 1                   ; even pair -> blue
+        jz      .fill
+        mov     al, 14                  ; odd pair  -> yellow
+
+.fill:
+        mov     cx, 320
+        rep     stosb
+        inc     bx
+        cmp     bx, 200
+        jb      .row
+
+; ------------------------------------------ serial line 2: stripes drawn ----
+
+        mov     si, msg_drawn
+        call    serial_print
+
 ; ------------------------------------------------------------- halt loop ----
 ; Nothing left to do. Interrupts off, halt, and if anything ever wakes us,
 ; halt again.
@@ -104,6 +158,7 @@ serial_print:
 ; 2 compares the whole serial stream against these, byte for byte.
 
 msg_alive:      db "S0: alive", 13, 10, 0
+msg_drawn:      db "S0: stripes drawn, hello from the boot sector", 13, 10, 0
 
 ; --------------------------------------------- padding and boot signature ---
 ; `times` fails the build loudly if the code above ever overruns 510 bytes.
