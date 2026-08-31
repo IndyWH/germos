@@ -493,6 +493,15 @@ efi_main:
         call    serial_puts
 
         ; -------------------------------------------------------------------
+        ; The IDT - the stage's first new organ. From here a CPU exception is
+        ; a readable serial line and a halt, not a silent triple-fault reboot.
+        ; Installed before the MADT walk and the wake, so both run covered.
+        ; -------------------------------------------------------------------
+        call    setup_idt
+        lea     rsi, [msg_idt]
+        call    serial_puts
+
+        ; -------------------------------------------------------------------
         ; Step 5 of the spec: ask ACPI how many processors this machine has.
         ;
         ; Still valid after ExitBootServices: the EFI system table is
@@ -619,6 +628,96 @@ halt_forever:
         cli
 .hang:  hlt
         jmp     .hang
+
+; ---------------------------------------------------------------------------
+; The IDT and its exception stubs.
+;
+; Vectors 8, 10-14, 17, 21 and 30 arrive with a CPU-pushed error code; the
+; rest do not. Every stub normalises the frame by pushing a dummy zero where
+; the CPU pushed nothing, then pushes its own vector number, so the common
+; handler sees one shape: [rsp] = vector, [rsp+8] = error code, [rsp+16] = RIP.
+;
+; The stubs are padded to a fixed 16 bytes each, so their addresses are
+; exc_stubs + vector*16, computed with a RIP-relative lea at runtime - no
+; absolute address anywhere, keeping the discipline that earned the stripped
+; relocations.
+; ---------------------------------------------------------------------------
+%define EXC_STUB_SIZE   16
+%assign ERRCODE_MASK (1<<8)|(1<<10)|(1<<11)|(1<<12)|(1<<13)|(1<<14)|(1<<17)|(1<<21)|(1<<30)
+
+align 16
+exc_stubs:
+%assign vec 0
+%rep 32
+.stub_%+ vec:
+  %if ((1 << vec) & ERRCODE_MASK) == 0
+        push    byte 0                  ; the dummy where no error code came
+  %endif
+        push    byte vec
+        jmp     exc_common
+        times   EXC_STUB_SIZE-($-.stub_%+ vec) db 0xCC
+%assign vec vec+1
+%endrep
+
+; exc_common - print "ERR: exception <vector> at 0x<rip>" and stop the world.
+;
+; A parked AP that somehow faults arrives here too and writes serial - a
+; deliberate breach of one-owner (plan decision 9): the machine is already
+; lost, and an interleaved message beats a silent machine-wide reboot.
+exc_common:
+        cli
+        cld                             ; the serial helpers use lodsb
+        lea     rsi, [msg_exc]
+        call    serial_puts
+        mov     rax, [rsp]              ; the vector the stub pushed
+        call    serial_putdec
+        lea     rsi, [msg_exc_at]
+        call    serial_puts
+        mov     rax, [rsp + 16]         ; the RIP the CPU pushed
+        call    serial_puthex64
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+        jmp     halt_forever
+
+; idt_set_gate - RDI = the gate, RAX = the handler. Clobbers RAX.
+; 64-bit interrupt gate: present, DPL 0, type 0xE, IST 0, selector 0x08.
+idt_set_gate:
+        mov     [rdi], ax               ; offset 15:0
+        mov     word [rdi + 2], 0x08
+        mov     word [rdi + 4], 0x8E00
+        shr     rax, 16
+        mov     [rdi + 6], ax           ; offset 31:16
+        shr     rax, 16
+        mov     [rdi + 8], eax          ; offset 63:32
+        mov     dword [rdi + 12], 0
+        ret
+
+; setup_idt - fill gates 0..31 with the stubs and load IDTR. Gates 32..255
+; stay zero-filled BSS - not present - until the keyboard item claims its two.
+setup_idt:
+        push    rax
+        push    rcx
+        push    rsi
+        push    rdi
+        lea     rdi, [idt]
+        lea     rsi, [exc_stubs]
+        xor     ecx, ecx
+.fill:
+        mov     rax, rsi
+        call    idt_set_gate
+        add     rdi, 16
+        add     rsi, EXC_STUB_SIZE
+        inc     ecx
+        cmp     ecx, 32
+        jb      .fill
+        lea     rax, [idt]
+        mov     [idtr + 2], rax         ; base is only known at runtime
+        lidt    [idtr]
+        pop     rdi
+        pop     rsi
+        pop     rcx
+        pop     rax
+        ret
 
 ; ---------------------------------------------------------------------------
 ; Serial. Only the BSP ever calls any of this - one owner per device, the
@@ -951,6 +1050,11 @@ ap_entry:
         mov     gs, ax
         cld
 
+        ; The same IDT as the BSP, already built - the BSP ran setup_idt long
+        ; before any SIPI went out. A parked core that somehow faults then
+        ; halts with a message instead of triple-faulting the whole machine.
+        lidt    [idtr]
+
         mov     eax, 1                  ; needs no stack, so it comes first
         lock xadd [next_index], eax     ; EAX = the index that is now ours
 
@@ -1221,10 +1325,13 @@ msg_gop:        db      'S2: gop ', 0
 msg_fb:         db      ' fb 0x', 0
 msg_exited:     db      'S2: boot services exited', 13, 10, 0
 msg_paging:     db      'S2: gdt and paging ours', 13, 10, 0
+msg_idt:        db      'S2: idt ready', 13, 10, 0
 msg_found:      db      'S2: cores found ', 0
 msg_woken:      db      'S2: cores woken ', 0
 
 msg_err:        db      'ERR: ', 0
+msg_exc:        db      'ERR: exception ', 0
+msg_exc_at:     db      ' at 0x', 0
 msg_crlf:       db      13, 10, 0
 
 err_no_gop:     db      'no Graphics Output Protocol', 0
@@ -1267,6 +1374,11 @@ gdtr:           dw      gdt_end - gdt - 1
 ; cannot load a 64-bit base. The GDT is below 4 GB, so this is always enough.
 gdtr32:         dw      gdt_end - gdt - 1
                 dd      0
+
+; The IDT pseudo-descriptor. Base filled in by setup_idt at runtime; loaded by
+; the BSP there and by every AP before it parks.
+idtr:           dw      256*16 - 1
+                dq      0
 
 ; EFI_ACPI_20_TABLE_GUID, 8868e871-e4f1-11d3-bc22-0080c73c8881. The entry in
 ; the EFI configuration table under this GUID is the ACPI 2.0 RSDP.
@@ -1349,6 +1461,11 @@ apic_ids:       resd    MAX_CORES
         alignb  16
 ap_stacks:      resb    MAX_CORES * AP_STACK_SIZE
 ap_stacks_top:
+
+; The IDT itself: 256 gates of 16 bytes. Zero-filled BSS means every gate not
+; explicitly set is simply not present.
+        alignb  16
+idt:            resb    256*16
 
 ; Page tables. 4 KB alignment is architectural, not a preference.
         alignb  4096
