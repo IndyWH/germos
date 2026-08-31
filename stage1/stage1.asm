@@ -43,6 +43,10 @@ org 0                           ; file offsets == RVAs
 %define MAP_BUF_SIZE    0x4000
 %define BSP_STACK_SIZE  0x4000
 
+; More enabled processors than this in the MADT is an error we report, not a
+; buffer we overrun. mlrig has 32 logical CPUs; the mirror run uses all of them.
+%define MAX_CORES       64
+
 %define EFI_INVALID_PARAMETER   0x8000000000000002
 %define EFI_BUFFER_TOO_SMALL    0x8000000000000005
 %define SECT_ALIGN      0x1000
@@ -461,6 +465,89 @@ efi_main:
         lea     rsi, [msg_paging]
         call    serial_puts
 
+        ; -------------------------------------------------------------------
+        ; Step 5 of the spec: ask ACPI how many processors this machine has.
+        ;
+        ; Still valid after ExitBootServices: the EFI system table is
+        ; EfiRuntimeServicesData and the ACPI tables are EfiACPIReclaimMemory,
+        ; both preserved by definition, and both inside our identity map.
+        ; -------------------------------------------------------------------
+        call    apic_probe
+        mov     [bsp_apic_id], eax
+
+        call    find_rsdp
+        test    rax, rax
+        jnz     .have_rsdp
+        lea     rsi, [err_no_rsdp]
+        call    serial_err
+.have_rsdp:
+        call    find_madt
+        test    rax, rax
+        jnz     .have_madt
+        lea     rsi, [err_no_madt]
+        call    serial_err
+.have_madt:
+
+        ; Walk the MADT, counting processors and recording their APIC IDs.
+        mov     rbx, rax
+        mov     ecx, [rbx + 4]          ; Length of the whole table
+        mov     r13, rbx
+        add     r13, rcx                ; one past the last entry
+        lea     rdx, [rbx + 44]         ; entries start after the fixed part
+        xor     r14d, r14d              ; how many we have found
+        lea     r15, [apic_ids]
+.entry:
+        cmp     rdx, r13
+        jae     .madt_done
+        movzx   eax, byte [rdx + 1]     ; entry Length
+        test    eax, eax
+        jz      .bad_entry              ; a zero length would loop for ever
+        movzx   ecx, byte [rdx]         ; entry Type
+        cmp     ecx, 0
+        je      .local_apic
+        cmp     ecx, 9
+        je      .local_x2apic
+        jmp     .entry_step
+.local_apic:                            ; Processor Local APIC
+        mov     ecx, [rdx + 4]          ; Flags
+        test    ecx, 3                  ; Enabled | Online Capable
+        jz      .entry_step
+        movzx   ecx, byte [rdx + 3]     ; APIC ID
+        jmp     .record
+.local_x2apic:                          ; Processor Local x2APIC
+        mov     ecx, [rdx + 8]          ; Flags
+        test    ecx, 3
+        jz      .entry_step
+        mov     ecx, [rdx + 4]          ; X2APIC ID
+.record:
+        cmp     r14d, MAX_CORES
+        jae     .too_many
+        mov     [r15 + r14*4], ecx
+        inc     r14d
+.entry_step:
+        add     rdx, rax                ; stride is the entry's own length
+        jmp     .entry
+.bad_entry:
+        lea     rsi, [err_madt_len]
+        call    serial_err
+.too_many:
+        lea     rsi, [err_too_many]
+        call    serial_err
+.madt_done:
+        test    r14d, r14d
+        jnz     .have_cores
+        lea     rsi, [err_no_cores]
+        call    serial_err
+.have_cores:
+        mov     [core_count], r14d
+
+        lea     rsi, [msg_found]
+        call    serial_puts
+        mov     eax, [core_count]
+        call    serial_putdec
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+
 halt_forever:
         cli
 .hang:  hlt
@@ -631,6 +718,107 @@ get_memory_map:
         pop     rbp
         ret
 
+; ---------------------------------------------------------------------------
+; ACPI and the local APIC.
+; ---------------------------------------------------------------------------
+
+; apic_probe - work out how this processor's local APIC is addressed, enable
+; it, and return the BSP's own APIC ID in EAX.
+;
+; Both addressing modes are supported because we cannot assume which one the
+; firmware left us in, and guessing wrong is a silent hang rather than an error.
+apic_probe:
+        mov     ecx, 0x1B               ; IA32_APIC_BASE
+        rdmsr
+        mov     r8d, edx
+        shl     r8, 32
+        or      r8, rax
+        mov     [apic_base_msr], r8
+
+        xor     ecx, ecx
+        test    r8d, 1 << 10            ; bit 10: x2APIC mode enabled
+        setnz   cl
+        mov     [apic_x2], ecx
+
+        mov     rax, r8
+        mov     rdx, 0x000FFFFFFFFFF000 ; the base address field, bits 12..51
+        and     rax, rdx
+        mov     [apic_mmio], rax
+
+        test    ecx, ecx
+        jnz     .x2
+
+        ; xAPIC: memory mapped, and the identity map already covers it.
+        mov     r9, rax
+        mov     eax, [r9 + 0xF0]        ; spurious interrupt vector register
+        or      eax, 0x100              ; APIC software enable
+        mov     [r9 + 0xF0], eax
+        mov     eax, [r9 + 0x20]        ; APIC ID register
+        shr     eax, 24
+        ret
+.x2:
+        mov     ecx, 0x80F              ; IA32_X2APIC_SIVR
+        rdmsr
+        or      eax, 0x100
+        wrmsr
+        mov     ecx, 0x802              ; IA32_X2APIC_APICID
+        rdmsr
+        ret
+
+; find_rsdp - the ACPI 2.0 RSDP from the EFI configuration table, or 0.
+find_rsdp:
+        mov     rax, [system_table]
+        mov     rcx, [rax + 0x68]       ; NumberOfTableEntries
+        mov     rdx, [rax + 0x70]       ; ConfigurationTable
+        lea     rsi, [acpi_guid]
+        mov     r8, [rsi]
+        mov     r9, [rsi + 8]
+.next:
+        test    rcx, rcx
+        jz      .none
+        cmp     [rdx], r8               ; a GUID is 16 bytes: two compares
+        jne     .step
+        cmp     [rdx + 8], r9
+        jne     .step
+        mov     rax, [rdx + 16]         ; VendorTable is the RSDP
+        ret
+.step:
+        add     rdx, 24                 ; GUID + pointer
+        dec     rcx
+        jmp     .next
+.none:
+        xor     eax, eax
+        ret
+
+; find_madt - RAX = RSDP in; the MADT ("APIC" table) or 0 out.
+find_madt:
+        mov     rax, [rax + 24]         ; XsdtAddress
+        test    rax, rax
+        jz      .none
+        mov     rbx, rax
+        mov     ecx, [rbx + 4]          ; Length
+        cmp     ecx, 36
+        jbe     .none
+        sub     ecx, 36                 ; the fixed header
+        shr     ecx, 3                  ; ... leaves 8-byte pointers
+        lea     rdx, [rbx + 36]
+.next:
+        test    ecx, ecx
+        jz      .none
+        mov     rax, [rdx]
+        test    rax, rax
+        jz      .step
+        cmp     dword [rax], 'APIC'
+        je      .found
+.step:
+        add     rdx, 8
+        dec     ecx
+        jmp     .next
+.none:
+        xor     eax, eax
+.found:
+        ret
+
 ; build_paging - identity-map the first 4 GB with 2 MB pages.
 ;
 ; One PML4, one PDPT, four page directories: 24 KB of tables for 4 GB of
@@ -722,6 +910,7 @@ msg_gop:        db      'S1: gop ', 0
 msg_fb:         db      ' fb 0x', 0
 msg_exited:     db      'S1: boot services exited', 13, 10, 0
 msg_paging:     db      'S1: gdt and paging ours', 13, 10, 0
+msg_found:      db      'S1: cores found ', 0
 
 msg_err:        db      'ERR: ', 0
 msg_crlf:       db      13, 10, 0
@@ -737,6 +926,11 @@ err_map_bytes:  db      ' - raise it', 0
 err_no_tramp:   db      'no free page below 1MB for the AP trampoline', 0
 err_ebs:        db      'ExitBootServices failed', 0
 err_ebs_stale:  db      'ExitBootServices: map key still stale after 5 tries', 0
+err_no_rsdp:    db      'no ACPI 2.0 RSDP in the EFI configuration table', 0
+err_no_madt:    db      'no MADT (APIC table) in the XSDT', 0
+err_madt_len:   db      'MADT has an entry of length zero', 0
+err_too_many:   db      'more enabled processors than MAX_CORES - raise it', 0
+err_no_cores:   db      'MADT lists no enabled processors at all', 0
 
 ; Our own GDT. Four descriptors, flat, base 0, limit 4 GB.
 ;
@@ -760,6 +954,14 @@ gdtr:           dw      gdt_end - gdt - 1
 ; cannot load a 64-bit base. The GDT is below 4 GB, so this is always enough.
 gdtr32:         dw      gdt_end - gdt - 1
                 dd      0
+
+; EFI_ACPI_20_TABLE_GUID, 8868e871-e4f1-11d3-bc22-0080c73c8881. The entry in
+; the EFI configuration table under this GUID is the ACPI 2.0 RSDP.
+        align   8
+acpi_guid:      dd      0x8868e871
+                dw      0xe4f1
+                dw      0x11d3
+                db      0xbc, 0x22, 0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81
 
 ; EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID, 9042a9de-23dc-4a38-96fb-7aded080516a.
 ; A GUID is little-endian in its first three fields and big-endian in the last
@@ -811,6 +1013,14 @@ map_buf:        resb    MAP_BUF_SIZE
         alignb  16
 bsp_stack:      resb    BSP_STACK_SIZE
 bsp_stack_top:
+
+        alignb  16
+core_count:     resd    1               ; enabled processors the MADT listed
+bsp_apic_id:    resd    1
+apic_x2:        resd    1               ; non-zero if the APIC is in x2APIC mode
+apic_base_msr:  resq    1
+apic_mmio:      resq    1               ; xAPIC register block, normally FEE00000
+apic_ids:       resd    MAX_CORES
 
 ; Page tables. 4 KB alignment is architectural, not a preference.
         alignb  4096
