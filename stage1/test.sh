@@ -123,6 +123,131 @@ else
 fi
 echo
 
+# ------------------------------------------------- the serial check ----------
+# Shared by test 2 (-smp 8) and test 3 (-smp 2 and -smp 8). Boots the image
+# headless and requires the seven S1: lines from the spec, in order, with
+# found = woken = the -smp value.
+#
+# OVMF chatters heavily on COM1 - ANSI escape sequences, BdsDxe: lines - unlike
+# SeaBIOS in Stage 0, so a byte-exact whole-stream comparison is not available
+# here. Instead every "S1: ..." run is pulled out of the capture in order. That
+# is a scan rather than a line-start match, so a stray firmware escape sequence
+# sharing a line with our output cannot break the test, while the content of
+# each line stays strict.
+#
+# Requiring EXACTLY seven also catches a triple-fault reboot loop, which would
+# repeat the whole sequence rather than produce a wrong one.
+#
+# The guest halts forever by design, so timeout killing QEMU (exit 124) is the
+# expected outcome. Any other non-zero exit is a QEMU failure.
+
+serial_check() {
+  local smp="$1"
+  local cap="$OUT/serial.$smp.txt"
+  local qerr="$OUT/qemu.$smp.err"
+  local lines_file="$OUT/s1.$smp.txt"
+  local rc
+
+  rm -f "$cap" "$qerr" "$lines_file"
+
+  timeout -k 5 60 qemu-system-x86_64 \
+    -machine q35 -m 256M -smp "$smp" \
+    -bios "$OVMF" \
+    -drive format=raw,file="$ESP" \
+    -display none -serial stdio \
+    </dev/null >"$cap" 2>"$qerr"
+  rc=$?
+
+  if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
+    echo "    -smp $smp: qemu exited $rc, expected 124 (killed by the 60s timeout)"
+    sed 's/^/      /' "$qerr"
+    return 1
+  fi
+
+  tr -d '\r' <"$cap" 2>/dev/null | grep -ao 'S1: .*' >"$lines_file" 2>/dev/null
+
+  local -a got=()
+  mapfile -t got <"$lines_file"
+
+  local bad=()
+
+  if [ "${#got[@]}" -ne 7 ]; then
+    bad+=("expected exactly 7 S1: lines, found ${#got[@]}")
+    if [ "${#got[@]}" -gt 7 ]; then
+      bad+=("more than seven usually means a triple fault and a reboot loop, not a duplicated print")
+    fi
+  fi
+
+  local l
+  l="${got[0]:-}"; [ "$l" = "S1: alive" ] || bad+=("line 1: got '$l', want 'S1: alive'")
+
+  l="${got[1]:-}"
+  if [[ "$l" =~ ^S1:\ gop\ ([0-9]+)x([0-9]+)\ fb\ 0x([0-9a-f]{16})$ ]]; then
+    local w="${BASH_REMATCH[1]}" h="${BASH_REMATCH[2]}" fb="${BASH_REMATCH[3]}"
+    [ "$w" -gt 0 ] || bad+=("line 2: width is $w")
+    [ "$h" -gt 0 ] || bad+=("line 2: height is $h")
+    [ "$fb" != "0000000000000000" ] || bad+=("line 2: framebuffer address is zero")
+  else
+    bad+=("line 2: got '$l', want 'S1: gop <W>x<H> fb 0x<16 hex digits>'")
+  fi
+
+  l="${got[2]:-}"; [ "$l" = "S1: boot services exited" ] || \
+    bad+=("line 3: got '$l', want 'S1: boot services exited'")
+  l="${got[3]:-}"; [ "$l" = "S1: gdt and paging ours" ] || \
+    bad+=("line 4: got '$l', want 'S1: gdt and paging ours'")
+
+  local found="" woken=""
+  l="${got[4]:-}"
+  if [[ "$l" =~ ^S1:\ cores\ found\ ([0-9]+)$ ]]; then
+    found="${BASH_REMATCH[1]}"
+  else
+    bad+=("line 5: got '$l', want 'S1: cores found <N>'")
+  fi
+
+  l="${got[5]:-}"
+  if [[ "$l" =~ ^S1:\ cores\ woken\ ([0-9]+)$ ]]; then
+    woken="${BASH_REMATCH[1]}"
+  else
+    bad+=("line 6: got '$l', want 'S1: cores woken <N>'")
+  fi
+
+  l="${got[6]:-}"; [ "$l" = "S1: done" ] || bad+=("line 7: got '$l', want 'S1: done'")
+
+  [ -n "$found" ] && [ "$found" != "$smp" ] && \
+    bad+=("cores found is $found, but the machine was given -smp $smp")
+  [ -n "$woken" ] && [ "$woken" != "$smp" ] && \
+    bad+=("cores woken is $woken, but the machine was given -smp $smp")
+  [ -n "$found" ] && [ -n "$woken" ] && [ "$found" != "$woken" ] && \
+    bad+=("cores found ($found) and cores woken ($woken) disagree - a core did not check in")
+
+  if [ "${#bad[@]}" -eq 0 ]; then
+    echo "    -smp $smp: seven S1: lines, in order, found = woken = $smp"
+    return 0
+  fi
+
+  echo "    -smp $smp: the serial log is not what the spec asks for"
+  for b in "${bad[@]}"; do echo "      - $b"; done
+  echo "      whole capture follows (OVMF chatter included):"
+  if [ -s "$cap" ]; then
+    cat -v "$cap" | sed 's/^/        /'
+  else
+    echo "        (nothing was captured at all)"
+  fi
+  return 1
+}
+
+# ------------------------------------------------- test 2: the serial lines --
+
+echo "Test 2 - Serial: the seven S1: lines, in order, at -smp 8"
+if [ ! -f "$ESP" ]; then
+  fail "test 2: no image was built"
+elif serial_check 8; then
+  pass "test 2: serial log matches the spec at -smp 8"
+else
+  fail "test 2: serial log does not match the spec at -smp 8"
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then
