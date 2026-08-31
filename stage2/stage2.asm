@@ -59,6 +59,11 @@ org 0                           ; file offsets == RVAs
 ; mode needing more is a reported error, not an overrun.
 %define SHADOW_SIZE     0x10000
 
+; The scancode ring between the keyboard interrupt and the main loop. A power
+; of two, so head and tail wrap with a mask. 256 bytes is dozens of
+; keystrokes of headroom; a full ring drops bytes rather than overwriting.
+%define KBD_RING_SIZE   0x100
+
 ; More enabled processors than this in the MADT is an error we report, not a
 ; buffer we overrun. mlrig has 32 logical CPUs; the mirror run uses all of them.
 %define MAX_CORES       64
@@ -646,8 +651,106 @@ efi_main:
         lea     rsi, [msg_crlf]
         call    serial_puts
 
-        call    console_prompt          ; console-only; item 10 moves this
-                                        ; after the keyboard-ready line
+        ; -------------------------------------------------------------------
+        ; The keyboard - the third organ, and the machine's first sense.
+        ; PIC remapped with only IRQ1 unmasked, the two gates installed, the
+        ; i8042 drained, and only then the ready line, the prompt, and sti.
+        ; -------------------------------------------------------------------
+        call    pic_init
+
+        lea     rdi, [idt + 0x21*16]    ; IRQ1, remapped
+        lea     rax, [irq1_handler]
+        call    idt_set_gate
+        lea     rdi, [idt + 0x27*16]    ; the master's spurious vector
+        lea     rax, [irq7_spurious]
+        call    idt_set_gate
+
+.drain:                                 ; stale bytes in the output buffer
+        in      al, 0x64                ; would fire the moment we sti
+        test    al, 1
+        jz      .drained
+        in      al, 0x60
+        jmp     .drain
+.drained:
+
+        lea     rsi, [msg_kbd]          ; line nine; after this the channel
+        call    serial_puts             ; carries only the raw echo
+        call    console_prompt
+
+        ; -------------------------------------------------------------------
+        ; The main loop - the screen's one owner. The interrupt handler only
+        ; buffers scancodes; every glyph is drawn here.
+        ;
+        ; Amendment A1: never hlt while the ring holds data. With interrupts
+        ; off, look at the ring; only if it is empty, sti and hlt back to
+        ; back - the sti shadow carries a pending interrupt into the hlt's
+        ; wake instead of letting it fire uselessly before the hlt sleeps.
+        ; -------------------------------------------------------------------
+main_loop:
+        cli
+        mov     eax, [kbd_tail]
+        cmp     eax, [kbd_head]
+        jne     .have
+        sti                             ; the shadow: no interrupt lands
+        hlt                             ; between these two instructions
+        jmp     main_loop
+.have:
+        sti
+        lea     rdx, [kbd_ring]         ; pop one scancode
+        movzx   ebx, byte [rdx + rax]
+        inc     eax
+        and     eax, KBD_RING_SIZE - 1
+        mov     [kbd_tail], eax
+
+        ; An 0xE0 prefix marks an extended key; the byte after it would
+        ; otherwise read as an ordinary make code (E0 53, keypad Delete,
+        ; would print '.'), so the prefix swallows its successor.
+        cmp     dword [kbd_e0], 0
+        je      .no_pending
+        mov     dword [kbd_e0], 0
+        jmp     main_loop
+.no_pending:
+        cmp     bl, 0xE0
+        jne     .not_e0
+        mov     dword [kbd_e0], 1
+        jmp     main_loop
+.not_e0:
+        test    bl, 0x80                ; break codes: ignored
+        jnz     main_loop
+
+        lea     rdx, [scan1_map]        ; set 1, US, unshifted
+        movzx   ebx, byte [rdx + rbx]
+        test    bl, bl
+        jz      main_loop               ; not a key this stage listens to
+
+        cmp     bl, 13
+        je      .enter
+        cmp     bl, 8
+        je      .backspace
+
+        ; A printable: one byte to the wire, and the tee draws the glyph over
+        ; the cursor cell; the cursor moves on behind it.
+        mov     al, bl
+        call    serial_putc
+        call    draw_cursor
+        jmp     main_loop
+.enter:
+        call    erase_cursor            ; the block would linger at line end
+        mov     al, 13                  ; Enter echoes CRLF...
+        call    serial_putc
+        mov     al, 10
+        call    serial_putc
+        call    console_prompt          ; ...and a new prompt, console-only
+        jmp     main_loop
+.backspace:
+        mov     eax, [cur_col]          ; only within this line's typed text -
+        cmp     eax, [prompt_min]       ; at the prompt there is nothing to
+        jbe     main_loop               ; erase, so the key is not accepted
+        call    erase_cursor
+        mov     al, 8
+        call    serial_putc             ; the tee steps back and erases
+        call    draw_cursor
+        jmp     main_loop
 
 halt_forever:
         cli
@@ -743,6 +846,83 @@ setup_idt:
         pop     rcx
         pop     rax
         ret
+
+; ---------------------------------------------------------------------------
+; The PIC and the keyboard interrupt.
+;
+; Both PICs are remapped - the master to 0x20-0x27, the slave to 0x28-0x2F -
+; even though only the master is used: left at the reset default of 0x08, a
+; spurious or stray IRQ would land on a CPU exception vector and read as a
+; double fault. Every line is masked except IRQ1. The timer stays masked;
+; nothing in this stage wants it.
+; ---------------------------------------------------------------------------
+
+; pic_init - the classic two-chip initialisation, with a POST-port breather
+; between writes for old silicon's sake (QEMU does not need it; Stage 7 might).
+pic_init:
+        push    rax
+        mov     al, 0x11                ; ICW1: initialise, ICW4 to follow
+        out     0x20, al
+        out     0x80, al
+        out     0xA0, al
+        out     0x80, al
+        mov     al, 0x20                ; ICW2 master: vectors 0x20-0x27
+        out     0x21, al
+        out     0x80, al
+        mov     al, 0x28                ; ICW2 slave: vectors 0x28-0x2F
+        out     0xA1, al
+        out     0x80, al
+        mov     al, 0x04                ; ICW3 master: a slave hangs off IRQ2
+        out     0x21, al
+        out     0x80, al
+        mov     al, 0x02                ; ICW3 slave: cascade identity 2
+        out     0xA1, al
+        out     0x80, al
+        mov     al, 0x01                ; ICW4: 8086 mode
+        out     0x21, al
+        out     0x80, al
+        out     0xA1, al
+        out     0x80, al
+        mov     al, 0xFD                ; OCW1 master: everything masked but IRQ1
+        out     0x21, al
+        mov     al, 0xFF                ; OCW1 slave: everything masked
+        out     0xA1, al
+        pop     rax
+        ret
+
+; irq1_handler - the keyboard interrupt. It does nothing but read the
+; scancode and store it in the ring: the main loop owns the screen and the
+; serial line, and this handler owns nothing but the ring's head. Single
+; producer, single consumer, one writer per index - no lock (plan decision 7).
+irq1_handler:
+        push    rax
+        push    rbx
+        push    rdx
+        in      al, 0x60                ; reading the byte is the acknowledge
+        mov     ebx, [kbd_head]
+        mov     edx, ebx
+        inc     edx
+        and     edx, KBD_RING_SIZE - 1
+        cmp     edx, [kbd_tail]         ; ring full: drop the byte rather than
+        je      .eoi                    ; overwrite what the loop has not read
+        lea     rdx, [kbd_ring]
+        mov     [rdx + rbx], al
+        mov     ebx, [kbd_head]
+        inc     ebx
+        and     ebx, KBD_RING_SIZE - 1
+        mov     [kbd_head], ebx
+.eoi:
+        mov     al, 0x20                ; EOI to the master; IRQ1 is its line
+        out     0x20, al
+        pop     rdx
+        pop     rbx
+        pop     rax
+        iretq
+
+; irq7_spurious - a spurious IRQ7 gets no EOI: the PIC does not consider it
+; in service. Only IRQ1 is unmasked, so a real IRQ7 cannot occur.
+irq7_spurious:
+        iretq
 
 ; ---------------------------------------------------------------------------
 ; The console - the framebuffer as a text screen. Only the BSP ever calls any
@@ -1699,6 +1879,7 @@ msg_idt:        db      'S2: idt ready', 13, 10, 0
 msg_found:      db      'S2: cores found ', 0
 msg_woken:      db      'S2: cores woken ', 0
 msg_console:    db      'S2: console ', 0
+msg_kbd:        db      'S2: keyboard ready', 13, 10, 0
 
 msg_err:        db      'ERR: ', 0
 msg_exc:        db      'ERR: exception ', 0
@@ -1728,6 +1909,27 @@ err_shadow:     db      'console shadow too small for this mode - raise SHADOW_S
 ; 128 glyphs, 8 bytes each, row per byte, bit 0 leftmost - stage2/FONT.md.
         align   8
 font8x8:        incbin  "stage2/font8x8.bin"
+
+; Scancode set 1, US layout, unshifted - the owner's decision 3. Make code in,
+; character out: 13 is Enter, 8 is Backspace, 0 is "not a key this stage
+; listens to" (Esc, Tab, the modifiers, the function keys, the keypad).
+        align   8
+scan1_map:
+        db      0, 0                                    ; 00 -, 01 Esc
+        db      '1','2','3','4','5','6','7','8','9','0' ; 02-0B
+        db      '-','='                                 ; 0C, 0D
+        db      8, 0                                    ; 0E Backspace, 0F Tab
+        db      'q','w','e','r','t','y','u','i','o','p' ; 10-19
+        db      '[',']'                                 ; 1A, 1B
+        db      13, 0                                   ; 1C Enter, 1D LCtrl
+        db      'a','s','d','f','g','h','j','k','l'     ; 1E-26
+        db      ';', 0x27, '`'                          ; 27 ; 28 ' 29 `
+        db      0, '\'                                  ; 2A LShift, 2B
+        db      'z','x','c','v','b','n','m'             ; 2C-32
+        db      ',','.','/'                             ; 33-35
+        db      0, 0                                    ; 36 RShift, 37 kp*
+        db      0, ' '                                  ; 38 LAlt, 39 Space
+        times   128 - ($ - scan1_map) db 0              ; 3A-7F: nothing
 
 ; Our own GDT. Four descriptors, flat, base 0, limit 4 GB.
 ;
@@ -1856,6 +2058,15 @@ bg_pix:         resd    1               ; background, encoded for the mode
 fg_pix:         resd    1               ; foreground, encoded for the mode
         alignb  16
 shadow:         resb    SHADOW_SIZE     ; one byte per cell - what is on screen
+
+; The keyboard ring. The interrupt writes head, the main loop writes tail,
+; and neither touches the other's index - single producer, single consumer.
+        alignb  64
+kbd_head:       resd    1
+kbd_tail:       resd    1
+kbd_e0:         resd    1               ; an 0xE0 prefix swallows its successor
+        alignb  16
+kbd_ring:       resb    KBD_RING_SIZE
 
 ; Page tables. 4 KB alignment is architectural, not a preference.
         alignb  4096
