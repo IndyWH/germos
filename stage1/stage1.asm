@@ -46,6 +46,22 @@ org 0                           ; file offsets == RVAs
 ; More enabled processors than this in the MADT is an error we report, not a
 ; buffer we overrun. mlrig has 32 logical CPUs; the mirror run uses all of them.
 %define MAX_CORES       64
+%define AP_STACK_SIZE   0x2000
+
+; Fixed offsets of the patch area inside the trampoline page. The BSP fills
+; these in before waking anyone, so the application processors never write to
+; the page and there is no race in it.
+%define TR_GDTR32       0x100           ; limit16 + base32, for a real-mode lgdt
+%define TR_CR3          0x108
+%define TR_FPTR_PM32    0x110           ; offset32 + selector16
+%define TR_FPTR_LONG    0x118           ; offset32 + selector16
+%define TR_PAGE_USED    0x200           ; how much of the page we copy
+
+; PIT channel 2 counts at 1.193182 MHz. Boot services' Stall() is gone by the
+; time we need these, so the delays INIT-SIPI-SIPI requires are our own.
+%define PIT_10MS        11932
+%define PIT_200US       239
+%define PIT_25MS        29830
 
 %define EFI_INVALID_PARAMETER   0x8000000000000002
 %define EFI_BUFFER_TOO_SMALL    0x8000000000000005
@@ -548,6 +564,47 @@ efi_main:
         lea     rsi, [msg_crlf]
         call    serial_puts
 
+        ; -------------------------------------------------------------------
+        ; Step 6 of the spec: wake every application processor.
+        ;
+        ; The BSP takes band 0 by fiat, so the others hand themselves out
+        ; indices from 1 upwards. Only the BSP ever touches COM1 - the APs have
+        ; no path to the serial routines at all, which is the concurrency
+        ; doctrine's one-owner-per-device rule enforced by construction rather
+        ; than by care.
+        ; -------------------------------------------------------------------
+        mov     dword [next_index], 1
+        mov     dword [checkin], 0
+
+        call    setup_trampoline
+        call    wake_cores
+
+        lock inc dword [checkin]        ; the BSP checks itself in
+
+        ; Bounded wait, about a second. A core that never arrives then shows up
+        ; as woken disagreeing with found, in one second, with a readable
+        ; number - rather than as a hang until the test's 60s timeout with
+        ; nothing to read.
+        mov     r12d, 40
+.wait_cores:
+        mov     eax, [checkin]
+        cmp     eax, [core_count]
+        jae     .all_in
+        mov     ax, PIT_25MS
+        call    pit_wait
+        dec     r12d
+        jnz     .wait_cores
+.all_in:
+        lea     rsi, [msg_woken]
+        call    serial_puts
+        mov     eax, [checkin]          ; what actually happened, not what we hoped
+        call    serial_putdec
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+
+        lea     rsi, [msg_done]
+        call    serial_puts
+
 halt_forever:
         cli
 .hang:  hlt
@@ -717,6 +774,174 @@ get_memory_map:
         mov     rsp, rbp
         pop     rbp
         ret
+
+; ---------------------------------------------------------------------------
+; Waking the other processors.
+; ---------------------------------------------------------------------------
+
+; pit_wait - AX = ticks of the 1.193182 MHz PIT, so at most about 54 ms.
+; Channel 2, mode 0, gated by port 0x61 bit 0, polled on OUT2 in bit 5. The
+; speaker bit is deliberately left clear.
+pit_wait:
+        push    rax
+        push    rcx
+        mov     cx, ax
+        in      al, 0x61
+        and     al, 0xFC                ; speaker off
+        or      al, 0x01                ; gate 2 on
+        out     0x61, al
+        mov     al, 0xB0                ; channel 2, lo/hi, mode 0, binary
+        out     0x43, al
+        mov     al, cl
+        out     0x42, al
+        mov     al, ch
+        out     0x42, al
+.wait:
+        in      al, 0x61
+        test    al, 0x20                ; OUT2 high means terminal count
+        jz      .wait
+        pop     rcx
+        pop     rax
+        ret
+
+; apic_send_ipi - EAX = the ICR low value, R13D = destination APIC ID.
+apic_send_ipi:
+        push    rax
+        push    rcx
+        push    rdx
+        cmp     dword [apic_x2], 0
+        jne     .x2
+
+        ; xAPIC: destination high first, then the low word, which sends it.
+        mov     rcx, [apic_mmio]
+        mov     edx, r13d
+        shl     edx, 24
+        mov     [rcx + 0x310], edx
+        mov     [rcx + 0x300], eax
+.status:
+        mov     edx, [rcx + 0x300]
+        test    edx, 1 << 12            ; delivery status: still pending?
+        jnz     .status
+        jmp     .done
+
+.x2:
+        ; x2APIC: one 64-bit MSR write, destination in the high half.
+        ;
+        ; There is deliberately NO delivery-status poll here. In x2APIC mode
+        ; bit 12 of the ICR is reserved and the wrmsr is itself the serialising
+        ; event, so polling it would spin for ever on a bit that never changes.
+        mov     edx, r13d
+        mov     ecx, 0x830
+        wrmsr
+.done:
+        pop     rdx
+        pop     rcx
+        pop     rax
+        ret
+
+; setup_trampoline - copy the blob to the page we claimed and fill in the four
+; values it cannot know at assembly time.
+setup_trampoline:
+        lea     rax, [ap_entry]         ; the far pointer is offset32:selector,
+        mov     rdx, rax                ; so the entry must live below 4 GB
+        shr     rdx, 32
+        jz      .entry_ok
+        lea     rsi, [err_ap_high]
+        call    serial_err
+.entry_ok:
+
+        mov     rdi, [tramp_addr]
+        lea     rsi, [tramp_start]
+        mov     ecx, TR_PAGE_USED
+        rep     movsb
+
+        mov     rdi, [tramp_addr]
+
+        lea     rax, [gdt]              ; our GDT, as a 32-bit base
+        mov     [gdtr32 + 2], eax
+        mov     ax, [gdtr32]
+        mov     [rdi + TR_GDTR32], ax
+        mov     eax, [gdtr32 + 2]
+        mov     [rdi + TR_GDTR32 + 2], eax
+
+        lea     rax, [pml4]
+        mov     [rdi + TR_CR3], eax
+
+        mov     rax, [tramp_addr]       ; where the 32-bit stage will live
+        add     rax, tramp_pm32 - tramp_start
+        mov     [rdi + TR_FPTR_PM32], eax
+        mov     word [rdi + TR_FPTR_PM32 + 4], 0x18
+
+        lea     rax, [ap_entry]
+        mov     [rdi + TR_FPTR_LONG], eax
+        mov     word [rdi + TR_FPTR_LONG + 4], 0x08
+        ret
+
+; wake_cores - INIT, then SIPI twice, to every recorded APIC ID but our own.
+wake_cores:
+        xor     r12d, r12d
+.next_core:
+        cmp     r12d, [core_count]
+        jae     .done
+        lea     rax, [apic_ids]
+        mov     r13d, [rax + r12*4]
+        cmp     r13d, [bsp_apic_id]
+        je      .skip
+
+        mov     eax, 0x00004500         ; INIT, assert, edge, no shorthand
+        call    apic_send_ipi
+        mov     ax, PIT_10MS
+        call    pit_wait
+
+        mov     eax, [tramp_addr]       ; SIPI vector is the page number
+        shr     eax, 12
+        or      eax, 0x00004600
+        call    apic_send_ipi
+        mov     ax, PIT_200US
+        call    pit_wait
+
+        mov     eax, [tramp_addr]       ; the second SIPI, as the manual asks
+        shr     eax, 12
+        or      eax, 0x00004600
+        call    apic_send_ipi
+        mov     ax, PIT_200US
+        call    pit_wait
+.skip:
+        inc     r12d
+        jmp     .next_core
+.done:
+        ret
+
+; ---------------------------------------------------------------------------
+; ap_entry - where every woken processor arrives, in long mode, on our tables.
+;
+; No serial. No firmware. Nothing shared but two locked counters.
+; ---------------------------------------------------------------------------
+ap_entry:
+        mov     ax, 0x10
+        mov     ds, ax
+        mov     es, ax
+        mov     ss, ax
+        mov     fs, ax
+        mov     gs, ax
+
+        ; Take a band index. This needs no stack, which is why it comes first.
+        mov     eax, 1
+        lock xadd [next_index], eax     ; EAX = the index that is now ours
+
+        cmp     eax, MAX_CORES
+        jae     .park                   ; more cores than stacks: park quietly
+
+        mov     ecx, eax
+        imul    rcx, rcx, AP_STACK_SIZE
+        lea     rsp, [ap_stacks_top]
+        sub     rsp, rcx
+
+        lock inc dword [checkin]
+.park:
+        cli
+.hang:  hlt
+        jmp     .hang
 
 ; ---------------------------------------------------------------------------
 ; ACPI and the local APIC.
@@ -890,6 +1115,66 @@ alloc_tramp_page:
         pop     rbp
         ret
 
+; ---------------------------------------------------------------------------
+; The AP trampoline.
+;
+; Copied to a 4 KB-aligned page below 1 MB, because a processor coming out of
+; INIT-SIPI-SIPI starts in real mode at CS = vector<<8, IP = 0. It therefore
+; cannot contain a single absolute address of its own: it derives its base from
+; CS, and every value it cannot compute is patched in by the BSP beforehand.
+;
+; Real mode -> 32-bit protected mode -> long mode, the conventional route. The
+; one-shot trick of setting PE and PG together is deliberately NOT used: it
+; runs briefly with a real-mode CS cache in long mode, which is not
+; architecturally defined, and this code has to survive Stage 7 on real metal.
+; ---------------------------------------------------------------------------
+tramp_start:
+bits 16
+        cli
+        cld
+        mov     ax, cs
+        mov     ds, ax
+        movzx   ebx, ax
+        shl     ebx, 4                  ; EBX = this page's physical address
+
+        o32 lgdt [TR_GDTR32]            ; DS is CS, so this is page-relative
+        mov     eax, cr0
+        or      eax, 1                  ; PE
+        mov     cr0, eax
+        jmp     far dword [TR_FPTR_PM32]
+
+bits 32
+tramp_pm32:
+        mov     ax, 0x10
+        mov     ds, ax
+        mov     es, ax
+        mov     ss, ax
+        mov     fs, ax
+        mov     gs, ax
+
+        mov     eax, cr4
+        or      eax, 1 << 5             ; PAE
+        mov     cr4, eax
+
+        mov     eax, [ebx + TR_CR3]
+        mov     cr3, eax                ; the BSP's tables, already built
+
+        mov     ecx, 0xC0000080         ; EFER
+        rdmsr
+        or      eax, 1 << 8             ; LME
+        wrmsr
+
+        mov     eax, cr0
+        or      eax, 0x80000001         ; PG | PE
+        mov     cr0, eax
+        jmp     far dword [ebx + TR_FPTR_LONG]
+
+        ; Everything above must fit below the patch area.
+        times   TR_GDTR32-($-tramp_start) db 0
+        times   TR_PAGE_USED-($-tramp_start) db 0
+tramp_end:
+bits 64
+
         align   SECT_ALIGN, db 0
 text_end:
 text_size       equ     text_end - text_start
@@ -911,6 +1196,8 @@ msg_fb:         db      ' fb 0x', 0
 msg_exited:     db      'S1: boot services exited', 13, 10, 0
 msg_paging:     db      'S1: gdt and paging ours', 13, 10, 0
 msg_found:      db      'S1: cores found ', 0
+msg_woken:      db      'S1: cores woken ', 0
+msg_done:       db      'S1: done', 13, 10, 0
 
 msg_err:        db      'ERR: ', 0
 msg_crlf:       db      13, 10, 0
@@ -931,6 +1218,7 @@ err_no_madt:    db      'no MADT (APIC table) in the XSDT', 0
 err_madt_len:   db      'MADT has an entry of length zero', 0
 err_too_many:   db      'more enabled processors than MAX_CORES - raise it', 0
 err_no_cores:   db      'MADT lists no enabled processors at all', 0
+err_ap_high:    db      'ap_entry sits above 4GB - the trampoline cannot reach it', 0
 
 ; Our own GDT. Four descriptors, flat, base 0, limit 4 GB.
 ;
@@ -1014,6 +1302,10 @@ map_buf:        resb    MAP_BUF_SIZE
 bsp_stack:      resb    BSP_STACK_SIZE
 bsp_stack_top:
 
+        alignb  64
+next_index:     resd    1               ; next free band, handed out with xadd
+checkin:        resd    1               ; cores that have arrived and finished
+
         alignb  16
 core_count:     resd    1               ; enabled processors the MADT listed
 bsp_apic_id:    resd    1
@@ -1021,6 +1313,12 @@ apic_x2:        resd    1               ; non-zero if the APIC is in x2APIC mode
 apic_base_msr:  resq    1
 apic_mmio:      resq    1               ; xAPIC register block, normally FEE00000
 apic_ids:       resd    MAX_CORES
+
+; One stack per core. Band 0 is the BSP's and it keeps bsp_stack, so these are
+; indices 1 upwards; the array is sized for MAX_CORES either way.
+        alignb  16
+ap_stacks:      resb    MAX_CORES * AP_STACK_SIZE
+ap_stacks_top:
 
 ; Page tables. 4 KB alignment is architectural, not a preference.
         alignb  4096
