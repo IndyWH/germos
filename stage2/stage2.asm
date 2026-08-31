@@ -54,6 +54,11 @@ org 0                           ; file offsets == RVAs
 ; quietly stops growing rather than wrapping - the boot log is what matters.
 %define LOG_BUF_SIZE    0x2000
 
+; The console's text shadow: one byte per cell. 64 KB holds 128x128 cells -
+; this machine's 2048x2048 mode exactly - with room over for larger modes; a
+; mode needing more is a reported error, not an overrun.
+%define SHADOW_SIZE     0x10000
+
 ; More enabled processors than this in the MADT is an error we report, not a
 ; buffer we overrun. mlrig has 32 logical CPUs; the mirror run uses all of them.
 %define MAX_CORES       64
@@ -624,6 +629,26 @@ efi_main:
         lea     rsi, [msg_crlf]
         call    serial_puts
 
+        ; -------------------------------------------------------------------
+        ; The console - the second new organ. Clears the screen, replays the
+        ; mirrored boot log, and from here every serial byte is drawn live by
+        ; the tee - this very line included.
+        ; -------------------------------------------------------------------
+        call    console_init
+        lea     rsi, [msg_console]
+        call    serial_puts
+        mov     eax, [con_cols]
+        call    serial_putdec
+        mov     al, 'x'
+        call    serial_putc
+        mov     eax, [con_rows]
+        call    serial_putdec
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+
+        call    console_prompt          ; console-only; item 10 moves this
+                                        ; after the keyboard-ready line
+
 halt_forever:
         cli
 .hang:  hlt
@@ -720,6 +745,347 @@ setup_idt:
         ret
 
 ; ---------------------------------------------------------------------------
+; The console - the framebuffer as a text screen. Only the BSP ever calls any
+; of this: one owner per screen, the same doctrine as serial. 16x16 pixel
+; cells (the 8x8 font scaled 2x), COLS = W/16, ROWS = H/16, dark background,
+; light glyphs.
+;
+; The framebuffer is mapped uncached and is WRITE-ONLY here, always: the
+; console keeps a text shadow buffer, and anything that needs old pixels
+; (scrolling) re-renders from the shadow instead of reading them back.
+; ---------------------------------------------------------------------------
+
+%define CHAR_SPACE      0x20
+
+; console_init - measure the cells, clear the screen, replay the boot log.
+; Called exactly once, from efi_main; clobbers registers freely.
+console_init:
+        mov     eax, [fb_width]
+        shr     eax, 4                  ; /16: cells across
+        mov     [con_cols], eax
+        mov     ecx, [fb_height]
+        shr     ecx, 4
+        mov     [con_rows], ecx
+
+        mul     ecx                     ; EDX:EAX = cols * rows
+        test    edx, edx
+        jnz     .too_big
+        cmp     eax, SHADOW_SIZE
+        ja      .too_big
+
+        ; The two console colours, encoded for the mode's pixel order. Format
+        ; 1 stores B,G,R in ascending bytes, so 0x00RRGGBB lands as is;
+        ; format 0 stores R,G,B, so red and blue swap. The grey foreground is
+        ; the same both ways.
+        mov     eax, 0x00101018         ; rgb(16,16,24), format 1 encoding
+        cmp     dword [fb_format], 0
+        jne     .bg_done
+        mov     eax, 0x00181010         ; the same colour, format 0 encoding
+.bg_done:
+        mov     [bg_pix], eax
+        mov     dword [fg_pix], 0x00E0E0E0      ; rgb(224,224,224)
+
+        lea     rdi, [shadow]           ; a screen full of spaces
+        mov     ecx, SHADOW_SIZE / 4
+        mov     eax, CHAR_SPACE * 0x01010101
+        rep     stosd
+
+        ; Clear the whole framebuffer - stride padding and any part-cell edge
+        ; included - so everything on screen is one of our two colours.
+        mov     eax, [fb_pps]
+        mul     dword [fb_height]       ; EDX:EAX = pixels to paint
+        mov     ecx, eax
+        mov     rdi, [fb_base]
+        mov     eax, [bg_pix]
+        rep     stosd
+
+        mov     dword [cur_row], 0
+        mov     dword [cur_col], 0
+        mov     dword [con_ready], 1
+
+        ; Replay the mirror: the boot log appears on screen byte for byte as
+        ; the wire carried it. From here the serial tee draws live as well.
+        xor     ebx, ebx
+.replay:
+        cmp     ebx, [log_len]
+        jae     .done
+        lea     rsi, [log_buf]
+        mov     al, [rsi + rbx]
+        call    console_putc
+        inc     ebx
+        jmp     .replay
+.done:
+        ret
+.too_big:
+        lea     rsi, [err_shadow]
+        call    serial_err
+
+; console_putc - AL = the byte, drawn at the cursor. Preserves everything.
+;
+; CR is a no-op (our lines are CRLF and LF does the work), LF is a new line,
+; BS steps back and erases one cell, printables draw and advance with wrap.
+; Everything else is ignored. Scrolls when the bottom is passed.
+console_putc:
+        push    rax
+        push    rbx
+        push    rcx
+        push    rdx
+        push    rsi
+        push    rdi
+        cmp     dword [con_ready], 0
+        je      .out
+        cmp     al, 13
+        je      .out
+        cmp     al, 10
+        je      .newline
+        cmp     al, 8
+        je      .backspace
+        cmp     al, 0x20
+        jb      .out                    ; not printable
+        cmp     al, 0x7E
+        ja      .out
+
+        movzx   eax, al
+        mov     ecx, [cur_row]          ; shadow[row * cols + col] = char
+        imul    ecx, [con_cols]
+        add     ecx, [cur_col]
+        lea     rdx, [shadow]
+        mov     [rdx + rcx], al
+
+        mov     ebx, [cur_row]
+        mov     ecx, [cur_col]
+        call    draw_cell
+
+        inc     dword [cur_col]
+        mov     eax, [con_cols]
+        cmp     [cur_col], eax
+        jb      .out                    ; no wrap; else fall into the new line
+.newline:
+        mov     dword [cur_col], 0
+        inc     dword [cur_row]
+        mov     eax, [con_rows]
+        cmp     [cur_row], eax
+        jb      .out
+        call    console_scroll
+        dec     dword [cur_row]         ; back onto the (new) last row
+.out:
+        pop     rdi
+        pop     rsi
+        pop     rdx
+        pop     rcx
+        pop     rbx
+        pop     rax
+        ret
+.backspace:
+        cmp     dword [cur_col], 0
+        je      .out                    ; never off the left edge
+        dec     dword [cur_col]
+        mov     ecx, [cur_row]
+        imul    ecx, [con_cols]
+        add     ecx, [cur_col]
+        lea     rdx, [shadow]
+        mov     byte [rdx + rcx], CHAR_SPACE
+        mov     eax, CHAR_SPACE
+        mov     ebx, [cur_row]
+        mov     ecx, [cur_col]
+        call    draw_cell
+        jmp     .out
+
+; draw_cell - EAX = character, EBX = cell row, ECX = cell column. Preserves
+; everything. Each glyph bit becomes a 2x2 block of foreground or background;
+; bit 0 of a font byte is the leftmost pixel (see stage2/FONT.md).
+draw_cell:
+        push    rax
+        push    rbx
+        push    rcx
+        push    rdx
+        push    rsi
+        push    rdi
+        push    r8
+        push    r9
+        push    r10
+
+        and     eax, 0x7F
+        lea     rsi, [font8x8]
+        lea     rsi, [rsi + rax*8]      ; the glyph's 8 row bytes
+
+        mov     r8d, [fb_pps]
+        shl     r8d, 2                  ; R8 = stride in bytes
+
+        mov     eax, ebx                ; cell row -> scanline -> byte offset
+        shl     eax, 4
+        imul    rax, r8
+        mov     rdi, [fb_base]
+        add     rdi, rax
+        mov     eax, ecx                ; cell column -> byte offset
+        shl     eax, 6                  ; * 16 pixels * 4 bytes
+        add     rdi, rax
+
+        mov     r9d, [fg_pix]
+        mov     r10d, [bg_pix]
+
+        mov     ecx, 8                  ; the glyph's 8 rows
+.frow:
+        lodsb
+        mov     bl, al
+        push    rcx
+        push    rdi
+        mov     edx, 8                  ; the row's 8 bits, LSB first
+.fbit:
+        mov     eax, r10d
+        test    bl, 1
+        jz      .paint
+        mov     eax, r9d
+.paint:
+        mov     [rdi], eax              ; 2x2: two pixels on this scanline
+        mov     [rdi + 4], eax
+        mov     [rdi + r8], eax         ; and two on the next
+        mov     [rdi + r8 + 4], eax
+        add     rdi, 8
+        shr     bl, 1
+        dec     edx
+        jnz     .fbit
+        pop     rdi
+        pop     rcx
+        lea     rdi, [rdi + r8*2]       ; down two scanlines
+        dec     ecx
+        jnz     .frow
+
+        pop     r10
+        pop     r9
+        pop     r8
+        pop     rdi
+        pop     rsi
+        pop     rdx
+        pop     rcx
+        pop     rbx
+        pop     rax
+        ret
+
+; draw_cursor - the solid block at the cursor cell. Preserves everything.
+; No blinking: nothing on this machine moves without cause.
+draw_cursor:
+        push    rax
+        push    rbx
+        push    rcx
+        push    rdx
+        push    rdi
+        push    r8
+
+        mov     r8d, [fb_pps]
+        shl     r8d, 2
+        mov     eax, [cur_row]
+        shl     eax, 4
+        imul    rax, r8
+        mov     rdi, [fb_base]
+        add     rdi, rax
+        mov     eax, [cur_col]
+        shl     eax, 6
+        add     rdi, rax
+
+        mov     eax, [fg_pix]
+        mov     ebx, 16                 ; 16 scanlines
+.line:
+        mov     rdx, rdi
+        mov     ecx, 16                 ; of 16 pixels
+        rep     stosd
+        mov     rdi, rdx
+        add     rdi, r8
+        dec     ebx
+        jnz     .line
+
+        pop     r8
+        pop     rdi
+        pop     rdx
+        pop     rcx
+        pop     rbx
+        pop     rax
+        ret
+
+; erase_cursor - redraw the cursor cell from the shadow. Preserves everything.
+erase_cursor:
+        push    rax
+        push    rbx
+        push    rcx
+        push    rdx
+        mov     ecx, [cur_row]
+        imul    ecx, [con_cols]
+        add     ecx, [cur_col]
+        lea     rdx, [shadow]
+        movzx   eax, byte [rdx + rcx]
+        mov     ebx, [cur_row]
+        mov     ecx, [cur_col]
+        call    draw_cell
+        pop     rdx
+        pop     rcx
+        pop     rbx
+        pop     rax
+        ret
+
+; console_scroll - shift the shadow up one text row and re-render the whole
+; screen from it. The framebuffer is never read. Preserves everything.
+console_scroll:
+        push    rax
+        push    rbx
+        push    rcx
+        push    rdx
+        push    rsi
+        push    rdi
+
+        mov     ecx, [con_rows]
+        dec     ecx
+        imul    ecx, [con_cols]         ; bytes that move up
+        lea     rdi, [shadow]
+        lea     rsi, [shadow]
+        mov     eax, [con_cols]
+        add     rsi, rax
+        rep     movsb                   ; forward copy, dest below src: safe
+
+        mov     ecx, [con_cols]         ; blank the new last row
+        mov     al, CHAR_SPACE
+        rep     stosb
+
+        xor     ebx, ebx                ; re-render: row by row, cell by cell
+.row:
+        xor     ecx, ecx
+.col:
+        mov     eax, ebx
+        imul    eax, [con_cols]
+        add     eax, ecx
+        lea     rdx, [shadow]
+        movzx   eax, byte [rdx + rax]
+        call    draw_cell
+        inc     ecx
+        cmp     ecx, [con_cols]
+        jb      .col
+        inc     ebx
+        cmp     ebx, [con_rows]
+        jb      .row
+
+        pop     rdi
+        pop     rsi
+        pop     rdx
+        pop     rcx
+        pop     rbx
+        pop     rax
+        ret
+
+; console_prompt - "> " and the cursor, console-only: the serial channel
+; carries the nine lines and then the raw echo, never the prompt. Records
+; where the typed text begins, so backspace can never eat the prompt.
+console_prompt:
+        push    rax
+        mov     al, '>'
+        call    console_putc
+        mov     al, ' '
+        call    console_putc
+        mov     eax, [cur_col]
+        mov     [prompt_min], eax
+        call    draw_cursor
+        pop     rax
+        ret
+
+; ---------------------------------------------------------------------------
 ; Serial. Only the BSP ever calls any of this - one owner per device, the
 ; concurrency doctrine's first appearance. The application processors have no
 ; path to these routines at all.
@@ -770,6 +1136,10 @@ serial_putc:
         mov     [rdx + rbx], al
         inc     dword [log_len]
 .mirrored:
+        cmp     dword [con_ready], 0    ; once the console is up, the tee
+        je      .wire                   ; draws every serial byte live
+        call    console_putc
+.wire:
         mov     ah, al
 .wait:  mov     dx, COM1_LSR
         in      al, dx
@@ -1328,6 +1698,7 @@ msg_paging:     db      'S2: gdt and paging ours', 13, 10, 0
 msg_idt:        db      'S2: idt ready', 13, 10, 0
 msg_found:      db      'S2: cores found ', 0
 msg_woken:      db      'S2: cores woken ', 0
+msg_console:    db      'S2: console ', 0
 
 msg_err:        db      'ERR: ', 0
 msg_exc:        db      'ERR: exception ', 0
@@ -1351,6 +1722,12 @@ err_madt_len:   db      'MADT has an entry of length zero', 0
 err_too_many:   db      'more enabled processors than MAX_CORES - raise it', 0
 err_no_cores:   db      'MADT lists no enabled processors at all', 0
 err_ap_high:    db      'ap_entry sits above 4GB - the trampoline cannot reach it', 0
+err_shadow:     db      'console shadow too small for this mode - raise SHADOW_SIZE', 0
+
+; The shared font, byte for byte the file the pixel checker renders from.
+; 128 glyphs, 8 bytes each, row per byte, bit 0 leftmost - stage2/FONT.md.
+        align   8
+font8x8:        incbin  "stage2/font8x8.bin"
 
 ; Our own GDT. Four descriptors, flat, base 0, limit 4 GB.
 ;
@@ -1466,6 +1843,19 @@ ap_stacks_top:
 ; explicitly set is simply not present.
         alignb  16
 idt:            resb    256*16
+
+; The console. One owner - the BSP - so none of this needs a lock.
+        alignb  16
+con_cols:       resd    1               ; cells across = width / 16
+con_rows:       resd    1               ; cells down   = height / 16
+cur_row:        resd    1
+cur_col:        resd    1
+con_ready:      resd    1               ; non-zero once the tee may draw
+prompt_min:     resd    1               ; the column typed text starts at
+bg_pix:         resd    1               ; background, encoded for the mode
+fg_pix:         resd    1               ; foreground, encoded for the mode
+        alignb  16
+shadow:         resb    SHADOW_SIZE     ; one byte per cell - what is on screen
 
 ; Page tables. 4 KB alignment is architectural, not a preference.
         alignb  4096
