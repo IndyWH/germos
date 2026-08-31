@@ -272,6 +272,22 @@ else
 fi
 echo
 
+# ------------------------------------------------------ test 4: the pixels ---
+# A screendump at -smp 8 is the resolution the serial log claimed and shows
+# exactly 8 equal solid bands in the expected colours. The work is in
+# stage1/checkbands.py, which takes the picture and the claim from the same run
+# and prints its own diagnosis on failure.
+
+echo "Test 4 - Pixels: 8 equal bands at the resolution the serial log claimed"
+if [ ! -f "$ESP" ]; then
+  fail "test 4: no image was built"
+elif python3 "$REPO/stage1/checkbands.py"; then
+  pass "test 4: eight equal bands, one per core"
+else
+  fail "test 4: the screen is not eight equal bands (see above)"
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then
