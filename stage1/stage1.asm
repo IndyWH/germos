@@ -31,6 +31,20 @@ org 0                           ; file offsets == RVAs
 %define COM1_LCR        COM1 + 3
 %define COM1_MCR        COM1 + 4
 %define COM1_LSR        COM1 + 5
+
+; Where the application processors start life. A 4 KB-aligned page below 1 MB,
+; because a processor coming out of INIT-SIPI-SIPI begins in real mode at
+; CS = vector<<8, IP = 0. Claimed from the firmware before boot services go.
+%define TRAMP_BASE      0x8000
+
+; The memory map buffer is static, in our own BSS, rather than pool-allocated.
+; Allocating changes the very map whose key we are about to hand to
+; ExitBootServices, so a static buffer sidesteps the whole dance.
+%define MAP_BUF_SIZE    0x4000
+%define BSP_STACK_SIZE  0x4000
+
+%define EFI_INVALID_PARAMETER   0x8000000000000002
+%define EFI_BUFFER_TOO_SMALL    0x8000000000000005
 %define SECT_ALIGN      0x1000
 %define FILE_ALIGN      0x1000
 
@@ -311,6 +325,112 @@ efi_main:
         lea     rsi, [msg_crlf]
         call    serial_puts
 
+        ; -------------------------------------------------------------------
+        ; Step 3 of the spec: the memory map, and then throw the ladder away.
+        ;
+        ; The trampoline page is claimed FIRST, while boot services still
+        ; exist. Afterwards there is no allocator left to ask.
+        ; -------------------------------------------------------------------
+        call    get_memory_map          ; for the fallback scan below
+        test    rax, rax
+        jz      .map_ok
+        mov     rdx, EFI_BUFFER_TOO_SMALL
+        cmp     rax, rdx
+        je      .map_too_small
+        lea     rsi, [err_map]
+        call    serial_err
+.map_too_small:
+        ; Name the number, so that fixing this is changing one constant.
+        lea     rsi, [msg_err]
+        call    serial_puts
+        lea     rsi, [err_map_needs]
+        call    serial_puts
+        mov     eax, [map_size]
+        call    serial_putdec
+        lea     rsi, [err_map_have]
+        call    serial_puts
+        mov     eax, MAP_BUF_SIZE
+        call    serial_putdec
+        lea     rsi, [err_map_bytes]
+        call    serial_puts
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+        jmp     halt_forever
+.map_ok:
+
+        mov     qword [tramp_addr], TRAMP_BASE
+        call    alloc_tramp_page
+        test    rax, rax
+        jz      .tramp_ok
+
+        ; The preferred address was refused. Walk the map for any free
+        ; conventional page below 1 MB and take the first that will have us.
+        lea     r12, [map_buf]
+        mov     r13, r12
+        add     r13, [map_size]
+.scan:
+        cmp     r12, r13
+        jae     .no_tramp
+        cmp     dword [r12], 7          ; EfiConventionalMemory
+        jne     .scan_step
+        mov     rdx, [r12 + 8]          ; PhysicalStart
+        cmp     rdx, 0x1000             ; never the first page
+        jb      .scan_step
+        cmp     rdx, 0x100000           ; must be reachable in real mode
+        jae     .scan_step
+        mov     [tramp_addr], rdx
+        call    alloc_tramp_page
+        test    rax, rax
+        jz      .tramp_ok
+.scan_step:
+        add     r12, [desc_size]        ; stride is desc_size, never sizeof
+        jmp     .scan
+.no_tramp:
+        lea     rsi, [err_no_tramp]
+        call    serial_err
+.tramp_ok:
+
+        ; ExitBootServices, with the retry the spec names. The map key goes
+        ; stale if anything has allocated since the map was fetched - and the
+        ; AllocatePages just above did exactly that - so the map is fetched
+        ; fresh on every attempt.
+        mov     r12d, 5
+.ebs_try:
+        call    get_memory_map
+        test    rax, rax
+        jnz     .ebs_map_failed
+        mov     rax, [boot_services]
+        mov     rcx, [image_handle]
+        mov     rdx, [map_key]
+        call    [rax + 0xE8]            ; BootServices->ExitBootServices
+        test    rax, rax
+        jz      .ebs_done
+        mov     rdx, EFI_INVALID_PARAMETER
+        cmp     rax, rdx
+        jne     .ebs_hard
+        dec     r12d
+        jnz     .ebs_try
+        lea     rsi, [err_ebs_stale]
+        call    serial_err
+.ebs_map_failed:
+        lea     rsi, [err_map]
+        call    serial_err
+.ebs_hard:
+        lea     rsi, [err_ebs]
+        call    serial_err
+.ebs_done:
+        ; The firmware's timer would otherwise keep firing into code that no
+        ; longer exists. From here there is no IDT either, so any CPU exception
+        ; is a triple fault and a reboot - which shows up in a serial capture as
+        ; the whole sequence repeating, not as a missing line.
+        cli
+
+        ; Stand on our own stack rather than the firmware's.
+        lea     rsp, [bsp_stack_top]
+
+        lea     rsi, [msg_exited]
+        call    serial_puts
+
 halt_forever:
         cli
 .hang:  hlt
@@ -454,6 +574,49 @@ serial_err:
         call    serial_puts
         jmp     halt_forever
 
+; ---------------------------------------------------------------------------
+; Firmware call helpers.
+;
+; Each one re-establishes a 16-byte-aligned frame with 0x40 of scratch below
+; it: 32 bytes of shadow space the callee owns, plus room for a fifth and sixth
+; stack argument. Returns EFI_STATUS in RAX.
+; ---------------------------------------------------------------------------
+
+; get_memory_map - fill map_buf and the four values that describe it.
+get_memory_map:
+        push    rbp
+        mov     rbp, rsp
+        and     rsp, -16
+        sub     rsp, 0x40
+        mov     qword [map_size], MAP_BUF_SIZE
+        mov     rax, [boot_services]
+        lea     rcx, [map_size]
+        lea     rdx, [map_buf]
+        lea     r8, [map_key]
+        lea     r9, [desc_size]
+        lea     r10, [desc_ver]
+        mov     [rsp + 0x20], r10       ; DescriptorVersion, the fifth argument
+        call    [rax + 0x38]            ; BootServices->GetMemoryMap
+        mov     rsp, rbp
+        pop     rbp
+        ret
+
+; alloc_tramp_page - claim the single page at [tramp_addr], exactly there.
+alloc_tramp_page:
+        push    rbp
+        mov     rbp, rsp
+        and     rsp, -16
+        sub     rsp, 0x40
+        mov     rax, [boot_services]
+        mov     ecx, 2                  ; AllocateAddress
+        mov     edx, 2                  ; EfiLoaderData
+        mov     r8d, 1                  ; one 4 KB page
+        lea     r9, [tramp_addr]
+        call    [rax + 0x28]            ; BootServices->AllocatePages
+        mov     rsp, rbp
+        pop     rbp
+        ret
+
         align   SECT_ALIGN, db 0
 text_end:
 text_size       equ     text_end - text_start
@@ -472,6 +635,7 @@ msg_alive:      db      'S1: alive', 13, 10, 0
 
 msg_gop:        db      'S1: gop ', 0
 msg_fb:         db      ' fb 0x', 0
+msg_exited:     db      'S1: boot services exited', 13, 10, 0
 
 msg_err:        db      'ERR: ', 0
 msg_crlf:       db      13, 10, 0
@@ -480,6 +644,13 @@ err_no_gop:     db      'no Graphics Output Protocol', 0
 err_no_mode:    db      'no GOP mode with a 32-bit linear framebuffer', 0
 err_setmode:    db      'GOP SetMode failed', 0
 err_fb_high:    db      'framebuffer sits above 4GB, beyond our identity map', 0
+err_map:        db      'GetMemoryMap failed', 0
+err_map_needs:  db      'memory map needs ', 0
+err_map_have:   db      ' bytes, MAP_BUF_SIZE is ', 0
+err_map_bytes:  db      ' - raise it', 0
+err_no_tramp:   db      'no free page below 1MB for the AP trampoline', 0
+err_ebs:        db      'ExitBootServices failed', 0
+err_ebs_stale:  db      'ExitBootServices: map key still stale after 5 tries', 0
 
 ; EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID, 9042a9de-23dc-4a38-96fb-7aded080516a.
 ; A GUID is little-endian in its first three fields and big-endian in the last
@@ -508,11 +679,29 @@ data_raw_end:
 data_raw_size   equ     data_raw_end - data_start
 
 ; ===========================================================================
-; .data - BSS. Reserved, never emitted: the loader zero-fills the difference
-; between VirtualSize and SizeOfRawData, so none of this is in the file.
+; .data - BSS.
+;
+; Declared with ABSOLUTE rather than plain resb. In -f bin everything is one
+; contiguous progbits blob, so a bare resb is zero-FILLED into the output file;
+; absolute reserves the addresses without emitting a byte, which is what we
+; want - the loader zero-fills VirtualSize minus SizeOfRawData for us, and the
+; artefact stays the size of the code that is actually in it.
 ; ===========================================================================
+absolute data_raw_end
 bss_start:
-        resb    0                       ; grows as the stage does
+        alignb  16
+map_size:       resq    1               ; in: buffer size; out: bytes used
+map_key:        resq    1               ; the key ExitBootServices demands
+desc_size:      resq    1               ; stride between descriptors, NOT 40
+desc_ver:       resq    1
+tramp_addr:     resq    1               ; where the AP trampoline landed
+
+        alignb  16
+map_buf:        resb    MAP_BUF_SIZE
+
+        alignb  16
+bsp_stack:      resb    BSP_STACK_SIZE
+bsp_stack_top:
 bss_end:
 
 bss_size        equ     bss_end - bss_start
