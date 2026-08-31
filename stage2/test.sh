@@ -2,8 +2,7 @@
 #
 # Stage 2 acceptance tests - the gate for the stage.
 #
-# Implements acceptance tests 1 to 3 from stage2/spec.md; test 4 is added by a
-# later plan item, before any implementation code exists. Test 5 is Wajira's
+# Implements acceptance tests 1 to 4 from stage2/spec.md. Test 5 is Wajira's
 # eyeball on a windowed run and stays manual: his word is the gate for the
 # stage.
 #
@@ -292,6 +291,23 @@ else
   else
     fail "test 3: the machine does not echo what was typed (see above)"
   fi
+fi
+echo
+
+# ------------------------------------------------ test 4: the picture --------
+# After the typing, a screendump: "> hello" rendered pixel-correct from the
+# same font file the assembly includes, the prompt and cursor on the line
+# below, and nothing but the two console colours anywhere on screen. The work
+# is in stage2/checktext.py --pixels, which drives its own run at -smp 8 and
+# prints its own diagnosis on failure.
+
+echo "Test 4 - Pixels: '> hello' on screen, rendered from the shared font"
+if [ ! -f "$ESP" ]; then
+  fail "test 4: no image was built"
+elif python3 "$REPO/stage2/checktext.py" --pixels; then
+  pass "test 4: the picture matches the font, the prompt, and the colours"
+else
+  fail "test 4: the screen does not show what was typed (see above)"
 fi
 echo
 
