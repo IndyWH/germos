@@ -109,6 +109,22 @@ else
 fi
 echo
 
+# ------------------------------------------------------ test 3: the pixels ---
+# A scripted run takes a QEMU screendump a few seconds after boot and confirms
+# all four stripe colours are present within tolerance, with red/cyan only in
+# the top half and blue/yellow only in the bottom half. The work is in
+# stage0/checkpixels.py, which prints its own diagnosis on failure.
+
+echo "Test 3 - Pixels: four stripe colours, red/cyan top, blue/yellow bottom"
+if [ ! -f "$IMG" ]; then
+  fail "test 3: no image was built"
+elif python3 "$REPO/stage0/checkpixels.py"; then
+  pass "test 3: stripes are on the screen"
+else
+  fail "test 3: the screen is not the Spectrum stripes (see above)"
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then
