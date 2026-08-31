@@ -14,6 +14,11 @@ nasm -f bin stage0/stage0.asm -o stage0/out/stage0.img
 ./stage1/mkimage.sh    # assemble stage1.asm, pack the FAT image (not frozen)
 ./stage1/test.sh       # acceptance tests 1-4. ~4 min: each halted guest burns
                        # its 60s timeout, which is the expected outcome
+
+# Stage 2
+./stage2/mkimage.sh    # assemble stage2.asm, pack the FAT image (not frozen)
+./stage2/test.sh       # acceptance tests 1-4: artefact, nine serial lines,
+                       # sendkey typing at -smp 2 and 8, pixel-checked console
 ```
 
 Windowed, for the oracle test:
@@ -98,6 +103,19 @@ test in the twin.
   test demands *exactly* seven lines rather than at least seven.
 - **A halted guest never exits QEMU.** Wrap headless runs in `timeout` and treat
   exit 124 as the expected success signal; any other non-zero exit is real.
+- **The uncached framebuffer is write-only.** Reads from UC memory are brutally
+  slow, so scrolling re-renders from a text shadow buffer; nothing ever reads a
+  pixel back.
+- **Remap the PIC before `sti`.** The reset default routes IRQs to vectors
+  8-15, which are CPU exceptions; an unremapped timer tick reads as a double
+  fault. Remap both chips even if only one line is unmasked.
+- **Never `hlt` while the queue holds data.** A byte arriving between the check
+  and the `hlt` has spent its interrupt. The idiom: `cli`, check; if empty,
+  `sti`;`hlt` back to back - the sti shadow carries a pending interrupt into
+  the wake; if not, `sti` and drain.
+- **A 0xE0 scancode prefix swallows its successor.** Ignoring just the prefix
+  turns keypad Delete (`E0 53`) into keypad-dot's make code - a stray `.` on
+  screen.
 
 ## Working with the hooks
 

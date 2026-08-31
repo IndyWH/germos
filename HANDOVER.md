@@ -3,11 +3,11 @@
 Rolling state of the AI OS project. Read this first, then `ai-os-foundation.md`
 (the single source of truth), then the current stage's `spec.md` and `plan.md`.
 
-**Last updated:** 31 August 2026 — **Stage 1 closed and the closure recorded.**
-Wajira ran test 5 and the `-smp 32` mirror run on 31 August and confirmed both:
-the eight bands, the seven serial lines, and the mirror run at full likeness of
-mlrig's 32 CPUs. **`stage2/spec.md` is APPROVED** with all three judgement calls
-answered. Next: `stage2/plan.md`, drafted in plan mode, committed for approval.
+**Last updated:** 1 September 2026 — **Stage 2 implemented, all four automated
+tests green.** Plan items 1–11 are committed: the acceptance machinery went in
+red and frozen before any code, then the implementation grew on Stage 1's body
+and the gate closed at item 10, exactly where the plan predicted. **Awaiting
+test 5 — Wajira's eyeball on the windowed run.**
 
 ---
 
@@ -15,8 +15,8 @@ answered. Next: `stage2/plan.md`, drafted in plan mode, committed for approval.
 
 | | |
 |---|---|
-| Stage | 2 — Senses (opening) |
-| Status | Stage 1 **CLOSED**. `stage2/spec.md` **APPROVED** (31 August 2026); plan awaited, no code. |
+| Stage | 2 — Senses (implemented) |
+| Status | Tests 1–4 **GREEN**. Test 5 (the oracle) **pending Wajira**. |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3, OVMF, mtools — Stage 2 needs no new packages |
@@ -74,41 +74,65 @@ burns its 60-second timeout, which is the expected outcome, not a fault).
 
 ---
 
-## Stage 2 — Senses (opening)
+## Stage 2 — Senses · implemented, awaiting the oracle
 
 **Goal (foundation §7):** keyboard input and a text console on the framebuffer;
 the serial debug channel becomes permanent. Proves the machine is interactive.
 
-`stage2/spec.md` is **APPROVED by Wajira, 31 August 2026**. It grows on Stage 1's
-body and adds three organs: an IDT so CPU exceptions become readable serial
-messages instead of silent reboots, an interrupt-driven PS/2 keyboard, and a text
-console on the framebuffer. The bands retire; the console becomes the picture.
-Nine `S2:` boot lines, then the channel carries the raw echo of what is typed.
+Built on Stage 1's body, per the approved spec and plan (both committed, plus
+plan amendment A1 — the sti-shadow hlt idiom): an IDT whose 32 exception stubs
+print `ERR: exception <vector> at 0x<rip>` and halt (proven byte-precise with a
+ud2 probe against the nasm listing); a text console — font8x8 scaled 2x into
+16x16 cells, dark rgb(16,16,24) ground, light rgb(224,224,224) glyphs, the boot
+log replayed from a serial mirror buffer, static block cursor, wrap, backspace,
+shadow-buffer scrolling, the framebuffer never read; and an interrupt-driven
+PS/2 keyboard — PIC remapped to 0x20/0x28 with only IRQ1 unmasked, a
+scancode ring between the handler and the main loop, set-1 unshifted US
+translation, E0 pairs and break codes swallowed. The screen has one owner: the
+handler only buffers; the BSP main loop draws. On this machine the console is
+**128x128 cells** on the 2048x2048 mode — measured, never baked in.
 
-### Decisions recorded at approval (owner, 31 August 2026)
+| # | Test | Status |
+|---|---|---|
+| 1 | Artefact — PE32+ magics, x86-64, subsystem 10, relocs stripped, packed image | **PASS** |
+| 2 | Serial — nine `S2:` lines in order, found = woken = smp, console = W/16 x H/16 | **PASS** |
+| 3 | Typing — monitor `sendkey` hello+Enter; echo exactly `hello` CRLF, at `-smp 2` and `-smp 8` | **PASS** |
+| 4 | Pixels — `> hello` pixel-correct per the shared font, prompt+cursor below, only the two console colours on screen | **PASS** |
+| 5 | **Oracle — Wajira's eyeball** | **PENDING** |
 
-1. **Keyboard route.** Interrupt-driven via the remapped PIC; the IDT earns its
-   keep in debugging from here on.
-2. **The font.** The public-domain 8x8 classic (font8x8), scaled 2x.
-3. **Shift and symbols.** Unshifted-only this stage; shift is a later ring.
+Tests 1–4 were committed **red** before any of `stage2.asm` existed and went
+green exactly where the plan predicted: test 1 at item 7, tests 2–4 at item 10.
+The shared font is `stage2/font8x8.bin` (public-domain font8x8, provenance and
+hashes in `stage2/FONT.md` and pinned in `plan.md`), frozen alongside the tests
+because the checker renders its expectations from it.
 
-No Stage 2 code exists and none should be written until `stage2/plan.md` is
-committed and approved in turn — evaluation-first, tests committed red before
-any implementation code, as ever.
+**Caveats carried forward:**
+
+- **Stage 1's stand:** the x2APIC path and the trampoline fallback remain
+  unproven; one machine, one firmware (QEMU q35 + OVMF).
+- **The i8042 is not reconfigured** — QEMU's controller as OVMF leaves it
+  delivers set-1 codes and interrupts (proven by the echo working). Cold
+  controller init is a Stage 7 debt.
+- **Unshifted only.** Shift, symbols-over-digits, and capitals are a later ring.
+- **A parked AP that faults prints over serial** — a deliberate one-owner
+  breach for a machine that is already lost (plan decision 9).
 
 ---
 
 ## The frozen acceptance machinery
 
-`stage0/test.sh`, `stage0/checkpixels.py`, `stage1/test.sh` and
-`stage1/checkbands.py` are frozen by `.claude/hooks/protect-tests.py`. The
-builders (`stage1/mkimage.sh`) are deliberately **not** frozen: they hold the
-recipe, and the tests judge the artefact the recipe produces.
+`stage0/test.sh`, `stage0/checkpixels.py`, `stage1/test.sh`,
+`stage1/checkbands.py`, `stage2/test.sh`, `stage2/checktext.py` and
+`stage2/font8x8.bin` are frozen by `.claude/hooks/protect-tests.py`. The
+builders (`stage1/mkimage.sh`, `stage2/mkimage.sh`) and `stage2/FONT.md` are
+deliberately **not** frozen: recipe and paperwork, judged by their product.
 
-Verified with 91 payloads — 62 that must be denied, 29 that must be allowed —
-with Stage 0's cases re-run alongside Stage 1's, so freezing a new stage is shown
-not to have loosened an older one. **Freezing Stage 2's tests is a one-line
-change**: add the paths to the `PROTECTED` tuple.
+The Stage 2 extension was verified with 55 payloads — 33 that must be denied,
+22 that must be allowed — with Stage 0's and Stage 1's cases re-run alongside,
+so freezing a new stage is shown not to have loosened an older one. The freeze
+bit immediately (per Stage 1's amendment A4), demonstrated live: the first
+attempt to run the payload table as a heredoc was itself denied, because the
+payload text mentions frozen names near mutating verbs.
 
 Two things learned about the hook, both now in CLAUDE.md:
 
@@ -126,14 +150,21 @@ file we have not written is a wall, not a freeze. Recorded as amendment A3 in
 
 ## Safety
 
-Everything has run inside QEMU. Stage 1 gave QEMU firmware plus exactly one
-drive: a raw FAT image under `stage1/out/`. OVMF is mapped read-only by `-bios`.
-No block device, no loop mount, no `sudo`, nothing written outside
+Everything has run inside QEMU. Stages 1 and 2 give QEMU firmware plus exactly
+one drive: a raw FAT image under the stage's `out/`. OVMF is mapped read-only by
+`-bios`. No block device, no loop mount, no `sudo`, nothing written outside
 `/home/indy/Projects/ai-os` (bar scratch files in the session temp directory).
+Stage 2's single network touch was the one-time fetch of the public-domain font,
+verified against the sha256 pins recorded in `stage2/plan.md`.
 
 ## Next action
 
-Claude Code drafts `stage2/plan.md` in plan mode and commits it for Wajira's
-approval. After approval: one commit per numbered item — acceptance tests first
-and committed red, the hook extended to freeze them, then the implementation
-grown on Stage 1's proven code.
+**Wajira runs test 5** — windowed, from the repo root:
+
+```
+qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
+  -drive format=raw,file=stage2/out/esp.img -serial stdio
+```
+
+types whatever he likes, and watches his own keystrokes land on the console
+(and echo raw on the terminal's serial). His word closes the stage.
