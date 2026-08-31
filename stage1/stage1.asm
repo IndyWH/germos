@@ -431,6 +431,36 @@ efi_main:
         lea     rsi, [msg_exited]
         call    serial_puts
 
+        ; -------------------------------------------------------------------
+        ; Step 4 of the spec: our own GDT and our own page tables. The
+        ; firmware's are gone; from here the machine stands on structures we
+        ; built.
+        ; -------------------------------------------------------------------
+        lea     rax, [gdt]
+        mov     [gdtr + 2], rax         ; base is only known at runtime
+        lgdt    [gdtr]
+
+        ; Reload CS through a far return - there is no far jump to a label in
+        ; long mode. The data selectors follow.
+        push    qword 0x08
+        lea     rax, [.cs_reloaded]
+        push    rax
+        o64 retf
+.cs_reloaded:
+        mov     ax, 0x10
+        mov     ds, ax
+        mov     es, ax
+        mov     ss, ax
+        mov     fs, ax
+        mov     gs, ax
+
+        call    build_paging
+        lea     rax, [pml4]
+        mov     cr3, rax                ; and the firmware's tables are gone
+
+        lea     rsi, [msg_paging]
+        call    serial_puts
+
 halt_forever:
         cli
 .hang:  hlt
@@ -601,6 +631,61 @@ get_memory_map:
         pop     rbp
         ret
 
+; build_paging - identity-map the first 4 GB with 2 MB pages.
+;
+; One PML4, one PDPT, four page directories: 24 KB of tables for 4 GB of
+; address space. That covers low memory, the trampoline page, our own image and
+; stack, and the framebuffer. 1 GB pages would halve it again but need a CPUID
+; check that QEMU's default CPU may not pass, so 2 MB is the safe unit.
+;
+; Everything not written here is left as the loader zero-filled it, which is
+; exactly the "not present" we want.
+build_paging:
+        lea     rax, [pdpt]
+        or      rax, 3                  ; present | writable
+        lea     rdi, [pml4]
+        mov     [rdi], rax              ; PML4[0] -> PDPT, the first 512 GB
+
+        lea     rdi, [pdpt]
+        lea     rsi, [pd_tables]
+        mov     ecx, 4                  ; four directories, 1 GB each
+.pdpt:
+        mov     rax, rsi
+        or      rax, 3
+        mov     [rdi], rax
+        add     rdi, 8
+        add     rsi, 0x1000
+        dec     ecx
+        jnz     .pdpt
+
+        lea     rdi, [pd_tables]
+        xor     rax, rax                ; physical address of the current page
+        mov     r8, [fb_base]
+        mov     r9, r8
+        add     r9, [fb_size]
+        mov     ecx, 2048               ; 2048 * 2 MB = 4 GB
+.pd:
+        mov     rdx, rax
+        or      rdx, 0x83               ; present | writable | 2 MB page
+
+        ; A page overlapping the framebuffer is marked uncached. Left
+        ; writeback, our pixels could sit in a cache line and never reach the
+        ; screen - a black screen with a serial log claiming success.
+        mov     r10, rax
+        add     r10, 0x200000
+        cmp     rax, r9
+        jae     .store
+        cmp     r10, r8
+        jbe     .store
+        or      rdx, 0x18               ; PWT | PCD
+.store:
+        mov     [rdi], rdx
+        add     rdi, 8
+        add     rax, 0x200000
+        dec     ecx
+        jnz     .pd
+        ret
+
 ; alloc_tramp_page - claim the single page at [tramp_addr], exactly there.
 alloc_tramp_page:
         push    rbp
@@ -636,6 +721,7 @@ msg_alive:      db      'S1: alive', 13, 10, 0
 msg_gop:        db      'S1: gop ', 0
 msg_fb:         db      ' fb 0x', 0
 msg_exited:     db      'S1: boot services exited', 13, 10, 0
+msg_paging:     db      'S1: gdt and paging ours', 13, 10, 0
 
 msg_err:        db      'ERR: ', 0
 msg_crlf:       db      13, 10, 0
@@ -651,6 +737,29 @@ err_map_bytes:  db      ' - raise it', 0
 err_no_tramp:   db      'no free page below 1MB for the AP trampoline', 0
 err_ebs:        db      'ExitBootServices failed', 0
 err_ebs_stale:  db      'ExitBootServices: map key still stale after 5 tries', 0
+
+; Our own GDT. Four descriptors, flat, base 0, limit 4 GB.
+;
+;   0x08  64-bit code   - what the BSP and every woken core runs in
+;   0x10  data          - flat, for every data selector
+;   0x18  32-bit code   - used only by the AP trampoline's middle step, on the
+;                         way from real mode up to long mode
+        align   8
+gdt:
+        dq      0x0000000000000000      ; 0x00 null
+        dq      0x00AF9A000000FFFF      ; 0x08 code64: L=1, present, ring 0
+        dq      0x00CF92000000FFFF      ; 0x10 data:   writable, 4 GB
+        dq      0x00CF9A000000FFFF      ; 0x18 code32: D=1, present, ring 0
+gdt_end:
+
+; The 64-bit pseudo-descriptor for lgdt. The base is filled in at runtime,
+; because we do not know where we were loaded.
+gdtr:           dw      gdt_end - gdt - 1
+                dq      0
+; And the 32-bit form the trampoline needs, since a processor in real mode
+; cannot load a 64-bit base. The GDT is below 4 GB, so this is always enough.
+gdtr32:         dw      gdt_end - gdt - 1
+                dd      0
 
 ; EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID, 9042a9de-23dc-4a38-96fb-7aded080516a.
 ; A GUID is little-endian in its first three fields and big-endian in the last
@@ -702,6 +811,12 @@ map_buf:        resb    MAP_BUF_SIZE
         alignb  16
 bsp_stack:      resb    BSP_STACK_SIZE
 bsp_stack_top:
+
+; Page tables. 4 KB alignment is architectural, not a preference.
+        alignb  4096
+pml4:           resb    4096
+pdpt:           resb    4096
+pd_tables:      resb    4 * 4096        ; four directories, 2048 entries in all
 bss_end:
 
 bss_size        equ     bss_end - bss_start
