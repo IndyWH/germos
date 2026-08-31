@@ -1,6 +1,8 @@
 # Build outputs
 *.img
 *.bin
+# ...but the committed font asset is a source, not a build output
+!stage2/font8x8.bin
 *.o
 *.elf
 *.lst
