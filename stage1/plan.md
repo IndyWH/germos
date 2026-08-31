@@ -542,3 +542,44 @@ exists.
 | APs never arrive | Bounded wait, then log the real count — fails in a second with a readable number, not at the 60 s timeout |
 | OVMF leaves the BSP in x2APIC mode | Both paths implemented (decision 9) |
 | FAT packing needs changing after the freeze | The builder is not frozen; the criteria are (decision 1) |
+
+---
+
+## Amendments after approval
+
+Recorded here rather than folded silently into the items, so the approved
+document stays the thing the work is reviewed against.
+
+**A1 — item 12, x2APIC has no delivery-status bit** (Cowork's plan review).
+The ICR delivery-status poll (bit 12) applies to the **xAPIC path only**. In
+x2APIC mode bit 12 is reserved and the `wrmsr` to `0x830` is itself the
+serialising event, so the x2APIC path must send INIT-SIPI-SIPI **without**
+polling for delivery status. Polling it there would read a reserved bit and
+could spin forever. Item 12's two paths therefore differ by more than the
+register they write, and the code says so at the branch.
+
+**A2 — item 9, the buffer-too-small error names the number** (Cowork's plan
+review). If the static 16 KB memory-map buffer is too small, `GetMemoryMap`
+returns `EFI_BUFFER_TOO_SMALL` and writes the required size back. The `ERR:`
+line must **print that size**, so that fixing it is changing one constant rather
+than guessing at one. The plan already asked for this; it is restated because it
+is the difference between a five-second fix and a bisect.
+
+**A3 — item 0, an unplanned precondition: the freeze had to be made
+path-precise before item 1 could start.** The Stage 0 hook matched the bare
+basename anywhere in a path, so it denied the *creation* of `stage1/test.sh` by
+every legitimate route. Protecting a file we have not written is a wall, not a
+freeze. The fix resolves a candidate path before judging it: a path with a
+directory part is protected only if it ends with a `PROTECTED` repo-relative
+path; a bare basename stays conservatively protected, since it may be a command
+run from inside `stage0/`. Verified with 30 payloads — all 16 Stage 0 denials
+unchanged, Stage 0's gate still exits 0. Committed separately, before item 1.
+
+**A4 — item 5's caveat is weaker than the plan assumed, in our favour.** Item 0
+established that only the hook **registration** in `.claude/settings.json` is
+snapshotted at session start; the hook **script** is re-read on every
+invocation. Confirmed both ways in one session: the same command was denied by
+the old script and allowed by the new one. So the Stage 1 freeze added at item 5
+**bites immediately**, and the "honoured by hand until the next session" caveat
+that Stage 0 carried does *not* apply to it. Item 5 verifies this rather than
+assuming it, and `CLAUDE.md`'s gotcha is corrected at item 14.
