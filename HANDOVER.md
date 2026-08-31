@@ -3,8 +3,9 @@
 Rolling state of the AI OS project. Read this first, then `ai-os-foundation.md`
 (the single source of truth), then the current stage's `spec.md` and `plan.md`.
 
-**Last updated:** 31 August 2026 — Stage 1 built, **all four automated tests
-green**, awaiting Wajira's eyeball (test 5) and the `-smp 32` mirror run.
+**Last updated:** 31 August 2026 — **Stage 1 closed.** Wajira ran test 5 and the
+`-smp 32` mirror run and confirmed both. Stage 2 opens: spec drafted, three
+judgement calls awaiting his answers.
 
 ---
 
@@ -12,11 +13,11 @@ green**, awaiting Wajira's eyeball (test 5) and the `-smp 32` mirror run.
 
 | | |
 |---|---|
-| Stage | 1 — Owning the processor |
-| Status | **Built. Acceptance tests 1–4 green. Test 5 — Wajira's eyeball — pending.** |
+| Stage | 2 — Senses (opening) |
+| Status | Stage 1 **CLOSED**. `stage2/spec.md` is a **draft awaiting approval**; no plan yet, no code. |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
-| Toolchain | NASM 3.01, QEMU 10.2.1, Python 3, OVMF, mtools — all already installed |
+| Toolchain | NASM 3.01, QEMU 10.2.1, Python 3, OVMF, mtools — Stage 2 needs no new packages |
 
 ## The project in three lines
 
@@ -27,53 +28,20 @@ hardware until it has survived a rehearsal in the twin (QEMU).
 
 ---
 
-## Stage 0 — closed, 31 August 2026
+## Stages closed
 
-Spectrum loading stripes plus two byte-exact serial lines, from a 512-byte BIOS
-boot sector. Wajira ran test 4 and gave his word. `./stage0/test.sh` is a
-**standing regression check** and is still green.
+### Stage 0 — First pixel · closed 31 August 2026
 
----
+Spectrum loading stripes and two byte-exact serial lines from a 512-byte BIOS
+boot sector, 211 of 510 bytes used. `./stage0/test.sh` is a standing regression
+check and is still green.
 
-## Stage 1 — built, awaiting the oracle
+### Stage 1 — Owning the processor · closed 31 August 2026
 
-**Done-when:** the UEFI path — long mode, paging, every core woken and counted,
-the GOP framebuffer, pixels at native resolution. Proves full control of the CPU.
-
-### What was built
-
-`stage1/stage1.asm` — one hand-written PE32+ UEFI application, in the spec's
-behavioural order:
-
-1. **Headers.** DOS stub, COFF and PE32+ optional header, two sections
-   (`.text` RX, `.data` RW with the BSS as VirtualSize). Relocations stripped,
-   every reference RIP-relative, `ImageBase 0x400000`.
-2. **Serial first** — COM1 115200 8N1, then `S1: alive`, before anything else.
-3. **GOP** — every mode queried, only 32-bit linear formats eligible, highest
-   area wins. On this machine: **2048x2048 at 0x80000000**, measured not assumed.
-4. **ExitBootServices** — static 16 KB map buffer, trampoline page claimed
-   first, stale-key retry, then interrupts down and onto our own stack.
-5. **Our own GDT and page tables** — four descriptors; 4 GB identity-mapped in
-   2 MB pages (24 KB of tables); framebuffer pages marked uncached; `CR3` loaded.
-6. **MADT** — RSDP from the EFI configuration table, XSDT, `APIC` table; type 0
-   and type 9 processor entries counted and their APIC IDs recorded.
-7. **The wake** — trampoline copied below 1 MB and patched, INIT-SIPI-SIPI to
-   every core but the BSP, PIT-timed. Each core takes a band index with a locked
-   `xadd`, paints its band, and checks in. **Only the BSP ever touches COM1.**
-
-The seven serial lines, in order:
-
-```
-S1: alive
-S1: gop 2048x2048 fb 0x0000000080000000
-S1: boot services exited
-S1: gdt and paging ours
-S1: cores found 8
-S1: cores woken 8
-S1: done
-```
-
-### Test status
+One hand-written PE32+ UEFI application: serial first, GOP at the highest 32-bit
+mode, ExitBootServices, our own GDT and 4 GB identity map, the ACPI MADT read for
+the core count, every core woken with INIT-SIPI-SIPI off a sub-1MB trampoline,
+and each core painting its own band. **The picture is the core count.**
 
 | # | Test | Status |
 |---|---|---|
@@ -81,91 +49,92 @@ S1: done
 | 2 | Serial — seven `S1:` lines in order, found = woken = 8 | **PASS** |
 | 3 | Scaling — the same at `-smp 2` and `-smp 8` | **PASS** |
 | 4 | Pixels — 8 equal solid bands at the resolution the log claimed | **PASS** |
-| 5 | **Oracle — Wajira's eyeball** | **pending — his word is the gate** |
+| 5 | **Oracle — Wajira's eyeball** | **PASS — confirmed 31 August 2026** |
+| — | **`-smp 32` mirror run** | **PASS — confirmed 31 August 2026** |
 
-`./stage1/test.sh` exits 0. It takes about four minutes: each halted guest burns
-its 60-second timeout, which is the expected outcome, not a fault.
+On this machine the chosen mode is **2048x2048 at 0x80000000** — measured, never
+baked in; the pixel test reads the resolution out of the guest's own log from the
+same run. Tests 1–4 were committed **red** before any of `stage1.asm` existed and
+went green exactly where the plan predicted: test 1 at item 6, tests 2 and 3 at
+item 12, test 4 at item 13.
 
-Tests 1–4 were written and committed **red**, before any of `stage1.asm`
-existed, and went green in the order the plan predicted: test 1 at item 6,
-tests 2 and 3 at item 12, test 4 at item 13.
+Run the gate with `./stage1/test.sh` (about four minutes — each halted guest
+burns its 60-second timeout, which is the expected outcome, not a fault).
 
-### Verified beyond the automated gate
-
-- **`-smp 32` dry run** — 32 found, 32 woken, and all 32 bands confirmed solid
-  and in the right colours (64 rows each). Wajira's mirror run should hold no
-  surprises.
-- **Screendump geometry** — 2048x2048, 1:1, so test 4's exact-equality
-  assertion is sound. Stage 0's line-doubling gotcha is a VGA property and does
-  not apply to a linear framebuffer.
-- **RIP-relative addressing** — checked from the instruction encodings, not
-  assumed, because a page table loaded from a wrong address is a triple fault.
-
-### Honest caveats
+**Caveats carried forward, still true:**
 
 - **The x2APIC path is unproven.** OVMF leaves the BSP in xAPIC mode here
-  (`apic_x2 = 0`, MMIO at `0xFEE00000`), so only the xAPIC path is exercised.
-  The x2APIC path is written and reasoned about but nothing has run it.
+  (`apic_x2 = 0`, MMIO at `0xFEE00000`), so nothing has ever executed it.
 - **The trampoline fallback is unproven.** The preferred address `0x8000` is
-  granted every time, so the "scan the memory map for a page below 1 MB"
-  fallback has never been taken.
-- **One core count, one machine.** Everything here is QEMU q35 with OVMF. No
-  claim is made about real hardware; that is Stage 7.
+  granted every time, so the below-1MB memory-map scan has never been taken.
+- **One machine, one firmware.** QEMU q35 with OVMF. No claim about real
+  hardware; that is Stage 7.
+
+---
+
+## Stage 2 — Senses (opening)
+
+**Goal (foundation §7):** keyboard input and a text console on the framebuffer;
+the serial debug channel becomes permanent. Proves the machine is interactive.
+
+`stage2/spec.md` is committed as a **draft**. It grows on Stage 1's body and adds
+three organs: an IDT so CPU exceptions become readable serial messages instead of
+silent reboots, an interrupt-driven PS/2 keyboard, and a text console on the
+framebuffer. The bands retire; the console becomes the picture. Nine `S2:` boot
+lines, then the channel carries the raw echo of what is typed.
+
+### Open questions for the owner — these block the Stage 2 plan
+
+The spec flags three judgement calls, with Cowork's recommendation first:
+
+1. **Keyboard route.** Interrupt-driven via the remapped PIC *(recommended)*, or
+   polling the i8042. The IDT arrives this stage either way.
+2. **The font.** Embed the public-domain 8x8 `font8x8` scaled 2x *(recommended)*,
+   or hand-draw our own.
+3. **Shift and symbols.** Unshifted-only this stage *(recommended)*, or full
+   shift handling now.
+
+Nothing else is needed. No Stage 2 code exists and none should be written until
+the spec is approved and a `stage2/plan.md` is committed and approved in turn.
+
+---
 
 ## The frozen acceptance machinery
 
 `stage0/test.sh`, `stage0/checkpixels.py`, `stage1/test.sh` and
-`stage1/checkbands.py` are frozen by `.claude/hooks/protect-tests.py`.
-`stage1/mkimage.sh` is deliberately **not** frozen: it is the recipe, and the
-tests judge the artefact it produces.
+`stage1/checkbands.py` are frozen by `.claude/hooks/protect-tests.py`. The
+builders (`stage1/mkimage.sh`) are deliberately **not** frozen: they hold the
+recipe, and the tests judge the artefact the recipe produces.
 
 Verified with 91 payloads — 62 that must be denied, 29 that must be allowed —
-with Stage 0's cases re-run alongside Stage 1's to show that freezing a new
-stage did not loosen an older one.
+with Stage 0's cases re-run alongside Stage 1's, so freezing a new stage is shown
+not to have loosened an older one. **Freezing Stage 2's tests is a one-line
+change**: add the paths to the `PROTECTED` tuple.
 
-**Stage 0's caveat is discharged and corrected.** Only the hook *registration*
-is snapshotted at session start; the script is re-read on every call. So the
-Stage 1 freeze bit immediately, in the same session that added it — proven with
-a deliberate no-op that was blocked.
+Two things learned about the hook, both now in CLAUDE.md:
 
-**One unplanned commit, `Stage 1 item 0`.** The Stage 0 hook matched the bare
-basename `test.sh`, so it denied the *creation* of `stage1/test.sh` by every
-legitimate route. Protecting a file we have not written is a wall, not a freeze.
-The fix resolves a candidate path before judging it; all 16 Stage 0 denials are
-unchanged. Recorded in `stage1/plan.md` as amendment A3.
+- Only the hook **registration** is snapshotted at session start; the script is
+  re-read on every call. A new hook waits for the next session, but edits to an
+  already-registered one are live at once.
+- It matches **prose** deliberately. A Bash command that merely mentions a frozen
+  filename near a mutating verb is denied. Reword it, or use the Write/Edit
+  tools, which judge the target path only.
 
-## Decisions recorded (Stage 1 spec, approved by Wajira 31 August 2026)
-
-1. **The mirror run.** Automated tests at `-smp 2` and `-smp 8`; one manual
-   `-smp 32` windowed run before the stage closes.
-2. **Resolution.** Highest-resolution 32-bit GOP mode.
-3. **Timelines.** No cut line; plan for correctness.
-
-Cowork's plan review added two amendments, both implemented: **A1** the ICR
-delivery-status poll is xAPIC-only, and **A2** the map-buffer error names the
-size needed.
+`Stage 1 item 0` was an unplanned commit: the Stage 0 hook matched the bare
+basename `test.sh` and so denied the *creation* of `stage1/test.sh`. Protecting a
+file we have not written is a wall, not a freeze. Recorded as amendment A3 in
+`stage1/plan.md`.
 
 ## Safety
 
-Everything ran inside QEMU. QEMU was given firmware plus exactly one drive: a
-raw FAT image under `stage1/out/`. `/usr/share/ovmf/OVMF.fd` is mapped read-only
-by `-bios`. No block device, no loop mount, no `sudo`, nothing written outside
+Everything has run inside QEMU. Stage 1 gave QEMU firmware plus exactly one
+drive: a raw FAT image under `stage1/out/`. OVMF is mapped read-only by `-bios`.
+No block device, no loop mount, no `sudo`, nothing written outside
 `/home/indy/Projects/ai-os` (bar scratch files in the session temp directory).
-
-## Open questions for the owner
-
-None. Two things need him: **test 5**, and the **`-smp 32` mirror run**.
 
 ## Next action
 
-Wajira runs the two windowed commands below. If the bands and the serial lines
-are right, Stage 1 is closed and Stage 2 (keyboard, text console) can be specced.
-If not, the fix is in `stage1.asm` — the tests do not move.
-
-```
-qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
-  -drive format=raw,file=stage1/out/esp.img -serial stdio
-
-qemu-system-x86_64 -machine q35 -m 256M -smp 32 -bios /usr/share/ovmf/OVMF.fd \
-  -drive format=raw,file=stage1/out/esp.img -serial stdio
-```
+Wajira answers the three Stage 2 judgement calls and approves `stage2/spec.md`.
+Then a fresh Claude Code session starts in plan mode, commits `stage2/plan.md`
+for approval, and implements one commit per numbered item — acceptance tests
+first and committed red, as ever.
