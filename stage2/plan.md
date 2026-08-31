@@ -407,3 +407,18 @@ against the hash recorded in this plan.
 | Wrong font bits make the pixel test self-confirming | the font is converted once, hash-pinned in this plan, eyeballed at item 1, then frozen at item 6; the checker refuses blank or duplicate glyphs |
 | A stray scancode (E0 pairs, break codes) prints garbage | decision 6's swallow rules; the oracle test types freely, which is what test 5 is for |
 | The nine-line contract drifts between test 2, test 3, and the code | one `serial_check` implementation reused; the line list lives in this plan, verbatim |
+
+---
+
+## Amendments after approval
+
+Recorded here rather than folded silently into the items, so the approved
+document stays the thing the work is reviewed against.
+
+**A1 — item 10, the main loop must not race its own ring buffer** (Cowork's
+plan review, relayed at approval). A scancode arriving between the drain and
+the `hlt` has already spent its interrupt; the `hlt` then sleeps until the
+*next* key. The standard idiom is mandatory: `cli`, check the ring; if empty,
+`sti` then `hlt` **immediately** — the one-instruction sti shadow guarantees a
+pending interrupt wakes the `hlt` rather than firing before it; if not empty,
+`sti` and drain. Never `hlt` while the ring holds data.
