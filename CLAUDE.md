@@ -50,3 +50,15 @@ test in the twin.
 - **A0000h is a segment, not an address.** In real mode write pixels via
   `ES = 0xA000` and a 16-bit offset; the offset wraps at 64 KB (320x200 = 64000
   bytes, so mode 13h just fits in one segment).
+- **QEMU line-doubles mode 13h.** A `screendump` of a 320x200 guest comes back
+  640x400. Never hard-code the guest resolution in a pixel check — split on
+  `height/2` and let the ratio fall out.
+- **SeaBIOS does not use COM1.** Its own output goes to the debug port (0x402)
+  and to VGA, so a serial capture contains only guest bytes. That is what makes
+  a byte-exact whole-stream comparison safe rather than brittle.
+- **A halted boot sector never exits QEMU.** Wrap headless runs in `timeout` and
+  treat exit 124 as the expected success signal; any other non-zero exit is a
+  real QEMU failure.
+- **Hooks are snapshotted at session start.** A hook added mid-session does not
+  fire until the next session. Verify a new hook by feeding it payloads directly,
+  and honour it by hand until then — do not assume it is protecting you.
