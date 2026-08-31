@@ -248,6 +248,30 @@ else
 fi
 echo
 
+# --------------------------------------------- test 3: scaling with -smp -----
+# The spec: "Test 2's logic passes at -smp 2 and -smp 8 - the count must follow
+# the machine, not be baked in."
+#
+# Two independent boots rather than a reuse of test 2's run. There is no time
+# pressure on this stage, and independence is worth twenty seconds: a build that
+# hard-codes 8 fails at -smp 2, and one that reads the MADT but never wakes
+# anything fails on woken at both.
+
+echo "Test 3 - Scaling: the same seven lines at -smp 2 and at -smp 8"
+if [ ! -f "$ESP" ]; then
+  fail "test 3: no image was built"
+else
+  scaled=0
+  serial_check 2 || scaled=1
+  serial_check 8 || scaled=1
+  if [ "$scaled" -eq 0 ]; then
+    pass "test 3: found = woken = the -smp value, at both 2 and 8"
+  else
+    fail "test 3: the core count does not follow the machine"
+  fi
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then
