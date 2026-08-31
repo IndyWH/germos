@@ -42,15 +42,23 @@ import sys
 # The frozen acceptance machinery, as repo-relative paths. Add to this tuple to
 # freeze another stage's tests; nothing else needs to change.
 #
-# Deliberately NOT frozen: stage1/mkimage.sh. It builds and packs the artefact,
-# it is not a criterion. Stage 1's test 1 judges the artefact that comes out -
-# the PE fields, and esp.img read back with mdir/mtype - so the packing recipe
-# has to stay fixable without disturbing a frozen file.
+# Deliberately NOT frozen: stage1/mkimage.sh and stage2/mkimage.sh. They build
+# and pack the artefact; they are not criteria. Each stage's test 1 judges the
+# artefact that comes out - the PE fields, and esp.img read back with
+# mdir/mtype - so the packing recipe has to stay fixable without disturbing a
+# frozen file. stage2/FONT.md (paperwork) is not frozen either.
+#
+# stage2/font8x8.bin IS frozen: the pixel checker renders its expected text
+# from that file, so an editable font would be an editable criterion - an
+# all-blank font would pass a blank screen.
 PROTECTED = (
     "stage0/test.sh",
     "stage0/checkpixels.py",
     "stage1/test.sh",
     "stage1/checkbands.py",
+    "stage2/test.sh",
+    "stage2/checktext.py",
+    "stage2/font8x8.bin",
 )
 
 BASENAMES = sorted({os.path.basename(p) for p in PROTECTED})
