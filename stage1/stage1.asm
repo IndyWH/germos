@@ -172,6 +172,145 @@ efi_main:
         lea     rsi, [msg_alive]
         call    serial_puts
 
+        ; -------------------------------------------------------------------
+        ; Step 2 of the spec: the Graphics Output Protocol, at the highest
+        ; resolution it offers with a 32-bit linear framebuffer.
+        ;
+        ; Nothing here hard-codes a resolution. Whatever the firmware offers is
+        ; measured, chosen, and then reported on serial - and the pixel test
+        ; reads the answer back out of that same log rather than being told.
+        ; -------------------------------------------------------------------
+        mov     rax, [boot_services]
+        lea     rcx, [gop_guid]
+        xor     edx, edx                ; Registration = NULL
+        lea     r8, [gop_ptr]
+        call    [rax + 0x140]           ; BootServices->LocateProtocol
+        test    rax, rax
+        jz      .gop_found
+        lea     rsi, [err_no_gop]
+        call    serial_err
+.gop_found:
+
+        mov     rbx, [gop_ptr]          ; RBX, R12-R15 are callee-saved, so the
+        mov     rax, [rbx + 0x18]       ; firmware gives them back untouched
+        mov     r13d, [rax]             ; Mode->MaxMode
+        xor     r12d, r12d              ; mode number under consideration
+        mov     r14d, -1                ; best mode so far: none
+        mov     dword [best_area], 0
+        mov     dword [best_w], 0
+
+.mode_loop:
+        cmp     r12d, r13d
+        jae     .mode_done
+
+        mov     rax, [rbx]              ; gop->QueryMode
+        mov     rcx, rbx
+        mov     edx, r12d
+        lea     r8, [info_size]
+        lea     r9, [info_ptr]
+        call    rax
+        test    rax, rax
+        jnz     .next_mode              ; a mode that will not describe itself
+
+        mov     rdi, [info_ptr]
+        mov     eax, [rdi + 0x0C]       ; PixelFormat
+        cmp     eax, 1                  ; 0 = RGB reserved, 1 = BGR reserved.
+        ja      .free_and_next          ; 2 is a bitmask, 3 is Blt-only: neither
+                                        ; is a 32-bit framebuffer we can write
+        mov     eax, [rdi + 4]          ; HorizontalResolution
+        mov     ecx, [rdi + 8]          ; VerticalResolution
+        test    eax, eax
+        jz      .free_and_next
+        test    ecx, ecx
+        jz      .free_and_next
+        mov     edx, eax
+        imul    edx, ecx                ; area, the thing we maximise
+        cmp     edx, [best_area]
+        ja      .take
+        jb      .free_and_next
+        cmp     eax, [best_w]           ; equal area: prefer the wider mode
+        jbe     .free_and_next
+.take:
+        mov     [best_area], edx
+        mov     [best_w], eax
+        mov     r14d, r12d
+
+.free_and_next:
+        mov     rax, [boot_services]
+        mov     rcx, [info_ptr]
+        call    [rax + 0x48]            ; BootServices->FreePool
+.next_mode:
+        inc     r12d
+        jmp     .mode_loop
+
+.mode_done:
+        cmp     r14d, -1
+        jne     .have_mode
+        lea     rsi, [err_no_mode]
+        call    serial_err
+.have_mode:
+
+        mov     rax, [rbx + 0x08]       ; gop->SetMode
+        mov     rcx, rbx
+        mov     edx, r14d
+        call    rax
+        test    rax, rax
+        jz      .mode_set
+        lea     rsi, [err_setmode]
+        call    serial_err
+.mode_set:
+
+        ; Read the numbers back from the protocol rather than from our own
+        ; candidate copy: after SetMode, gop->Mode is the authority.
+        mov     rax, [rbx + 0x18]       ; gop->Mode
+        mov     rdx, [rax + 0x18]       ; FrameBufferBase
+        mov     [fb_base], rdx
+        mov     rdx, [rax + 0x20]       ; FrameBufferSize
+        mov     [fb_size], rdx
+        mov     rax, [rax + 0x08]       ; Mode->Info
+        mov     ecx, [rax + 4]
+        mov     [fb_width], ecx
+        mov     ecx, [rax + 8]
+        mov     [fb_height], ecx
+        mov     ecx, [rax + 0x0C]
+        mov     [fb_format], ecx
+
+        ; Stride is PixelsPerScanLine, NOT width. They are allowed to differ,
+        ; and assuming otherwise skews every row down the screen.
+        mov     ecx, [rax + 0x20]
+        test    ecx, ecx
+        jnz     .have_stride
+        mov     ecx, [fb_width]         ; firmware that leaves it zero means "= width"
+.have_stride:
+        mov     [fb_pps], ecx
+
+        ; Item 10 identity-maps the first 4 GB. A framebuffer beyond that would
+        ; be unmapped the moment we load our own CR3, and the symptom would be a
+        ; black screen with no clue. Say so now instead.
+        mov     rax, [fb_base]
+        add     rax, [fb_size]
+        mov     rdx, 0x100000000
+        cmp     rax, rdx
+        jbe     .fb_reachable
+        lea     rsi, [err_fb_high]
+        call    serial_err
+.fb_reachable:
+
+        lea     rsi, [msg_gop]
+        call    serial_puts
+        mov     eax, [fb_width]
+        call    serial_putdec
+        mov     al, 'x'
+        call    serial_putc
+        mov     eax, [fb_height]
+        call    serial_putdec
+        lea     rsi, [msg_fb]
+        call    serial_puts
+        mov     rax, [fb_base]
+        call    serial_puthex64
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+
 halt_forever:
         cli
 .hang:  hlt
@@ -331,8 +470,38 @@ boot_services:  dq      0               ; EFI_BOOT_SERVICES *
 ; The seven lines of the spec, and nothing else on this channel.
 msg_alive:      db      'S1: alive', 13, 10, 0
 
+msg_gop:        db      'S1: gop ', 0
+msg_fb:         db      ' fb 0x', 0
+
 msg_err:        db      'ERR: ', 0
 msg_crlf:       db      13, 10, 0
+
+err_no_gop:     db      'no Graphics Output Protocol', 0
+err_no_mode:    db      'no GOP mode with a 32-bit linear framebuffer', 0
+err_setmode:    db      'GOP SetMode failed', 0
+err_fb_high:    db      'framebuffer sits above 4GB, beyond our identity map', 0
+
+; EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID, 9042a9de-23dc-4a38-96fb-7aded080516a.
+; A GUID is little-endian in its first three fields and big-endian in the last
+; two, which is why this is written out field by field rather than as bytes.
+        align   8
+gop_guid:       dd      0x9042a9de
+                dw      0x23dc
+                dw      0x4a38
+                db      0x96, 0xfb, 0x7a, 0xde, 0xd0, 0x80, 0x51, 0x6a
+
+        align   8
+gop_ptr:        dq      0               ; EFI_GRAPHICS_OUTPUT_PROTOCOL *
+info_ptr:       dq      0               ; the mode info QueryMode allocates
+info_size:      dq      0
+fb_base:        dq      0               ; framebuffer physical address
+fb_size:        dq      0               ; framebuffer length in bytes
+fb_width:       dd      0               ; HorizontalResolution
+fb_height:      dd      0               ; VerticalResolution
+fb_pps:         dd      0               ; PixelsPerScanLine - the stride, in pixels
+fb_format:      dd      0               ; 0 = RGB reserved, 1 = BGR reserved
+best_area:      dd      0
+best_w:         dd      0
 
         align   FILE_ALIGN, db 0
 data_raw_end:
