@@ -49,6 +49,8 @@ import sys
 PROTECTED = (
     "stage0/test.sh",
     "stage0/checkpixels.py",
+    "stage1/test.sh",
+    "stage1/checkbands.py",
 )
 
 BASENAMES = sorted({os.path.basename(p) for p in PROTECTED})

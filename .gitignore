@@ -13,3 +13,7 @@ out/
 *.png
 *.log
 serial.txt
+
+# Python bytecode from importing the checkers
+__pycache__/
+*.pyc
