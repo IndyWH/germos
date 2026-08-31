@@ -3,9 +3,11 @@
 Rolling state of the AI OS project. Read this first, then `ai-os-foundation.md`
 (the single source of truth), then the current stage's `spec.md` and `plan.md`.
 
-**Last updated:** 31 August 2026 — **Stage 1 closed.** Wajira ran test 5 and the
-`-smp 32` mirror run and confirmed both. Stage 2 opens: spec drafted, three
-judgement calls awaiting his answers.
+**Last updated:** 31 August 2026 — **Stage 1 closed and the closure recorded.**
+Wajira ran test 5 and the `-smp 32` mirror run on 31 August and confirmed both:
+the eight bands, the seven serial lines, and the mirror run at full likeness of
+mlrig's 32 CPUs. **`stage2/spec.md` is APPROVED** with all three judgement calls
+answered. Next: `stage2/plan.md`, drafted in plan mode, committed for approval.
 
 ---
 
@@ -14,7 +16,7 @@ judgement calls awaiting his answers.
 | | |
 |---|---|
 | Stage | 2 — Senses (opening) |
-| Status | Stage 1 **CLOSED**. `stage2/spec.md` is a **draft awaiting approval**; no plan yet, no code. |
+| Status | Stage 1 **CLOSED**. `stage2/spec.md` **APPROVED** (31 August 2026); plan awaited, no code. |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3, OVMF, mtools — Stage 2 needs no new packages |
@@ -77,25 +79,22 @@ burns its 60-second timeout, which is the expected outcome, not a fault).
 **Goal (foundation §7):** keyboard input and a text console on the framebuffer;
 the serial debug channel becomes permanent. Proves the machine is interactive.
 
-`stage2/spec.md` is committed as a **draft**. It grows on Stage 1's body and adds
-three organs: an IDT so CPU exceptions become readable serial messages instead of
-silent reboots, an interrupt-driven PS/2 keyboard, and a text console on the
-framebuffer. The bands retire; the console becomes the picture. Nine `S2:` boot
-lines, then the channel carries the raw echo of what is typed.
+`stage2/spec.md` is **APPROVED by Wajira, 31 August 2026**. It grows on Stage 1's
+body and adds three organs: an IDT so CPU exceptions become readable serial
+messages instead of silent reboots, an interrupt-driven PS/2 keyboard, and a text
+console on the framebuffer. The bands retire; the console becomes the picture.
+Nine `S2:` boot lines, then the channel carries the raw echo of what is typed.
 
-### Open questions for the owner — these block the Stage 2 plan
+### Decisions recorded at approval (owner, 31 August 2026)
 
-The spec flags three judgement calls, with Cowork's recommendation first:
+1. **Keyboard route.** Interrupt-driven via the remapped PIC; the IDT earns its
+   keep in debugging from here on.
+2. **The font.** The public-domain 8x8 classic (font8x8), scaled 2x.
+3. **Shift and symbols.** Unshifted-only this stage; shift is a later ring.
 
-1. **Keyboard route.** Interrupt-driven via the remapped PIC *(recommended)*, or
-   polling the i8042. The IDT arrives this stage either way.
-2. **The font.** Embed the public-domain 8x8 `font8x8` scaled 2x *(recommended)*,
-   or hand-draw our own.
-3. **Shift and symbols.** Unshifted-only this stage *(recommended)*, or full
-   shift handling now.
-
-Nothing else is needed. No Stage 2 code exists and none should be written until
-the spec is approved and a `stage2/plan.md` is committed and approved in turn.
+No Stage 2 code exists and none should be written until `stage2/plan.md` is
+committed and approved in turn — evaluation-first, tests committed red before
+any implementation code, as ever.
 
 ---
 
@@ -134,7 +133,7 @@ No block device, no loop mount, no `sudo`, nothing written outside
 
 ## Next action
 
-Wajira answers the three Stage 2 judgement calls and approves `stage2/spec.md`.
-Then a fresh Claude Code session starts in plan mode, commits `stage2/plan.md`
-for approval, and implements one commit per numbered item — acceptance tests
-first and committed red, as ever.
+Claude Code drafts `stage2/plan.md` in plan mode and commits it for Wajira's
+approval. After approval: one commit per numbered item — acceptance tests first
+and committed red, the hook extended to freeze them, then the implementation
+grown on Stage 1's proven code.

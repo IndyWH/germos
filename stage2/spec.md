@@ -1,6 +1,6 @@
 # Stage 2 spec — Senses
 
-**spec.md for Stage 2 · Cowork, 31 August 2026 · status: draft, awaiting owner approval**
+**spec.md for Stage 2 · Cowork, 31 August 2026 · status: APPROVED by Wajira, 31 August 2026**
 
 ## What we are building
 
@@ -36,8 +36,8 @@ Written before the code, frozen behind the hook. Test 4's checker renders its ex
 
 QEMU only; nothing outside the repo; serial before video; only the BSP touches serial and screen; every new fault class earns a CLAUDE.md gotcha and a regression check.
 
-## Judgement calls flagged for the owner
+## Decisions recorded at approval (owner, 31 August 2026)
 
-1. **Keyboard route.** Interrupt-driven via the remapped PIC (my recommendation — real interactivity, and the IDT pays for itself in debugging forever) versus polling the i8042 (simpler, no IDT yet). The IDT arrives this stage either way.
-2. **The font.** Embed the public-domain 8x8 classic (font8x8), scaled 2x (my recommendation — zero licensing questions, retro-correct), versus hand-drawing our own.
-3. **Shift and symbols.** Unshifted-only this stage (my recommendation — small rings) versus full shift handling now.
+1. **Keyboard route.** Interrupt-driven via the remapped PIC; the IDT earns its keep in debugging from here on.
+2. **The font.** The public-domain 8x8 classic (font8x8), scaled 2x. Zero licensing questions, retro-correct.
+3. **Shift and symbols.** Unshifted-only this stage; shift handling is a later ring.
