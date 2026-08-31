@@ -12,7 +12,7 @@ Rolling state of the AI OS project. Read this first, then `ai-os-foundation.md`
 | | |
 |---|---|
 | Stage | 0 — First pixel |
-| Status | Repository created. Spec approved. Plan not yet written. No code yet. |
+| Status | Plan approved and committed. Acceptance tests 1-3 written and frozen. Boot sector next. |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) |
 | Machine | mlrig, native Ubuntu 26.04 |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3 (PIL available) — all confirmed present |
@@ -67,7 +67,20 @@ so they exist and fail first.
 
 None currently.
 
+## The frozen acceptance machinery
+
+`stage0/test.sh` and `stage0/checkpixels.py` are the gate, and they are frozen.
+`.claude/hooks/protect-tests.py` is a `PreToolUse` hook, registered in
+`.claude/settings.json`, that denies any attempt to modify either file by Write,
+Edit, MultiEdit or Bash, while leaving them readable and runnable. Verified
+against 23 payloads — 13 that must be denied, 10 that must be allowed.
+
+**Caveat, recorded honestly:** Claude Code snapshots its hooks at session start,
+so a hook added mid-session is not live until the next session. During the
+session that created it the freeze was honoured by hand — neither file was
+touched after item 3 — and it bites mechanically from the next session on.
+
 ## Next action
 
-Write `stage0/plan.md` in plan mode, commit it, and stop for Wajira's approval.
-No implementation code before that approval.
+Items 5-7: write `stage0/stage0.asm` to the spec's layout, one commit per item,
+serial before video. Then item 8, HANDOVER close-out and the manual test 4.
