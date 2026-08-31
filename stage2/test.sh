@@ -2,8 +2,9 @@
 #
 # Stage 2 acceptance tests - the gate for the stage.
 #
-# Implements acceptance test 1 from stage2/spec.md; tests 2 to 4 are added by
-# later plan items, before any implementation code exists. Test 5 is Wajira's
+# Implements acceptance tests 1 and 2 from stage2/spec.md; tests 3 and 4 are
+# added by later plan items, before any implementation code exists. Test 5 is
+# Wajira's
 # eyeball on a windowed run and stays manual: his word is the gate for the
 # stage.
 #
@@ -123,6 +124,153 @@ if [ "${#probs[@]}" -eq 0 ]; then
 else
   fail "test 1: the artefact is not a packed PE32+ EFI application"
   for p in "${probs[@]}"; do echo "    - $p"; done
+fi
+echo
+
+# ------------------------------------------------- the serial check ----------
+# Used by test 2 at -smp 8. Boots the image headless and requires the nine S2:
+# lines from the spec, in order, with found = woken = the -smp value and the
+# console geometry agreeing with the GOP mode from the same log.
+#
+# OVMF chatters heavily on COM1, so every "S2: ..." run is pulled out of the
+# capture in order - a scan, not a line-start match, so a stray firmware escape
+# sequence sharing a line with our output cannot break the test, while the
+# content of each line stays strict.
+#
+# Requiring EXACTLY nine catches a triple-fault reboot loop, which would repeat
+# the whole sequence - though from this stage on a fault should instead appear
+# as an "ERR: exception" line, printed with the failing capture below.
+#
+# The guest waits for keystrokes forever by design, so timeout killing QEMU
+# (exit 124) is the expected outcome. Any other non-zero exit is a QEMU
+# failure.
+
+serial_check() {
+  local smp="$1"
+  local cap="$OUT/serial.$smp.txt"
+  local qerr="$OUT/qemu.$smp.err"
+  local lines_file="$OUT/s2.$smp.txt"
+  local rc
+
+  rm -f "$cap" "$qerr" "$lines_file"
+
+  timeout -k 5 60 qemu-system-x86_64 \
+    -machine q35 -m 256M -smp "$smp" \
+    -bios "$OVMF" \
+    -drive format=raw,file="$ESP" \
+    -display none -serial stdio \
+    </dev/null >"$cap" 2>"$qerr"
+  rc=$?
+
+  if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
+    echo "    -smp $smp: qemu exited $rc, expected 124 (killed by the 60s timeout)"
+    sed 's/^/      /' "$qerr"
+    return 1
+  fi
+
+  tr -d '\r' <"$cap" 2>/dev/null | grep -ao 'S2: .*' >"$lines_file" 2>/dev/null
+
+  local -a got=()
+  mapfile -t got <"$lines_file"
+
+  local bad=()
+
+  if [ "${#got[@]}" -ne 9 ]; then
+    bad+=("expected exactly 9 S2: lines, found ${#got[@]}")
+    if [ "${#got[@]}" -gt 9 ]; then
+      bad+=("more than nine usually means a reboot loop - and with the IDT up it should have been an ERR: exception line instead")
+    fi
+  fi
+
+  local l w="" h=""
+  l="${got[0]:-}"; [ "$l" = "S2: alive" ] || bad+=("line 1: got '$l', want 'S2: alive'")
+
+  l="${got[1]:-}"
+  if [[ "$l" =~ ^S2:\ gop\ ([0-9]+)x([0-9]+)\ fb\ 0x([0-9a-f]{16})$ ]]; then
+    w="${BASH_REMATCH[1]}"; h="${BASH_REMATCH[2]}"
+    local fb="${BASH_REMATCH[3]}"
+    [ "$w" -gt 0 ] || bad+=("line 2: width is $w")
+    [ "$h" -gt 0 ] || bad+=("line 2: height is $h")
+    [ "$fb" != "0000000000000000" ] || bad+=("line 2: framebuffer address is zero")
+  else
+    bad+=("line 2: got '$l', want 'S2: gop <W>x<H> fb 0x<16 hex digits>'")
+  fi
+
+  l="${got[2]:-}"; [ "$l" = "S2: boot services exited" ] || \
+    bad+=("line 3: got '$l', want 'S2: boot services exited'")
+  l="${got[3]:-}"; [ "$l" = "S2: gdt and paging ours" ] || \
+    bad+=("line 4: got '$l', want 'S2: gdt and paging ours'")
+  l="${got[4]:-}"; [ "$l" = "S2: idt ready" ] || \
+    bad+=("line 5: got '$l', want 'S2: idt ready'")
+
+  local found="" woken=""
+  l="${got[5]:-}"
+  if [[ "$l" =~ ^S2:\ cores\ found\ ([0-9]+)$ ]]; then
+    found="${BASH_REMATCH[1]}"
+  else
+    bad+=("line 6: got '$l', want 'S2: cores found <N>'")
+  fi
+
+  l="${got[6]:-}"
+  if [[ "$l" =~ ^S2:\ cores\ woken\ ([0-9]+)$ ]]; then
+    woken="${BASH_REMATCH[1]}"
+  else
+    bad+=("line 7: got '$l', want 'S2: cores woken <N>'")
+  fi
+
+  # The console geometry must be the arithmetic consequence of the GOP mode
+  # reported two lines up: 16x16 pixel cells (the 8x8 font scaled 2x), integer
+  # division. One rule, applied on both sides of the serial cable.
+  l="${got[7]:-}"
+  if [[ "$l" =~ ^S2:\ console\ ([0-9]+)x([0-9]+)$ ]]; then
+    local cols="${BASH_REMATCH[1]}" rows="${BASH_REMATCH[2]}"
+    if [ -n "$w" ] && [ -n "$h" ]; then
+      [ "$cols" -eq $((w / 16)) ] || \
+        bad+=("line 8: $cols columns, but $w pixels / 16 = $((w / 16))")
+      [ "$rows" -eq $((h / 16)) ] || \
+        bad+=("line 8: $rows rows, but $h pixels / 16 = $((h / 16))")
+    fi
+    [ "$cols" -ge 40 ] || bad+=("line 8: only $cols columns - too narrow for the boot log")
+    [ "$rows" -ge 12 ] || bad+=("line 8: only $rows rows - too short for the boot log")
+  else
+    bad+=("line 8: got '$l', want 'S2: console <COLS>x<ROWS>'")
+  fi
+
+  l="${got[8]:-}"; [ "$l" = "S2: keyboard ready" ] || \
+    bad+=("line 9: got '$l', want 'S2: keyboard ready'")
+
+  [ -n "$found" ] && [ "$found" != "$smp" ] && \
+    bad+=("cores found is $found, but the machine was given -smp $smp")
+  [ -n "$woken" ] && [ "$woken" != "$smp" ] && \
+    bad+=("cores woken is $woken, but the machine was given -smp $smp")
+  [ -n "$found" ] && [ -n "$woken" ] && [ "$found" != "$woken" ] && \
+    bad+=("cores found ($found) and cores woken ($woken) disagree - a core did not check in")
+
+  if [ "${#bad[@]}" -eq 0 ]; then
+    echo "    -smp $smp: nine S2: lines, in order, found = woken = $smp, console geometry agrees"
+    return 0
+  fi
+
+  echo "    -smp $smp: the serial log is not what the spec asks for"
+  for b in "${bad[@]}"; do echo "      - $b"; done
+  echo "      whole capture follows (OVMF chatter included):"
+  if [ -s "$cap" ]; then
+    cat -v "$cap" | sed 's/^/        /'
+  else
+    echo "        (nothing was captured at all)"
+  fi
+  return 1
+}
+
+# ------------------------------------------------- test 2: the serial lines --
+
+echo "Test 2 - Serial: the nine S2: lines, in order, at -smp 8"
+if [ ! -f "$ESP" ]; then
+  fail "test 2: no image was built"
+elif serial_check 8; then
+  pass "test 2: serial log matches the spec at -smp 8"
+else
+  fail "test 2: serial log does not match the spec at -smp 8"
 fi
 echo
 
