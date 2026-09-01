@@ -3,15 +3,19 @@
 Rolling state of the AI OS project. Read this first, then `ai-os-foundation.md`
 (the single source of truth), then the current stage's `spec.md` and `plan.md`.
 
-**Last updated:** 1 September 2026 — **Stage 4 green, pending the oracle.**
-All four automated tests pass: the booted machine reaches its broker on
-mlrig over a caged virtio network, asks a question typed as `? ...`, and
-prints the answer on its own console. The umbilical works. Built on Fable 5
-at high effort (the owner's decision), one commit per numbered item, the
-plan gate hook holding until Wajira approved — its first live use. **Test 5
-is his:** boot windowed with the real broker and ask Claude something true.
+**Last updated:** 1 September 2026 — **Stage 4 CLOSED.** Wajira ran test 5
+with the real broker: the booted machine reached Claude over the caged
+virtio network, asked a question typed as `? ...`, and printed the answer
+on its own console — *"The booted OS asks Claude a question and prints the
+answer!"* The umbilical works. Built on Fable 5 at high effort (the owner's
+decision), one commit per numbered item, the plan gate hook holding until he
+approved — its first live use. Test 5 surfaced one real thing (below): the
+broker's `--bare` flag skipped the CLI's own login, so the real `claude -p`
+could not authenticate; dropping it (commit `5b9e8fa`) closed the stage.
 Everything ran inside QEMU with the cage (`restrict=on`, one `guestfwd`);
-the gate spoke only to the mock broker and never spent a token.
+the automated gate spoke only to the mock and never spent a token. Next:
+Cowork's review, then Stage 5 — the conversation. The project now has a
+name: **GermOS** (foundation v1.9).
 
 ---
 
@@ -19,8 +23,8 @@ the gate spoke only to the mock broker and never spent a token.
 
 | | |
 |---|---|
-| Stage | 4 — The umbilical |
-| Status | Tests 1–4 **GREEN**. Test 5 (oracle) pending Wajira. |
+| Stage | 4 — The umbilical **CLOSED** |
+| Status | All five tests **PASS** (test 5 confirmed by Wajira, 1 September 2026). |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3, OVMF, mtools — Stage 4 needs no new packages (the broker is standard-library Python and shells out to `claude`) |
@@ -292,7 +296,7 @@ call and spent no token.** The only outward connection in the whole design is
 `claude -p`'s own HTTPS from the real broker, and that happens only in
 Wajira's hands at test 5.
 
-## Stage 4 — The umbilical · green-pending-oracle 1 September 2026
+## Stage 4 — The umbilical · closed 1 September 2026
 
 **Goal (foundation §7):** network driver, minimal TCP/IP, and a broker on
 mlrig that relays to Claude. Done when the booted OS asks Claude a question
@@ -313,8 +317,9 @@ first live use).
   connection at a time; `--mock` answers from the table and calls nothing;
   `--record` logs the raw bytes as hex so the checker judges by the document.
   `broker/claude_backend.py` (**not** frozen) is the one swappable function:
-  `claude -p --output-format text --tools "" --no-session-persistence --bare`
-  with a two-line brief, its output folded to the wire's ASCII.
+  `claude -p --output-format text --tools "" --no-session-persistence` with a
+  two-line brief, its output folded to the wire's ASCII. (`--bare` was in the
+  plan and was dropped at test 5 — see below.)
 - **Two virtio devices** — Stage 3's globals became a per-device block; one
   PCI pass records both BDFs; `vio_attach`/`vio_negotiate`/`vq_init` are
   generic. On this machine the NIC is at bus 0 device 2 (`1af4:1000`, BAR4
@@ -341,7 +346,7 @@ first live use).
 | 2 | Serial — twelve `S4:` lines, `S4: nic <mac>` in its slot carrying the harness's chosen MAC, found = woken = 8 | **PASS** |
 | 3 | The question — mock up, `? ping` and `? hello` round-trip (broker receives exactly those frames per UMBILICAL.md; the canned answers are on the screen pixel-correct; a note typed between them is the only thing journaled; the wire echo untouched), at `-smp 2` and `-smp 8` | **PASS** |
 | 4 | The cage — `restrict=on` with the single guestfwd asserted in both harnesses; a mock-down run ends in `no answer from the broker`, not a hang | **PASS** |
-| 5 | **Oracle — Wajira's eyeball, with the real broker** | **PENDING** |
+| 5 | **Oracle — Wajira's eyeball, with the real broker** | **PASS — confirmed 1 September 2026: the machine asked Claude and printed the answer** |
 
 Tests 1–4 were committed **red** before any of `stage4.asm` existed and went
 green where the plan predicted: test 1 at item 8, test 2 at item 10, tests 3
@@ -362,6 +367,14 @@ dependency (OpenBSD netcat, stock Ubuntu).
 outside the accepted window and the guest gave up while holding an answered
 request. Advancing `snd_nxt` at send time fixed it.
 
+**One thing test 5 surfaced, now a gotcha:** the backend's `--bare` flag
+skips the CLI's own login (OAuth and keychain) along with the hooks and
+CLAUDE.md discovery, so the real `claude -p` returned an auth failure while
+the mock gate — which never runs the backend — stayed green. Dropped at
+test 5 (commit `5b9e8fa`). The lesson: the frozen mock proves the wire, but
+the real backend has its own failure surface that only the oracle exercises,
+and Stage 5 will lean on `claude -p` far harder.
+
 **Caveats carried forward:**
 
 - **Everything Stage 3 carried**, minus "unshifted only" — the shifted US
@@ -377,7 +390,8 @@ request. Advancing `snd_nxt` at send time fixed it.
   touches a real wire (Stage 7). Cryptography is never improvised.
 - **The broker's `claude -p` backend is exercised only at test 5.** Its
   flags are its own to get right there; the file is unfrozen for that reason,
-  and the automated gate never runs it.
+  and the automated gate never runs it. Proven at test 5 after `--bare` was
+  dropped (above).
 
 **The two gate questions, settled by the owner at the opening:**
 
@@ -414,33 +428,8 @@ ready, and wait.
 
 ## Next action
 
-**Test 5 — the oracle — is Wajira's.** In two terminals at the repo root.
-Start the real broker:
-
-```
-python3 broker/broker.py
-```
-
-Then boot the grown machine, windowed (no `mac=`, so it prints QEMU's
-default MAC):
-
-```
-qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
-  -drive format=raw,file=stage4/out/esp.img \
-  -drive format=raw,file=stage4/out/notes.img,if=virtio \
-  -netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9999' \
-  -device virtio-net-pci,netdev=n0 -serial stdio
-```
-
-He types `? ` and something true, watches the indicator turn, and reads
-Claude's answer on GermOS's own screen. His word closes the stage. (The
-broker calls `claude -p` on the Max subscription — no API key, per the
-policy re-check.) `stage4/out/` is gitignored; if the boot image is gone,
-`./stage4/mkimage.sh` rebuilds it and `truncate -s 16M stage4/out/notes.img`
-makes a blank notebook the first boot formats. A note typed at the prompt
-(no `?`) still persists across a reboot, exactly as Stage 3.
-
-Then **Cowork reviews CC's Stage 4 diffs** per `REVIEW.md`: bugs first, and
+**Stage 4 is closed.** **Cowork reviews CC's Stage 4 diffs** per `REVIEW.md`:
+bugs first, and
 the foundation asks for a disassembly-level read on anything touching memory
 maps or the wire — the places to look hardest are `tcp_input`'s state
 machine and checksums, `net_poll`'s ring handling, `vio_attach`'s capability
@@ -451,6 +440,25 @@ still stands.
 Then **Stage 5 — the conversation** (foundation §7): English in, machine
 code back, verified in the twin, then run; the germline as a local cache.
 The subscription policy is re-checked again at that gate, per the foundation.
+
+To ask GermOS a question again at any time, in two terminals at the repo
+root — the real broker, then the machine windowed:
+
+```
+python3 broker/broker.py
+```
+```
+qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
+  -drive format=raw,file=stage4/out/esp.img \
+  -drive format=raw,file=stage4/out/notes.img,if=virtio \
+  -netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9999' \
+  -device virtio-net-pci,netdev=n0 -serial stdio
+```
+
+Type `? ` and a question; a note (no `?`) still persists across a reboot,
+exactly as Stage 3. `stage4/out/` is gitignored — if the images are gone,
+`./stage4/mkimage.sh` rebuilds the boot image and
+`truncate -s 16M stage4/out/notes.img` makes a blank notebook.
 
 To boot Stage 3 again at any time, from the repo root:
 

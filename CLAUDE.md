@@ -201,6 +201,11 @@ test in the twin.
 - **QEMU sizes a virtio device's queues to the vCPU count.** virtio-blk here
   reports two queues at `-smp 2`, not one; drive only the queue you enabled
   and do not read a count into an assumption.
+- **`claude -p --bare` skips the CLI's own login**, not just hooks and
+  CLAUDE.md discovery — so the real call fails to authenticate while the mock
+  gate, which never runs the backend, stays green. Leave `--bare` off the
+  broker's backend. The mock proves the wire; the real `claude -p` has its
+  own failure surface that only the oracle (test 5) exercises.
 
 ## Working with the hooks
 
