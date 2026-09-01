@@ -725,6 +725,19 @@ efi_main:
         ; -------------------------------------------------------------------
         call    tsc_calibrate
 
+        ; The service table a component is born into (GERMLINE.md, "The
+        ; service table"): four addresses, filled here with RIP-relative
+        ; leas - no absolute address anywhere, as the stripped relocations
+        ; demand.
+        lea     rax, [svc_draw_text]
+        mov     [svc_table + 8], rax
+        lea     rax, [svc_console_size]
+        mov     [svc_table + 16], rax
+        lea     rax, [svc_poll_key]
+        mov     [svc_table + 24], rax
+        lea     rax, [ticks_ms]
+        mov     [svc_table + 32], rax
+
         ; -------------------------------------------------------------------
         ; The console - the second new organ. Clears the screen, replays the
         ; mirrored boot log, and from here every serial byte is drawn live by
@@ -2921,7 +2934,8 @@ grow_request:
         call    component_valid         ; RSI = the content, ECX = N
         test    eax, eax
         jz      .bad
-        jmp     .bad                    ; item 12 runs it from here
+        call    run_component
+        jmp     finish_line
 .refusal:
         inc     rsi
         dec     ecx
@@ -3031,6 +3045,89 @@ finish_line:
         mov     dword [kbd_e0], 0
         sti
         call    console_prompt
+        ret
+
+; run_component - the loader (GERMLINE.md, "The entry contract" and "What
+; the screen does around a component"). The frame has been received into
+; the component region and checked; the blob's first byte is at
+; comp_region + COMP_BLOB_OFF. The framebuffer is cleared (the shadow
+; kept), the blob is called with RDI = the service table and RSP 16-aligned,
+; on the BSP's own stack, interrupts enabled; when it returns the console is
+; re-rendered from the shadow. The component may clobber every register but
+; RSP, so RSP is kept in memory, not a register. Clobbers registers freely.
+run_component:
+        call    fb_clear
+        lea     rdi, [svc_table]
+        lea     rax, [comp_region + COMP_BLOB_OFF]
+        mov     [saved_rsp], rsp
+        and     rsp, -16
+        call    rax                     ; the grown code runs here
+        mov     rsp, [saved_rsp]
+        cld                             ; the contract says clear; be sure
+        call    console_redraw
+        ret
+
+; svc_draw_text - RDI = row, RSI = column, RDX = the bytes, RCX = how many.
+; Each byte in the next cell along the row from the shared font, stopping
+; at the right edge; a row outside the console draws nothing; a byte outside
+; 0x20-0x7E draws as a space. Pixels only - the shadow is untouched, which
+; is what lets run_component restore the conversation. Preserves RBX, RBP,
+; RSP, R12-R15 (the service contract).
+svc_draw_text:
+        push    rbx
+        push    r12
+        push    r13
+        push    r14
+        push    r15
+        mov     r12, rdi                ; row
+        mov     r13, rsi                ; column
+        mov     r14, rdx                ; the bytes
+        mov     r15, rcx                ; how many
+        mov     eax, [con_rows]
+        cmp     r12, rax
+        jae     .done
+.next:
+        test    r15, r15
+        jz      .done
+        mov     eax, [con_cols]
+        cmp     r13, rax
+        jae     .done                   ; the right edge
+        movzx   eax, byte [r14]
+        cmp     al, 0x20
+        jb      .space
+        cmp     al, 0x7E
+        jbe     .draw
+.space:
+        mov     eax, ' '                ; (CHAR_SPACE is defined further down - %define is positional)
+.draw:
+        mov     ebx, r12d
+        mov     ecx, r13d
+        call    draw_cell
+        inc     r14
+        inc     r13
+        dec     r15
+        jmp     .next
+.done:
+        pop     r15
+        pop     r14
+        pop     r13
+        pop     r12
+        pop     rbx
+        ret
+
+; svc_console_size - RAX = cols | rows << 32.
+svc_console_size:
+        mov     eax, [con_cols]
+        mov     edx, [con_rows]
+        shl     rdx, 32
+        or      rax, rdx
+        ret
+
+; svc_poll_key - RAX = the next key as kbd_next translates it, or 0. A key a
+; component takes never reaches the prompt and is never echoed.
+svc_poll_key:
+        call    kbd_next
+        movzx   eax, al
         ret
 
 ; The working indicator: one cell at column 0 of the fresh line, cycling
@@ -3446,12 +3543,7 @@ console_init:
 
         ; Clear the whole framebuffer - stride padding and any part-cell edge
         ; included - so everything on screen is one of our two colours.
-        mov     eax, [fb_pps]
-        mul     dword [fb_height]       ; EDX:EAX = pixels to paint
-        mov     ecx, eax
-        mov     rdi, [fb_base]
-        mov     eax, [bg_pix]
-        rep     stosd
+        call    fb_clear
 
         mov     dword [cur_row], 0
         mov     dword [cur_col], 0
@@ -3473,6 +3565,56 @@ console_init:
 .too_big:
         lea     rsi, [err_shadow]
         call    serial_err
+
+; fb_clear - the whole framebuffer painted with the background, stride
+; padding and any part-cell edge included. The shadow is not touched: the
+; loader clears the screen for a component this way and re-renders the
+; conversation from the shadow afterwards. Preserves everything.
+fb_clear:
+        push    rax
+        push    rcx
+        push    rdx
+        push    rdi
+        mov     eax, [fb_pps]
+        mul     dword [fb_height]       ; EDX:EAX = pixels to paint
+        mov     ecx, eax
+        mov     rdi, [fb_base]
+        mov     eax, [bg_pix]
+        rep     stosd
+        pop     rdi
+        pop     rdx
+        pop     rcx
+        pop     rax
+        ret
+
+; console_redraw - re-render the whole screen from the shadow, row by row,
+; cell by cell. The framebuffer is never read. Preserves everything.
+console_redraw:
+        push    rax
+        push    rbx
+        push    rcx
+        push    rdx
+        xor     ebx, ebx
+.row:
+        xor     ecx, ecx
+.col:
+        mov     eax, ebx
+        imul    eax, [con_cols]
+        add     eax, ecx
+        lea     rdx, [shadow]
+        movzx   eax, byte [rdx + rax]
+        call    draw_cell
+        inc     ecx
+        cmp     ecx, [con_cols]
+        jb      .col
+        inc     ebx
+        cmp     ebx, [con_rows]
+        jb      .row
+        pop     rdx
+        pop     rcx
+        pop     rbx
+        pop     rax
+        ret
 
 ; console_putc - AL = the byte, drawn at the cursor. Preserves everything.
 ;
@@ -3699,22 +3841,7 @@ console_scroll:
         mov     al, CHAR_SPACE
         rep     stosb
 
-        xor     ebx, ebx                ; re-render: row by row, cell by cell
-.row:
-        xor     ecx, ecx
-.col:
-        mov     eax, ebx
-        imul    eax, [con_cols]
-        add     eax, ecx
-        lea     rdx, [shadow]
-        movzx   eax, byte [rdx + rax]
-        call    draw_cell
-        inc     ecx
-        cmp     ecx, [con_cols]
-        jb      .col
-        inc     ebx
-        cmp     ebx, [con_rows]
-        jb      .row
+        call    console_redraw          ; re-render: row by row, cell by cell
 
         pop     rdi
         pop     rsi
@@ -4502,6 +4629,16 @@ gop_guid:       dd      0x9042a9de
                 dw      0x4a38
                 db      0x96, 0xfb, 0x7a, 0xde, 0xd0, 0x80, 0x51, 0x6a
 
+; The service table (GERMLINE.md): ABI version, size, four addresses filled
+; at boot. A component finds it in RDI.
+        align   8
+svc_table:      dd      1               ; ABI version
+                dd      40              ; the table's size in bytes
+                dq      0               ; draw_text
+                dq      0               ; console_size
+                dq      0               ; poll_key
+                dq      0               ; ticks_ms
+
         align   8
 gop_ptr:        dq      0               ; EFI_GRAPHICS_OUTPUT_PROTOCOL *
 info_ptr:       dq      0               ; the mode info QueryMode allocates
@@ -4690,6 +4827,7 @@ grow_buf:       resb    1 + 512         ; the grow request's text: the marker, t
         alignb  16
 tsc_per_ms:     resq    1
 tsc_boot:       resq    1
+saved_rsp:      resq    1               ; the loader's stack pointer across a component
 
 ; The component region (the COMP_* layout at the top of the file): a grow
 ; response lands here from +28, and a component runs from +64. Page-aligned
