@@ -330,6 +330,23 @@ else
 fi
 echo
 
+# ------------------------------------------------ test 4: the picture --------
+# After the second boot, a screendump: the replayed "remember me" rendered
+# pixel-correct from the same font file the assembly includes, the prompt and
+# cursor on the row directly below it, and nothing but the two console
+# colours anywhere on screen. The work is in stage3/checknotes.py --pixels,
+# which drives its own two boots at -smp 8 and prints its own diagnosis.
+
+echo "Test 4 - Pixels: the replayed note above the prompt, rendered from the shared font"
+if [ ! -f "$ESP" ]; then
+  fail "test 4: no image was built"
+elif python3 "$REPO/stage3/checknotes.py" --pixels; then
+  pass "test 4: the picture shows the remembered note, the prompt, and the two colours only"
+else
+  fail "test 4: the screen does not show what the machine remembered (see above)"
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then
