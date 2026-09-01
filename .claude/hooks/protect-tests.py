@@ -79,6 +79,10 @@ import sys
 # stage2/font8x8.bin IS frozen: the pixel checker renders its expected text
 # from that file, so an editable font would be an editable criterion - an
 # all-blank font would pass a blank screen.
+#
+# stage3/NOTEBOOK.md IS frozen for the same reason: the assembler implements
+# the on-disk format it describes and the checker parses by it, so an editable
+# format would be an editable criterion. stage3/mkimage.sh stays unfrozen.
 PROTECTED = (
     "stage0/test.sh",
     "stage0/checkpixels.py",
@@ -87,6 +91,9 @@ PROTECTED = (
     "stage2/test.sh",
     "stage2/checktext.py",
     "stage2/font8x8.bin",
+    "stage3/test.sh",
+    "stage3/checknotes.py",
+    "stage3/NOTEBOOK.md",
 )
 
 BASENAMES = sorted({os.path.basename(p) for p in PROTECTED})

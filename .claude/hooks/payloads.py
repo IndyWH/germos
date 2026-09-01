@@ -30,6 +30,7 @@ DENY, ALLOW = "DENY", "ALLOW"
 FROZEN_0 = ["stage0/test.sh", "stage0/checkpixels.py"]
 FROZEN_1 = ["stage1/test.sh", "stage1/checkbands.py"]
 FROZEN_2 = ["stage2/test.sh", "stage2/checktext.py", "stage2/font8x8.bin"]
+FROZEN_3 = ["stage3/test.sh", "stage3/checknotes.py", "stage3/NOTEBOOK.md"]
 FROZEN = FROZEN_0 + FROZEN_1 + FROZEN_2
 
 
@@ -199,8 +200,26 @@ CASES += [(c, ALLOW, "bodyguard allows: " + w) for c, w in [
     (bash("printf 'info pci\\nquit\\n' | " + QEMU + "-drive format=raw,file=stage2/out/esp.img -monitor stdio"),
      "monitor over stdio"),
     (write("stage3/out/notes.img"), "Write into out/"),
-    (write("stage3/NOTEBOOK.md"), "Write the format document (not yet frozen)"),
 ]]
+
+# --- Stage 3: the freeze (plan item 7) --------------------------------------
+CASES += [(c, v, "stage3 freeze: " + w) for c, v, w in freeze_cases(FROZEN_3)]
+CASES += [
+    (write("stage3/NOTEBOOK.md"), DENY, "stage3 freeze: the format is a criterion"),
+    (bash("./stage3/test.sh"), ALLOW, "stage3 freeze allows: running the gate"),
+    (bash("./stage3/test.sh > stage3/out/gate.log 2>&1"), ALLOW, "stage3 freeze allows: gate output redirected"),
+    (bash("python3 stage3/checknotes.py --persist 8"), ALLOW, "stage3 freeze allows: the checker"),
+    (bash("python3 stage3/checknotes.py --pixels"), ALLOW, "stage3 freeze allows: the checker"),
+    (bash("cat stage3/NOTEBOOK.md"), ALLOW, "stage3 freeze allows: reading the format"),
+    (bash("grep -n NOTE stage3/NOTEBOOK.md"), ALLOW, "stage3 freeze allows: grepping the format"),
+    (bash("sed -i 's/48/64/' stage3/mkimage.sh"), ALLOW, "stage3 freeze allows: the builder is not frozen"),
+    (write("stage3/mkimage.sh"), ALLOW, "stage3 freeze allows: Write the builder"),
+    (write("stage3/stage3.asm"), ALLOW, "stage3 freeze allows: Write the implementation"),
+    (write("stage3/plan.md"), ALLOW, "stage3 freeze allows: the plan is paperwork"),
+    (write("stage4/test.sh"), ALLOW, "stage3 freeze allows: creating the next stage's test file"),
+    (write("stage4/NOTEBOOK.md"), ALLOW, "stage3 freeze allows: a later stage's format document"),
+    (bash("nasm -f bin stage3/stage3.asm -o stage3/out/BOOTX64.EFI"), ALLOW, "stage3 freeze allows: assembling"),
+]
 
 
 def run(case):
