@@ -486,16 +486,87 @@ the backend's `grow()`, the harness and tests 1–4 committed red, the
 freeze (seven paths; the `-o` side door closed; 567 payloads, 0 wrong).
 Part 2 in progress: item 9 (`stage5.asm`, test 1 green), item 10 (the
 region at `0x4b4040`, `tsc_per_ms` 2999478, `kbd_next`, line twelve;
-test 2 green).
+test 2 green), item 11 (the marker parse, the grow path, the generalised
+receive — every conversation row proven by a probe against the mock).
+
+**STOPPED before item 12 — a defect in a frozen file, for the owner's
+decision (the plan's scope guard).** Item 11's probe drove a real grow
+request through the mock, and the pipeline's rehearsal failed with `the
+twin did not boot` in 0 s — the twin's QEMU died at start. The cause,
+measured directly: **QEMU locks a raw image its guest holds, and refuses
+a second QEMU on it** (`qemu-system-x86_64: Failed to get "write" lock —
+Is another process using the image [stage5/out/esp.img]?`).
+`broker/rehearse.py` boots `stage5/out/esp.img` — the very image the
+user's guest is running from — so the rehearsal can never boot while a
+guest is up: every real use, the gate's tests 3 and 4, and test 5 alike.
+The plan's environment table did not catch it because the pre-planning
+probes never ran two QEMUs on one image. `rehearse.py` is frozen (item
+8), and the hook is right to hold it: this is a spec question, not an
+edit.
+
+Two fixes were measured, each one line in `rehearse.py`:
+
+1. **A private copy of the image for the twin (recommended).** In
+   `rehearse()`, after `disk = ...`: `twin = os.path.join(workdir,
+   "esp.img")` then `shutil.copyfile(image, twin)` beside the notebook's
+   `truncate`, and `qemu_argv(twin, disk, serial_path, port)` instead of
+   `qemu_argv(image, ...)`. 48 MB copied per rehearsal (about 50 ms), QEMU's
+   locking left intact, the twin's disks entirely its own, all under
+   `stage5/out/rehearsal/` as the bodyguard requires. "The same guest
+   image" stays literally true: a byte-identical copy.
+2. **`file.locking=off` on the twin's boot drive** — in `qemu_argv`,
+   `"format=raw,file=" + image + ",file.locking=off"`. Measured to boot
+   the in-use image straight through its `S5:` lines. Cheaper, but it
+   switches off a safety QEMU provides, on an image two machines then
+   share; `read-only=on` does *not* work (the SATA node must be writable).
+
+A cosmetic second thing in the same file, worth the same decision: when
+the twin's QEMU exits early, Python's finaliser prints `Exception ignored
+... BrokenPipeError` for the monitor pipe on the broker's stderr — `tell()`
+already swallows the write error, so a `proc.stdin.close()` inside a
+`try` in the `finally` block silences it. No behaviour changes.
+
+**What the owner decides:** either apply fix 1 (and the cosmetic close)
+by his own hand in his terminal — the freeze never opens, the diff is
+his: **`git apply stage5/out/rehearse.fix.patch`** at the repo root (the
+patch is written out there, validated with `git apply --check`, not
+applied; `stage5/out/` is gitignored, so it is a note to him, not repo
+content) — or authorise the next session to open the freeze on
+`broker/rehearse.py` for exactly that change and re-freeze in the same
+commit (Stage 4's decision 13 anticipated this shape: by decision, not by
+drift). Either way the fixed file is committed as its own item ("item
+8b") and the payload table re-run.
+
+**Item 12 is written and proven, and waits in the working tree
+uncommitted** (`git status` shows `stage5/stage5.asm` modified on top of
+item 11): the loader (`run_component`: `fb_clear`, the call with `RDI` =
+the service table and `RSP` 16-aligned, `console_redraw` after), the four
+services (`svc_draw_text`, `svc_console_size`, `svc_poll_key` on
+`kbd_next`, `ticks_ms`), the table filled at boot RIP-relative. Its commit
+must be the green one, so it stays uncommitted until the rehearsal can
+boot. It was proven end to end by a scratch probe that gave the mock a
+byte-identical *copy* of the image to rehearse on — exactly what fix 1
+does — judged by the checker's own functions with zero problems: `!
+fault` refused after two rehearsals failing `the twin reported an error`
+(14 s each); `! test component` rehearsed, cached with provenance, run —
+the five strips with `key: k` on a cleared screen — served from the
+germline the second time with no generation call; `! big` streamed as a
+1,048,612-byte frame, run, its strips on screen; Esc restoring the
+conversation each time; the echo exactly the typed lines; the notebook
+exactly the note; the record's generation-call sequence 2 / 3 / 3 / 4. Once
+`rehearse.py` boots a copy, `./stage5/test.sh` is expected green at
+item 12's commit.
 
 ## Next action
 
-**Stage 5's plan.** Draft `stage5/plan.md` from the approved spec in plan
-mode (numbered items, one commit each; tests 1–4 written and committed red
-before any of `stage5.asm` exists; `stage5/GERMLINE.md`; the canned test
-component; the mock's grow path and the rehearsal pipeline with its call
-counter; the freeze-list extension with the payload table re-run), commit
-it, and wait for the owner's approval. Then implement item by item.
+**Wajira decides the `broker/rehearse.py` fix** (the Stage 5 section
+above: `git apply stage5/out/rehearse.fix.patch` by his own hand, or an
+authorised opening of the freeze). Then the next session: commit the fixed
+rehearsal as item 8b with the payload table re-run; run `./stage5/test.sh`
+on the working tree (item 12's code is already applied there) and commit
+item 12 green; item 13 (HANDOVER to green-pending-oracle, the gotchas,
+README's Stage 5 commands); then test 5 — `python3 broker/germline.py`
+and the windowed machine, `! make me a clock`.
 
 **Cowork's Stage 4 review** per `REVIEW.md` still stands as an open item:
 bugs first, and the foundation asks for a disassembly-level read on anything

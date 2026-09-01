@@ -206,6 +206,20 @@ test in the twin.
   gate, which never runs the backend, stays green. Leave `--bare` off the
   broker's backend. The mock proves the wire; the real `claude -p` has its
   own failure surface that only the oracle (test 5) exercises.
+- **QEMU locks a raw image its guest boots from.** A second QEMU on the
+  same file fails at start (`Failed to get "write" lock`), and
+  `read-only=on` does not help on a SATA node. The twin must boot a
+  byte-identical *copy* of the image (or `file.locking=off`, which
+  disables the safety instead). Found at Stage 5 item 11, in a frozen
+  file — probe two QEMUs on one image before freezing anything that
+  boots one.
+- **EFER.NXE is on under OVMF, but our own page tables carry no NX bits**,
+  so anything mapped is executable — a component region in BSS needs no
+  mapping change. Measured at Stage 5's planning: a blob copied there and
+  called returned.
+- **`pkill -f <pattern>` matches the shell running it** when the pattern
+  appears in the command line; the shell dies with exit 144. Use a
+  self-excluding pattern (`germline.p[y]`).
 
 ## Working with the hooks
 
