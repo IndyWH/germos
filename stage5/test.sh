@@ -363,6 +363,38 @@ else
 fi
 echo
 
+# ------------------------------------------------- test 3: the growth -------
+# The soul of the stage, mocked. The checker starts the Stage 5 MOCK broker
+# with a wiped germline and a record file, boots inside the cage, types a
+# note, "? ping" and "! test component" via the monitor; the mock serves the
+# canned test component - after REHEARSING it in a real headless boot of
+# this same image - and the guest loads and runs it; the checker types a key
+# while it runs, screendumps, sends Esc, types a note, screendumps again. It
+# demands the thirteen boot lines; the echo exactly the four typed lines; the
+# record holding the question and one grow whose raw bytes ARE GERMLINE.md's
+# frame, generated once, rehearsed once, answered with the component frame
+# the checker rebuilds from stage5/component.bin; the germline holding
+# exactly that entry with its provenance; the notebook holding exactly the
+# two notes; the component's five strips on a cleared screen with the key it
+# was given; and the conversation restored with the prompt below. At -smp 2
+# and -smp 8. The work is in stage5/checkgermline.py, which prints its own
+# diagnosis.
+
+echo "Test 3 - The growth: '! test component' rehearsed, served, run, a key seen, Esc, at -smp 2 and -smp 8"
+if [ ! -f "$ESP" ]; then
+  fail "test 3: no image was built"
+else
+  grown=0
+  python3 "$REPO/stage5/checkgermline.py" --grow 2 || grown=1
+  python3 "$REPO/stage5/checkgermline.py" --grow 8 || grown=1
+  if [ "$grown" -eq 0 ]; then
+    pass "test 3: the machine grew a component, ran it, and came back to its prompt, at both -smp 2 and -smp 8"
+  else
+    fail "test 3: the growth did not round-trip (see above)"
+  fi
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then
