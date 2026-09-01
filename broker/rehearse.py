@@ -307,11 +307,15 @@ def rehearse(blob, image, workdir, port=DEFAULT_PORT):
         shutil.rmtree(workdir)
     os.makedirs(workdir)
     disk = os.path.join(workdir, "notes.img")
+    twin = os.path.join(workdir, "esp.img")     # a private, byte-identical copy of the
+                                                # image: QEMU locks the file a guest boots from
     serial_path = os.path.join(workdir, "serial.txt")
     shot_b = os.path.join(workdir, "b.ppm")
     shot_c = os.path.join(workdir, "c.ppm")
     with open(disk, "wb") as fh:
         fh.truncate(DISK_BYTES)
+    if os.path.isfile(image):
+        shutil.copyfile(image, twin)
 
     evidence = {"ready": False, "lines": [], "errs": [], "echo": None,
                 "delivered": False, "b": False, "c": False, "notes": None,
@@ -334,7 +338,7 @@ def rehearse(blob, image, workdir, port=DEFAULT_PORT):
         return judge(evidence, time.time() - t_start, log)
     listener.start()
 
-    proc = subprocess.Popen(qemu_argv(image, disk, serial_path, port),
+    proc = subprocess.Popen(qemu_argv(twin, disk, serial_path, port),
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     def tell(line):
@@ -404,6 +408,10 @@ def rehearse(blob, image, workdir, port=DEFAULT_PORT):
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+        try:
+            proc.stdin.close()          # a twin that died early would otherwise
+        except OSError:                 # raise BrokenPipeError from the finaliser
+            pass
         listener.stop.set()
 
     cap = serial_bytes()

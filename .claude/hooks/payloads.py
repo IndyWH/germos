@@ -318,6 +318,13 @@ CASES += [
           "-drive format=raw,file=stage5/out/esp.img -drive format=raw,file=stage5/out/rehearsal/notes.img,if=virtio "
           + REHEARSAL_CAGE + "-display none -serial file:stage5/out/rehearsal/serial.txt -monitor stdio"),
      ALLOW, "bodyguard allows: the rehearsal's command, drives under stage5/out/rehearsal/"),
+    # Item 8b: the twin boots a private copy of the image, itself under the
+    # rehearsal's scratch directory - QEMU locks the file a guest boots from.
+    (bash("qemu-system-x86_64 -machine q35 -m 256M -smp 2 -bios /usr/share/ovmf/OVMF.fd "
+          "-drive format=raw,file=stage5/out/rehearsal/esp.img -drive format=raw,file=stage5/out/rehearsal/notes.img,if=virtio "
+          + REHEARSAL_CAGE + "-display none -serial file:stage5/out/rehearsal/serial.txt -monitor stdio"),
+     ALLOW, "bodyguard allows: the rehearsal's command with the twin's private copy of the image"),
+    (bash("cp stage5/out/esp.img stage5/out/rehearsal/esp.img"), ALLOW, "bodyguard allows: copying the image for the twin, out/ to out/"),
     (bash(QEMU + "-drive format=raw,file=stage5/out/esp.img -drive format=raw,file=germline/notes.img,if=virtio " + REHEARSAL_CAGE),
      DENY, "bodyguard: a drive under germline/ is not under an out/"),
     (bash("echo 'the germline caches a component after rehearsal'"), ALLOW, "bodyguard allows: the stage's words in prose"),
