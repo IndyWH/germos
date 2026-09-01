@@ -174,3 +174,13 @@ test in the twin.
   mention a frozen name, write the script to a file first and run the file.
 - **Commit messages that mention the bodyguard's words go in via `-F`** from
   a file written with the Write tool; `-m` puts the words in the command.
+
+## The plan gate
+
+- Exiting plan mode is blocked by a hook until Wajira approves. He reviews the
+  plan (via Cowork), then runs, in his own terminal at the repo root:
+  echo approved > PLAN_APPROVED
+  The hook consumes the marker: one approval opens the gate exactly once.
+  Never create or mention PLAN_APPROVED from inside a session - the other
+  hook denies every route to it. The plan gate exists because full-auto mode
+  otherwise lets a session approve its own plan.

@@ -67,6 +67,13 @@ import os
 import re
 import sys
 
+# The plan-approval marker (see require-plan-approval.py). Only Wajira's own
+# hand, outside this session, may create it - so every route this session has
+# to it is denied: Write/Edit below, and any Bash mention at all. Prose
+# included, deliberately: there is no honest reason for a command here to
+# name it.
+PLAN_MARKER = "PLAN_APPROVED"
+
 # The frozen acceptance machinery, as repo-relative paths. Add to this tuple to
 # freeze another stage's tests; nothing else needs to change.
 #
@@ -307,6 +314,9 @@ def main():
         path = args.get("file_path") or args.get("notebook_path") or ""
         if str(path).replace("\\", "/").startswith("/dev/"):
             deny_storage(path, "a device node as the target of a file edit")
+        if os.path.basename(str(path).replace("\\", "/")) == PLAN_MARKER:
+            deny(PLAN_MARKER, "the plan-approval marker - only Wajira's own "
+                              "hand, outside this session, may create it")
         prot = resolve(path)
         if prot:
             deny(prot, "a direct %s" % tool)
@@ -314,6 +324,11 @@ def main():
 
     if tool == "Bash":
         cmd = args.get("command", "") or ""
+
+        if PLAN_MARKER in cmd:
+            deny(PLAN_MARKER, "a Bash command that mentions the plan-approval "
+                              "marker - only Wajira's own hand, outside this "
+                              "session, may touch it")
 
         # The bodyguard first, on every command, whatever else it mentions.
         storage_guard(cmd)
