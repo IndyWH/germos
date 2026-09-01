@@ -824,10 +824,26 @@ main_loop:
         mov     dword [kbd_e0], 1
         jmp     main_loop
 .not_e0:
-        test    bl, 0x80                ; break codes: ignored
+        ; Shift is a state, not a key: both Shift keys' make and break codes
+        ; set and clear it, and select which table translates what follows.
+        ; (E0 2A, the fake shift around some extended keys, is already
+        ; swallowed by the prefix rule above.)
+        cmp     bl, 0x2A                ; LShift make
+        je      .shift_down
+        cmp     bl, 0x36                ; RShift make
+        je      .shift_down
+        cmp     bl, 0xAA                ; LShift break
+        je      .shift_up
+        cmp     bl, 0xB6                ; RShift break
+        je      .shift_up
+        test    bl, 0x80                ; other break codes: ignored
         jnz     main_loop
 
-        lea     rdx, [scan1_map]        ; set 1, US, unshifted
+        lea     rdx, [scan1_map]        ; set 1, US, unshifted...
+        cmp     dword [kbd_shift], 0
+        je      .translate
+        lea     rdx, [scan1_shift_map]  ; ...or shifted
+.translate:
         movzx   ebx, byte [rdx + rbx]
         test    bl, bl
         jz      main_loop               ; not a key this stage listens to
@@ -872,6 +888,12 @@ main_loop:
         mov     al, 8
         call    serial_putc             ; the tee steps back and erases
         call    draw_cursor
+        jmp     main_loop
+.shift_down:
+        mov     dword [kbd_shift], 1
+        jmp     main_loop
+.shift_up:
+        mov     dword [kbd_shift], 0
         jmp     main_loop
 
 halt_forever:
@@ -3995,6 +4017,27 @@ scan1_map:
         db      0, ' '                                  ; 38 LAlt, 39 Space
         times   128 - ($ - scan1_map) db 0              ; 3A-7F: nothing
 
+; The shifted US layout: capitals, the symbols over the digits, and '?' over
+; '/' - the smallest thing that makes the "? " marker typeable (plan decision
+; 10). Same shape as the unshifted table; Caps Lock, Ctrl and Alt stay
+; ignored.
+scan1_shift_map:
+        db      0, 0                                    ; 00 -, 01 Esc
+        db      '!','@','#','$','%','^','&','*','(',')' ; 02-0B
+        db      '_','+'                                 ; 0C, 0D
+        db      8, 0                                    ; 0E Backspace, 0F Tab
+        db      'Q','W','E','R','T','Y','U','I','O','P' ; 10-19
+        db      '{','}'                                 ; 1A, 1B
+        db      13, 0                                   ; 1C Enter, 1D LCtrl
+        db      'A','S','D','F','G','H','J','K','L'     ; 1E-26
+        db      ':', '"', '~'                           ; 27 : 28 " 29 ~
+        db      0, '|'                                  ; 2A LShift, 2B
+        db      'Z','X','C','V','B','N','M'             ; 2C-32
+        db      '<','>','?'                             ; 33-35
+        db      0, 0                                    ; 36 RShift, 37 kp*
+        db      0, ' '                                  ; 38 LAlt, 39 Space
+        times   128 - ($ - scan1_shift_map) db 0        ; 3A-7F: nothing
+
 ; Our own GDT. Four descriptors, flat, base 0, limit 4 GB.
 ;
 ;   0x08  64-bit code   - what the BSP and every woken core runs in
@@ -4129,6 +4172,7 @@ shadow:         resb    SHADOW_SIZE     ; one byte per cell - what is on screen
 kbd_head:       resd    1
 kbd_tail:       resd    1
 kbd_e0:         resd    1               ; an 0xE0 prefix swallows its successor
+kbd_shift:      resd    1               ; non-zero while a Shift key is held
         alignb  16
 kbd_ring:       resb    KBD_RING_SIZE
 
