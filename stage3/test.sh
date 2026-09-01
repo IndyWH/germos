@@ -138,6 +138,174 @@ else
 fi
 echo
 
+# ------------------------------------------------- the serial check ----------
+# Used by test 2 at -smp 8, on a FRESH disk. Boots the image headless and
+# requires the eleven S3: lines from the spec, in order, with found = woken =
+# the -smp value, the console geometry agreeing with the GOP mode from the
+# same log, the disk's sector count agreeing with the image the harness made,
+# and the notebook reporting itself formatted - because the disk was blank.
+#
+# OVMF chatters heavily on COM1, so every "S3: ..." run is pulled out of the
+# capture in order - a scan, not a line-start match, so a stray firmware escape
+# sequence sharing a line with our output cannot break the test, while the
+# content of each line stays strict.
+#
+# Requiring EXACTLY eleven catches a triple-fault reboot loop, which would
+# repeat the whole sequence - though with the IDT up a fault should instead
+# appear as an "ERR: exception" line, printed with the failing capture below.
+#
+# The guest waits for keystrokes forever by design, so timeout killing QEMU
+# (exit 124) is the expected outcome. Any other non-zero exit is a QEMU
+# failure.
+
+serial_check() {
+  local smp="$1"
+  local disk="$OUT/serial.$smp.img"
+  local cap="$OUT/serial.$smp.txt"
+  local qerr="$OUT/qemu.$smp.err"
+  local lines_file="$OUT/s3.$smp.txt"
+  local rc
+
+  rm -f "$cap" "$qerr" "$lines_file"
+  fresh_disk "$disk"
+
+  timeout -k 5 60 qemu-system-x86_64 \
+    -machine q35 -m 256M -smp "$smp" \
+    -bios "$OVMF" \
+    -drive format=raw,file="$ESP" \
+    -drive format=raw,file="$disk",if=virtio \
+    -display none -serial stdio \
+    </dev/null >"$cap" 2>"$qerr"
+  rc=$?
+
+  if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
+    echo "    -smp $smp: qemu exited $rc, expected 124 (killed by the 60s timeout)"
+    sed 's/^/      /' "$qerr"
+    return 1
+  fi
+
+  tr -d '\r' <"$cap" 2>/dev/null | grep -ao 'S3: .*' >"$lines_file" 2>/dev/null
+
+  local -a got=()
+  mapfile -t got <"$lines_file"
+
+  local bad=()
+
+  if [ "${#got[@]}" -ne 11 ]; then
+    bad+=("expected exactly 11 S3: lines, found ${#got[@]}")
+    if [ "${#got[@]}" -gt 11 ]; then
+      bad+=("more than eleven usually means a reboot loop - and with the IDT up it should have been an ERR: exception line instead")
+    fi
+  fi
+
+  local l w="" h=""
+  l="${got[0]:-}"; [ "$l" = "S3: alive" ] || bad+=("line 1: got '$l', want 'S3: alive'")
+
+  l="${got[1]:-}"
+  if [[ "$l" =~ ^S3:\ gop\ ([0-9]+)x([0-9]+)\ fb\ 0x([0-9a-f]{16})$ ]]; then
+    w="${BASH_REMATCH[1]}"; h="${BASH_REMATCH[2]}"
+    local fb="${BASH_REMATCH[3]}"
+    [ "$w" -gt 0 ] || bad+=("line 2: width is $w")
+    [ "$h" -gt 0 ] || bad+=("line 2: height is $h")
+    [ "$fb" != "0000000000000000" ] || bad+=("line 2: framebuffer address is zero")
+  else
+    bad+=("line 2: got '$l', want 'S3: gop <W>x<H> fb 0x<16 hex digits>'")
+  fi
+
+  l="${got[2]:-}"; [ "$l" = "S3: boot services exited" ] || \
+    bad+=("line 3: got '$l', want 'S3: boot services exited'")
+  l="${got[3]:-}"; [ "$l" = "S3: gdt and paging ours" ] || \
+    bad+=("line 4: got '$l', want 'S3: gdt and paging ours'")
+  l="${got[4]:-}"; [ "$l" = "S3: idt ready" ] || \
+    bad+=("line 5: got '$l', want 'S3: idt ready'")
+
+  local found="" woken=""
+  l="${got[5]:-}"
+  if [[ "$l" =~ ^S3:\ cores\ found\ ([0-9]+)$ ]]; then
+    found="${BASH_REMATCH[1]}"
+  else
+    bad+=("line 6: got '$l', want 'S3: cores found <N>'")
+  fi
+
+  l="${got[6]:-}"
+  if [[ "$l" =~ ^S3:\ cores\ woken\ ([0-9]+)$ ]]; then
+    woken="${BASH_REMATCH[1]}"
+  else
+    bad+=("line 7: got '$l', want 'S3: cores woken <N>'")
+  fi
+
+  # The console geometry must be the arithmetic consequence of the GOP mode
+  # reported two lines up: 16x16 pixel cells (the 8x8 font scaled 2x), integer
+  # division. One rule, applied on both sides of the serial cable. Fourteen
+  # rows is the least that holds eleven boot lines, a note, and a prompt.
+  l="${got[7]:-}"
+  if [[ "$l" =~ ^S3:\ console\ ([0-9]+)x([0-9]+)$ ]]; then
+    local cols="${BASH_REMATCH[1]}" rows="${BASH_REMATCH[2]}"
+    if [ -n "$w" ] && [ -n "$h" ]; then
+      [ "$cols" -eq $((w / 16)) ] || \
+        bad+=("line 8: $cols columns, but $w pixels / 16 = $((w / 16))")
+      [ "$rows" -eq $((h / 16)) ] || \
+        bad+=("line 8: $rows rows, but $h pixels / 16 = $((h / 16))")
+    fi
+    [ "$cols" -ge 40 ] || bad+=("line 8: only $cols columns - too narrow for the boot log")
+    [ "$rows" -ge 14 ] || bad+=("line 8: only $rows rows - too short for the boot log, a note and a prompt")
+  else
+    bad+=("line 8: got '$l', want 'S3: console <COLS>x<ROWS>'")
+  fi
+
+  # The disk. The harness made it, so it knows exactly how many 512-byte
+  # sectors the guest must have counted.
+  l="${got[8]:-}"
+  if [[ "$l" =~ ^S3:\ disk\ ([0-9]+)\ sectors$ ]]; then
+    local sectors="${BASH_REMATCH[1]}"
+    [ "$sectors" -eq $((DISK_BYTES / 512)) ] || \
+      bad+=("line 9: the guest counted $sectors sectors, but the image is $DISK_BYTES bytes = $((DISK_BYTES / 512)) sectors")
+  else
+    bad+=("line 9: got '$l', want 'S3: disk <N> sectors'")
+  fi
+
+  # A fresh, all-zero disk has no header, so this boot must format it.
+  l="${got[9]:-}"; [ "$l" = "S3: notebook formatted" ] || \
+    bad+=("line 10: got '$l', want 'S3: notebook formatted' - the disk was blank")
+
+  l="${got[10]:-}"; [ "$l" = "S3: keyboard ready" ] || \
+    bad+=("line 11: got '$l', want 'S3: keyboard ready'")
+
+  [ -n "$found" ] && [ "$found" != "$smp" ] && \
+    bad+=("cores found is $found, but the machine was given -smp $smp")
+  [ -n "$woken" ] && [ "$woken" != "$smp" ] && \
+    bad+=("cores woken is $woken, but the machine was given -smp $smp")
+  [ -n "$found" ] && [ -n "$woken" ] && [ "$found" != "$woken" ] && \
+    bad+=("cores found ($found) and cores woken ($woken) disagree - a core did not check in")
+
+  if [ "${#bad[@]}" -eq 0 ]; then
+    echo "    -smp $smp: eleven S3: lines, in order, found = woken = $smp, geometry and sector count agree, notebook formatted"
+    return 0
+  fi
+
+  echo "    -smp $smp: the serial log is not what the spec asks for"
+  for b in "${bad[@]}"; do echo "      - $b"; done
+  echo "      whole capture follows (OVMF chatter included):"
+  if [ -s "$cap" ]; then
+    cat -v "$cap" | sed 's/^/        /'
+  else
+    echo "        (nothing was captured at all)"
+  fi
+  return 1
+}
+
+# ------------------------------------------------- test 2: the serial lines --
+
+echo "Test 2 - Serial, first boot: the eleven S3: lines on a fresh disk, at -smp 8"
+if [ ! -f "$ESP" ]; then
+  fail "test 2: no image was built"
+elif serial_check 8; then
+  pass "test 2: serial log matches the spec at -smp 8"
+else
+  fail "test 2: serial log does not match the spec at -smp 8"
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then
