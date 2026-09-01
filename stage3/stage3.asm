@@ -69,6 +69,12 @@ org 0                           ; file offsets == RVAs
 ; keystrokes of headroom; a full ring drops bytes rather than overwriting.
 %define KBD_RING_SIZE   0x100
 
+; Spare 4 KB page-table pages for map_mmio_2m: a BAR above the identity map
+; needs a new PDPT and a new PD (and, above 512 GB, a new PML4 entry pointing
+; at them). Two pages per region beyond the map; eight is room for four such
+; regions, and exhaustion is a reported error, not an overrun.
+%define SPARE_PAGES     8
+
 ; More enabled processors than this in the MADT is an error we report, not a
 ; buffer we overrun. mlrig has 32 logical CPUs; the mirror run uses all of them.
 %define MAX_CORES       64
@@ -657,6 +663,15 @@ efi_main:
         call    serial_puts
 
         ; -------------------------------------------------------------------
+        ; The disk - the stage's first new organ. Found on the PCI bus, its
+        ; modern capability region mapped wherever the firmware put it, then
+        ; (item 10) negotiated and (item 11) driven. All of it with
+        ; interrupts off and polled, so that S3: keyboard ready stays the
+        ; last line before sti and the echo contract stays Stage 2's.
+        ; -------------------------------------------------------------------
+        call    disk_find
+
+        ; -------------------------------------------------------------------
         ; The keyboard - the third organ, and the machine's first sense.
         ; PIC remapped with only IRQ1 unmasked, the two gates installed, the
         ; i8042 drained, and only then the ready line, the prompt, and sti.
@@ -928,6 +943,364 @@ irq1_handler:
 ; in service. Only IRQ1 is unmasked, so a real IRQ7 cannot occur.
 irq7_spurious:
         iretq
+
+; ---------------------------------------------------------------------------
+; The disk - a virtio-blk device found on PCI bus 0 and driven through the
+; modern interface (plan decisions 9-13). Only the BSP ever calls any of
+; this: one owner per device.
+;
+; PCI configuration space is read the plain way, mechanism #1 through ports
+; 0xCF8/0xCFC: OVMF leaves ECAM unprogrammed here, and the legacy ports are
+; always there for bus 0. The modern capability region sits wherever the
+; firmware put the BAR - on this machine at 0xC000000000, above the 4 GB
+; identity map and above the first PML4 entry - so it is mapped at runtime,
+; uncached, by map_mmio_2m. Nothing is assumed about the address: it is read
+; from the BAR the capability names.
+; ---------------------------------------------------------------------------
+
+%define PCI_VENDOR_VIRTIO   0x1AF4
+%define PCI_DEV_BLK_TRANS   0x1001      ; transitional virtio-blk
+%define PCI_DEV_BLK_MODERN  0x1042      ; modern-only virtio-blk
+%define PCI_CMD_MEMORY      (1 << 1)
+%define PCI_CMD_MASTER      (1 << 2)    ; no DMA without it
+%define PCI_CMD_INTX_OFF    (1 << 10)   ; we poll; the PIC has only IRQ1 open
+%define VIRTIO_PCI_CAP      0x09        ; the vendor-specific capability id
+%define VCAP_COMMON         1
+%define VCAP_NOTIFY         2
+%define VCAP_ISR            3
+%define VCAP_DEVICE         4
+
+; pci_cfg_read32 - EBX = bus<<16 | device<<11 | function<<8, ECX = register.
+; Returns EAX. Preserves everything else.
+pci_cfg_read32:
+        push    rdx
+        mov     eax, ecx
+        and     eax, 0xFC
+        or      eax, ebx
+        or      eax, 0x80000000
+        mov     dx, 0xCF8
+        out     dx, eax
+        mov     dx, 0xCFC
+        in      eax, dx
+        pop     rdx
+        ret
+
+; pci_cfg_write32 - EBX, ECX as above, EAX = the value. Preserves everything.
+pci_cfg_write32:
+        push    rax
+        push    rdx
+        push    rax
+        mov     eax, ecx
+        and     eax, 0xFC
+        or      eax, ebx
+        or      eax, 0x80000000
+        mov     dx, 0xCF8
+        out     dx, eax
+        pop     rax
+        mov     dx, 0xCFC
+        out     dx, eax
+        pop     rdx
+        pop     rax
+        ret
+
+; pci_find_virtio_blk - scan bus 0, devices 0-31, every function of a
+; multi-function device, for vendor 1AF4 with device 1001 or 1042. Returns
+; EAX = 1 with EBX = the BDF, or EAX = 0. First match wins.
+pci_find_virtio_blk:
+        push    rcx
+        push    rdx
+        push    rsi
+        push    r8
+        xor     esi, esi                ; device number
+.dev:
+        cmp     esi, 32
+        jae     .none
+        mov     ebx, esi
+        shl     ebx, 11                 ; bus 0, function 0
+        xor     ecx, ecx
+        call    pci_cfg_read32
+        cmp     ax, 0xFFFF
+        je      .next_dev               ; nothing in this slot
+        mov     ecx, 0x0C
+        call    pci_cfg_read32          ; header type in bits 16-23
+        mov     edx, 1                  ; functions to look at
+        test    eax, 1 << 23            ; bit 7 of the header type: multi-function
+        jz      .fns
+        mov     edx, 8
+.fns:
+        xor     r8d, r8d                ; function number
+.fn:
+        mov     ebx, esi
+        shl     ebx, 11
+        mov     eax, r8d
+        shl     eax, 8
+        or      ebx, eax
+        xor     ecx, ecx
+        call    pci_cfg_read32          ; vendor | device<<16
+        cmp     ax, PCI_VENDOR_VIRTIO
+        jne     .next_fn
+        shr     eax, 16
+        cmp     ax, PCI_DEV_BLK_TRANS
+        je      .found
+        cmp     ax, PCI_DEV_BLK_MODERN
+        je      .found
+.next_fn:
+        inc     r8d
+        cmp     r8d, edx
+        jb      .fn
+.next_dev:
+        inc     esi
+        jmp     .dev
+.found:
+        mov     eax, 1
+        jmp     .out
+.none:
+        xor     eax, eax
+.out:
+        pop     r8
+        pop     rsi
+        pop     rdx
+        pop     rcx
+        ret
+
+; disk_find - locate the device, own it, map and record its four modern
+; capability regions. Every failure is a named ERR: line. Called once from
+; efi_main with interrupts off; clobbers registers freely. Leaves EBX = BDF.
+disk_find:
+        call    cpu_phys_bits
+
+        call    pci_find_virtio_blk
+        test    eax, eax
+        jnz     .have
+        lea     rsi, [err_no_vblk]
+        call    serial_err
+.have:
+        mov     [pci_bdf], ebx
+
+        ; Command register: memory space on, bus mastering on (the device
+        ; cannot DMA our rings without it), INTx off (we poll, and the line
+        ; must never be asserted into a PIC that has only IRQ1 unmasked).
+        ; The status half of this dword is write-1-to-clear, so only the
+        ; command half is written back.
+        mov     ecx, 0x04
+        call    pci_cfg_read32
+        and     eax, 0xFFFF
+        or      eax, PCI_CMD_MEMORY | PCI_CMD_MASTER | PCI_CMD_INTX_OFF
+        call    pci_cfg_write32
+
+        ; The capability list, walked from the pointer at 0x34. Bounded, so
+        ; a looping list is a message rather than a hang.
+        mov     ecx, 0x04
+        call    pci_cfg_read32
+        test    eax, 1 << 20            ; status bit 4: a capability list exists
+        jz      .no_caps
+        mov     ecx, 0x34
+        call    pci_cfg_read32
+        and     eax, 0xFC
+        mov     r12d, eax               ; this capability's offset
+        mov     r13d, 48                ; the bound
+.cap:
+        test    r12d, r12d
+        jz      .caps_done
+        dec     r13d
+        jz      .caps_done
+        mov     ecx, r12d
+        call    pci_cfg_read32          ; id | next<<8 | cap_len<<16 | cfg_type<<24
+        mov     r15d, eax
+        shr     r15d, 8
+        and     r15d, 0xFC              ; the next capability
+        cmp     al, VIRTIO_PCI_CAP
+        jne     .cap_next
+        shr     eax, 24                 ; cfg_type
+        test    eax, eax
+        jz      .cap_next
+        cmp     eax, VCAP_DEVICE
+        ja      .cap_next               ; type 5 (PCI cfg access) and unknown types
+        mov     r8d, eax
+
+        ; First of each type wins: a slot already filled is left alone.
+        lea     rdi, [vio_common]
+        cmp     qword [rdi + r8*8 - 8], 0
+        jne     .cap_next
+
+        lea     ecx, [r12 + 4]
+        call    pci_cfg_read32
+        movzx   r9d, al                 ; the BAR this capability lives in
+        cmp     r9d, 5
+        ja      .bad_bar
+        lea     ecx, [r12 + 8]
+        call    pci_cfg_read32
+        mov     r10d, eax               ; offset within the BAR
+        lea     ecx, [r12 + 12]
+        call    pci_cfg_read32
+        mov     r11d, eax               ; length of the region
+
+        ; The BAR itself: a memory BAR, 32- or 64-bit, low four bits masked.
+        lea     ecx, [r9*4 + 0x10]
+        call    pci_cfg_read32
+        test    eax, 1
+        jnz     .bar_io
+        mov     edx, eax
+        and     eax, 0xFFFFFFF0
+        mov     rdi, rax
+        and     edx, 6
+        cmp     edx, 4                  ; type 2 in bits 2:1 - a 64-bit BAR
+        jne     .bar32
+        add     ecx, 4
+        call    pci_cfg_read32
+        shl     rax, 32
+        or      rdi, rax
+.bar32:
+        add     rdi, r10                ; RDI = the region's physical address
+
+        ; Map the page holding its first byte and the page holding its last,
+        ; uncached, wherever they are.
+        mov     rax, rdi
+        call    map_mmio_2m
+        lea     rax, [rdi + r11 - 1]
+        call    map_mmio_2m
+
+        lea     rax, [vio_common]
+        mov     [rax + r8*8 - 8], rdi   ; vio_common, vio_notify, vio_isr, vio_device
+        cmp     r8d, VCAP_NOTIFY
+        jne     .cap_next
+        lea     ecx, [r12 + 16]
+        call    pci_cfg_read32
+        mov     [vio_notify_mult], eax
+.cap_next:
+        mov     r12d, r15d
+        jmp     .cap
+.caps_done:
+        cmp     qword [vio_common], 0
+        je      .no_caps
+        cmp     qword [vio_notify], 0
+        je      .no_caps
+        cmp     qword [vio_device], 0
+        je      .no_caps
+        ret
+.no_caps:
+        lea     rsi, [err_vio_cap]
+        call    serial_err
+.bad_bar:
+.bar_io:
+        lea     rsi, [err_bar_io]
+        call    serial_err
+
+; cpu_phys_bits - phys_limit = 1 << (the physical address width from CPUID
+; 0x80000008, or 36 if the leaf is absent). Preserves everything.
+cpu_phys_bits:
+        push    rax
+        push    rbx
+        push    rcx
+        push    rdx
+        mov     eax, 0x80000000
+        cpuid
+        cmp     eax, 0x80000008
+        jb      .default
+        mov     eax, 0x80000008
+        cpuid
+        movzx   ecx, al
+        jmp     .set
+.default:
+        mov     ecx, 36
+.set:
+        mov     rax, 1
+        shl     rax, cl
+        mov     [phys_limit], rax
+        pop     rdx
+        pop     rcx
+        pop     rbx
+        pop     rax
+        ret
+
+; alloc_spare_page - RAX = a zeroed 4 KB page from the pool. Preserves
+; everything else. Exhaustion is a reported error.
+alloc_spare_page:
+        push    rcx
+        push    rdi
+        mov     eax, [spare_next]
+        cmp     eax, SPARE_PAGES
+        jae     .exhausted
+        inc     dword [spare_next]
+        shl     eax, 12
+        lea     rdi, [spare_pages]
+        add     rdi, rax
+        push    rdi
+        xor     eax, eax
+        mov     ecx, 512
+        rep     stosq                   ; the loader zeroed BSS, but say so
+        pop     rax
+        pop     rdi
+        pop     rcx
+        ret
+.exhausted:
+        lea     rsi, [err_spare]
+        call    serial_err
+
+; map_mmio_2m - RAX = a physical address. Installs a present, writable,
+; UNCACHED (PWT|PCD) 2 MB identity mapping of the page containing it,
+; creating the PML4 and PDPT entries on the way if they are absent. Below
+; 4 GB this overwrites an existing identity entry with an uncached one, which
+; is what a BAR there would want too. Preserves everything.
+map_mmio_2m:
+        push    rax
+        push    rcx
+        push    rdx
+        push    rdi
+        push    r8
+        mov     r8, rax
+        cmp     r8, [phys_limit]
+        jae     .too_high
+
+        mov     rax, r8                 ; PML4 entry -> a PDPT
+        shr     rax, 39
+        and     eax, 511
+        lea     rdi, [pml4]
+        lea     rdi, [rdi + rax*8]
+        call    .entry_or_new
+
+        mov     rax, r8                 ; PDPT entry -> a PD
+        shr     rax, 30
+        and     eax, 511
+        lea     rdi, [rdi + rax*8]
+        call    .entry_or_new
+
+        mov     rax, r8                 ; PD entry -> the 2 MB page itself
+        shr     rax, 21
+        and     eax, 511
+        lea     rdi, [rdi + rax*8]
+        mov     rdx, r8
+        mov     rax, 0xFFFFFFFFFFE00000
+        and     rdx, rax
+        or      rdx, 0x83 | 0x18        ; present | writable | 2 MB | PWT | PCD
+        mov     [rdi], rdx
+        invlpg  [r8]
+
+        pop     r8
+        pop     rdi
+        pop     rdx
+        pop     rcx
+        pop     rax
+        ret
+
+; RDI = the address of a table entry; returns RDI = the table it points to,
+; allocating and linking a fresh one if the entry is not present.
+.entry_or_new:
+        mov     rdx, [rdi]
+        test    rdx, 1
+        jnz     .present
+        call    alloc_spare_page
+        mov     rdx, rax
+        or      rdx, 3                  ; present | writable
+        mov     [rdi], rdx
+.present:
+        mov     rax, 0x000FFFFFFFFFF000
+        and     rdx, rax
+        mov     rdi, rdx
+        ret
+.too_high:
+        lea     rsi, [err_bar_high]
+        call    serial_err
 
 ; ---------------------------------------------------------------------------
 ; The console - the framebuffer as a text screen. Only the BSP ever calls any
@@ -1909,6 +2282,11 @@ err_too_many:   db      'more enabled processors than MAX_CORES - raise it', 0
 err_no_cores:   db      'MADT lists no enabled processors at all', 0
 err_ap_high:    db      'ap_entry sits above 4GB - the trampoline cannot reach it', 0
 err_shadow:     db      'console shadow too small for this mode - raise SHADOW_SIZE', 0
+err_no_vblk:    db      'no virtio-blk device on PCI bus 0', 0
+err_vio_cap:    db      'virtio device lacks a modern capability (common, notify or device)', 0
+err_bar_io:     db      'virtio capability names an I/O BAR or a BAR beyond 5 - not a modern device', 0
+err_bar_high:   db      'BAR lies beyond the physical address width', 0
+err_spare:      db      'page-table pool exhausted - raise SPARE_PAGES', 0
 
 ; The shared font, byte for byte the file the pixel checker renders from.
 ; 128 glyphs, 8 bytes each, row per byte, bit 0 leftmost - stage2/FONT.md.
@@ -2073,11 +2451,25 @@ kbd_e0:         resd    1               ; an 0xE0 prefix swallows its successor
         alignb  16
 kbd_ring:       resb    KBD_RING_SIZE
 
+; The disk. One owner - the BSP - so none of this needs a lock. The four
+; capability addresses are consecutive and indexed by cfg_type (1-4) in
+; disk_find, so their order here is load-bearing.
+        alignb  16
+pci_bdf:        resd    1               ; bus<<16 | device<<11 | function<<8
+spare_next:     resd    1               ; pages handed out of the spare pool
+phys_limit:     resq    1               ; 1 << physical address width
+vio_common:     resq    1               ; common configuration, linear address
+vio_notify:     resq    1               ; notification region base
+vio_isr:        resq    1               ; ISR status
+vio_device:     resq    1               ; device-specific configuration (capacity)
+vio_notify_mult: resd   1               ; notify_off_multiplier
+
 ; Page tables. 4 KB alignment is architectural, not a preference.
         alignb  4096
 pml4:           resb    4096
 pdpt:           resb    4096
 pd_tables:      resb    4 * 4096        ; four directories, 2048 entries in all
+spare_pages:    resb    SPARE_PAGES * 4096      ; for map_mmio_2m
 bss_end:
 
 bss_size        equ     bss_end - bss_start
