@@ -3,7 +3,16 @@
 Rolling state of the AI OS project. Read this first, then `ai-os-foundation.md`
 (the single source of truth), then the current stage's `spec.md` and `plan.md`.
 
-**Last updated:** 1 September 2026 — **Stage 5 CLOSED.** Wajira ran test 5
+**Last updated:** 1 September 2026 — **Stage 6 OPENED, ring 6a — the
+glass.** `stage6/spec.md` is approved by the owner with all eight
+recommendations taken (Fable 5.1 at high effort implements; the screen
+mode is the display's EDID-preferred one, 1440x1440 in the twin). The
+stage is three rings — glass, store of plans, pointer — each with its own
+plan gate, frozen tests and fresh session; ring 6a opened today in this
+session, whose plan (`stage6/plan-6a.md`) is being drafted in plan mode.
+The policy gate was re-checked at this gate: `claude -p` still draws from
+the subscription, no API keys, next re-check at Stage 7. See "Stage 6"
+below. Earlier the same day — **Stage 5 CLOSED.** Wajira ran test 5
 with the real broker: he typed `! make me a clock` at the GermOS prompt;
 Claude wrote NASM for a flat binary against GERMLINE.md's ABI; the broker
 assembled it, **rehearsed it in a headless boot of the same image**, cached
@@ -28,12 +37,12 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 
 | | |
 |---|---|
-| Stage | 5 — The conversation **CLOSED** |
-| Status | All five tests **PASS** (test 5 confirmed by Wajira, 1 September 2026: a running clock, grown on request). Next: the Stage 6 spec. |
+| Stage | 6 — Growth, **ring 6a — the glass**, **OPENED** 1 September 2026 (Stages 0–5 closed) |
+| Status | `stage6/spec.md` approved; `stage6/plan-6a.md` in draft behind the plan gate. No ring 6a test exists yet. Rings 6b (the store of plans) and 6c (the pointer) wait for their own sessions. |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
-| Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.252 — Stage 5 needs no new packages |
-| Model | **Fable 5, high effort** — the owner's decision for Stages 4 and 5 |
+| Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.252 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
+| Model | **Fable 5.1, high effort** — the owner's decision at Stage 6 approval (Fable 5 at high effort built Stages 2–5) |
 
 ## The project in three lines
 
@@ -608,19 +617,92 @@ not be a prefix of another row (`> ?` matched `> ?x`).
 - **A component runs at ring 0 with the whole machine in reach** — the
   thesis, and the rehearsal is the mitigation the foundation prescribes.
 
+## Stage 6 — Growth · opened 1 September 2026
+
+**Goal (foundation §7):** a simple compositor and GUI, more devices, and
+the store-of-plans prototype: install an application from a plan file.
+The compositor ships with the machine's obs chart from day one — border
+stripes reborn as truthful, live telemetry — and the DE takes its shape
+from the human-factors constitution (foundation §5), not from existing
+desktops. **Proves the machine can grow a face and a store.**
+`stage6/spec.md` is approved by the owner, 1 September 2026.
+
+**The policy gate, re-checked 1 September 2026 as the foundation
+requires:** Anthropic's help centre says the June 2026 credit-pool change
+is **still paused** — Agent SDK, `claude -p` and third-party app usage
+still draw from subscription limits, there is no separate credit pool,
+and any change is to be announced before it takes effect. So the broker
+keeps shelling out to `claude -p` with **no API keys anywhere**, and the
+backend (`broker/claude_backend.py`) stays one swappable unfrozen
+function. The germline remains the mitigation if the policy ever
+tightens. **Next re-check at the Stage 7 gate.**
+
+**The owner's decisions at approval — all eight recommendations taken:**
+
+1. **Three rings**, glass → plans → pointer, one plan gate, one set of
+   frozen tests and one fresh session each; the pointer may slip to the
+   end of the stage without weakening it.
+2. **Fixed regions this ring:** obs strip top, choices row bottom, the
+   conversation left, the app panel right, every size measured from the
+   mode at boot.
+3. **The glass core and ABI 2 now:** a dedicated core owns the screen
+   (the concurrency doctrine's one absolute law); an app is four
+   callbacks — `init`, `step`, `key`, `exit` — with a 50 ms step budget
+   the rehearsal judges. No watchdog this ring.
+4. **Installed apps live on a second image**, `home.img`, with its own
+   frozen format (ring 6b); the notebook is untouched.
+5. **N-of-1 trials are measured for now and run later:** every request's
+   time-to-done, every error shown and every input-to-photon is recorded
+   in the obs page from ring 6a.
+6. **The calculator is the first plan** and ring 6b's oracle.
+7. **Fable 5.1 at high effort implements Stage 6**; Cowork specs and
+   reviews on the same. (This session runs on it.)
+8. **The screen mode is the EDID route at 1440x1440:** the display's
+   preferred mode if it states one, else the highest. The guest reads the
+   EDID from the standard VGA device's own memory (a PCI lookup of the
+   display class, the EDID BAR, 128 bytes, the first detailed timing
+   descriptor); every QEMU command — gate, twin and the oracle's windowed
+   run — gains `-vga none -device VGA,edid=on,xres=1440,yres=1440`. The
+   console becomes 90x90 cells here; nothing is baked in, the tests keep
+   reading the resolution from the guest's own log. The `yres` number is
+   the owner's to adjust.
+
+**The three rings:**
+
+| Ring | Name | Done when | State |
+|---|---|---|---|
+| 6a | **The glass** | `! make me a clock` ticks in its own panel while you type a note beside it, and the obs strip shows real numbers | **opened 1 September 2026** in this session; `stage6/plan-6a.md` drafted behind the plan gate |
+| 6b | **The store of plans** | `! install calculator` from `plans/calculator.md` gives a working calculator; reboot with no broker; `! calculator` still runs it | not started — its own session after 6a closes |
+| 6c | **The pointer** | click a choice on the choices row and it happens; pointer input-to-photon is a number on the obs strip | not started — its own session; allowed to slip |
+
+**Ring 6a's shape, from the spec** (the plan fixes the details): the
+glass core compositor on the first AP, four regions on the console's
+16x16 grid (obs strip, choices row, conversation panel, app panel), the
+obs page and obs strip, ABI 2 (`init`, `step`, `key`, `exit`; `draw_text`
+into the panel, `panel_size`, `ticks_ms`, `fill`), the kind `0x02` frame
+in a new frozen `stage6/GLASS.md`, the mode policy of decision 8, new
+broker files `broker/glass.py` and `broker/twin.py` importing the frozen
+framing, the mock table (`test app`, `big`, `fault`, `hog`, `escapee`),
+nine rehearsal criteria, and acceptance tests 1–4 written red before any
+code and frozen. Stage 5's files stay byte for byte as they are and
+`stage5/test.sh` must still pass at the end of the ring. The automated
+gate speaks only to the mock and spends no token.
+
 ## Next action
+
+**Ring 6a is open.** This session reads the pattern files, commits the
+spec (this commit), measures before planning, drafts `stage6/plan-6a.md`
+in plan mode and commits it, then stops: the plan gate hook holds
+ExitPlanMode until Wajira approves from his own terminal. Cowork reviews
+the plan and may ask for amendments, adopted as numbered amendments in
+the plan. After approval: one commit per numbered item, tests green
+before every commit, this file updated as we go.
 
 **Stage 5 is closed** — test 5 confirmed by Wajira on 1 September 2026:
 the clock ran, right time, date and exit line included; the two oracle
 screenshots are `history/2026-09-01-first-grown-clock.png` and
 `history/2026-09-01-stage5-boot-log.png`. Cowork's review preceded the
 run: zero defects.
-
-Next: **Stage 6 — growth** (foundation §7): a simple compositor and GUI
-shaped by the human-factors constitution, more devices, and the
-store-of-plans prototype. The subscription policy is re-checked at that
-gate, per the foundation. Cowork writes the spec; the model for
-implementation is the owner's call at the gate, as ever.
 
 To grow something again at any time — two terminals at the repo root.
 The broker (it answers questions and requests, rehearses every candidate
