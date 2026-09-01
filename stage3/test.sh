@@ -306,6 +306,30 @@ else
 fi
 echo
 
+# ------------------------------------------------ test 3: persistence --------
+# The soul of the stage. Run one: a fresh disk, "remember me" and Enter typed
+# via the QEMU monitor, quit; the disk image parsed FROM THE HOST by
+# NOTEBOOK.md must hold that one note, byte-exact. Run two: the same image in
+# a fresh QEMU must log "S3: notebook 1 notes", put nothing on the wire after
+# "S3: keyboard ready", and leave the image untouched. At -smp 2 and -smp 8 -
+# memory must follow the machine, not the core count. The work is in
+# stage3/checknotes.py, which drives both boots and prints its own diagnosis.
+
+echo "Test 3 - Persistence: type 'remember me', reboot the same disk, the machine remembers, at -smp 2 and -smp 8"
+if [ ! -f "$ESP" ]; then
+  fail "test 3: no image was built"
+else
+  kept=0
+  python3 "$REPO/stage3/checknotes.py" --persist 2 || kept=1
+  python3 "$REPO/stage3/checknotes.py" --persist 8 || kept=1
+  if [ "$kept" -eq 0 ]; then
+    pass "test 3: the note survived a reboot, on disk and on the console, at both -smp 2 and -smp 8"
+  else
+    fail "test 3: the machine does not keep what it is told (see above)"
+  fi
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then
