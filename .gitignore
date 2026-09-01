@@ -3,6 +3,8 @@
 *.bin
 # ...but the committed font asset is a source, not a build output
 !stage2/font8x8.bin
+# ...and so is the committed, frozen test component of Stage 5
+!stage5/component.bin
 *.o
 *.elf
 *.lst
