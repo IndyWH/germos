@@ -90,6 +90,15 @@ PLAN_MARKER = "PLAN_APPROVED"
 # stage3/NOTEBOOK.md IS frozen for the same reason: the assembler implements
 # the on-disk format it describes and the checker parses by it, so an editable
 # format would be an editable criterion. stage3/mkimage.sh stays unfrozen.
+#
+# Stage 4 (plan decision 13) freezes stage4/UMBILICAL.md for the NOTEBOOK.md
+# reason, and broker/broker.py with it: the mock's framing, its record and
+# its canned table are what test 3 judges the guest by, so an editable mock
+# would be an editable criterion - it could learn to tolerate a malformed
+# frame, or record a question it never received. broker/claude_backend.py,
+# the one function that shells out to claude -p, is deliberately NOT frozen:
+# the automated gate never runs it, and its flags must stay fixable at test
+# 5. stage4/mkimage.sh stays unfrozen as every builder has.
 PROTECTED = (
     "stage0/test.sh",
     "stage0/checkpixels.py",
@@ -101,6 +110,10 @@ PROTECTED = (
     "stage3/test.sh",
     "stage3/checknotes.py",
     "stage3/NOTEBOOK.md",
+    "stage4/test.sh",
+    "stage4/checkumbilical.py",
+    "stage4/UMBILICAL.md",
+    "broker/broker.py",
 )
 
 BASENAMES = sorted({os.path.basename(p) for p in PROTECTED})

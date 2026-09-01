@@ -31,6 +31,7 @@ FROZEN_0 = ["stage0/test.sh", "stage0/checkpixels.py"]
 FROZEN_1 = ["stage1/test.sh", "stage1/checkbands.py"]
 FROZEN_2 = ["stage2/test.sh", "stage2/checktext.py", "stage2/font8x8.bin"]
 FROZEN_3 = ["stage3/test.sh", "stage3/checknotes.py", "stage3/NOTEBOOK.md"]
+FROZEN_4 = ["stage4/test.sh", "stage4/checkumbilical.py", "stage4/UMBILICAL.md", "broker/broker.py"]
 FROZEN = FROZEN_0 + FROZEN_1 + FROZEN_2
 
 
@@ -216,9 +217,49 @@ CASES += [
     (write("stage3/mkimage.sh"), ALLOW, "stage3 freeze allows: Write the builder"),
     (write("stage3/stage3.asm"), ALLOW, "stage3 freeze allows: Write the implementation"),
     (write("stage3/plan.md"), ALLOW, "stage3 freeze allows: the plan is paperwork"),
-    (write("stage4/test.sh"), ALLOW, "stage3 freeze allows: creating the next stage's test file"),
+    # Was stage4/test.sh until Stage 4 froze it - the case moves on a stage.
+    (write("stage5/test.sh"), ALLOW, "stage3 freeze allows: creating a later stage's test file"),
     (write("stage4/NOTEBOOK.md"), ALLOW, "stage3 freeze allows: a later stage's format document"),
     (bash("nasm -f bin stage3/stage3.asm -o stage3/out/BOOTX64.EFI"), ALLOW, "stage3 freeze allows: assembling"),
+]
+
+# --- Stage 4: the freeze (plan item 7), and the cage in commands -------------
+CAGE = ("-netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9999' "
+        "-device virtio-net-pci,netdev=n0,mac=52:54:00:a1:04:01 ")
+CASES += [(c, v, "stage4 freeze: " + w) for c, v, w in freeze_cases(FROZEN_4)]
+CASES += [
+    (write("stage4/UMBILICAL.md"), DENY, "stage4 freeze: the protocol is a criterion"),
+    (write("broker/broker.py"), DENY, "stage4 freeze: the mock's framing and record are criteria"),
+    (bash("python3 - <<'EOF'\nopen('broker/broker.py','a').write('x')\nEOF"), DENY, "stage4 freeze: python appending to the broker"),
+    (bash("./stage4/test.sh"), ALLOW, "stage4 freeze allows: running the gate"),
+    (bash("./stage4/test.sh > stage4/out/gate.log 2>&1"), ALLOW, "stage4 freeze allows: gate output redirected"),
+    (bash("python3 stage4/checkumbilical.py --question 8"), ALLOW, "stage4 freeze allows: the checker"),
+    (bash("python3 stage4/checkumbilical.py --cage"), ALLOW, "stage4 freeze allows: the checker"),
+    (bash("python3 broker/broker.py --mock"), ALLOW, "stage4 freeze allows: running the mock"),
+    (bash("python3 broker/broker.py --mock --port 9999 --record stage4/out/broker.jsonl"),
+     ALLOW, "stage4 freeze allows: the mock with a record file"),
+    (bash("python3 broker/broker.py"), ALLOW, "stage4 freeze allows: the real broker"),
+    (bash("cat stage4/UMBILICAL.md"), ALLOW, "stage4 freeze allows: reading the protocol"),
+    (bash("grep -n frame stage4/UMBILICAL.md broker/broker.py"), ALLOW, "stage4 freeze allows: grepping"),
+    (bash("sed -i 's/48/64/' stage4/mkimage.sh"), ALLOW, "stage4 freeze allows: the builder is not frozen"),
+    (write("stage4/mkimage.sh"), ALLOW, "stage4 freeze allows: Write the builder"),
+    (write("broker/claude_backend.py"), ALLOW, "stage4 freeze allows: the Claude backend is not frozen"),
+    (bash("sed -i 's/--bare//' broker/claude_backend.py"), ALLOW, "stage4 freeze allows: fixing the backend's flags"),
+    (write("stage4/stage4.asm"), ALLOW, "stage4 freeze allows: Write the implementation"),
+    (write("stage4/plan.md"), ALLOW, "stage4 freeze allows: the plan is paperwork"),
+    (write("stage5/test.sh"), ALLOW, "stage4 freeze allows: creating the next stage's test file"),
+    (write("stage5/UMBILICAL.md"), ALLOW, "stage4 freeze allows: a later stage's document"),
+    (bash("nasm -f bin stage4/stage4.asm -o stage4/out/BOOTX64.EFI"), ALLOW, "stage4 freeze allows: assembling"),
+    (bash(QEMU + "-drive format=raw,file=stage4/out/esp.img -drive format=raw,file=stage4/out/notes.img,if=virtio "
+          + CAGE + "-serial stdio"), ALLOW, "bodyguard allows: the Stage 4 command with the cage"),
+    (bash(QEMU + "-drive format=raw,file=stage4/out/esp.img -drive format=raw,file=stage4/out/notes.img,if=virtio "
+          + CAGE + "-display none -serial file:stage4/out/serial.txt -monitor stdio"),
+     ALLOW, "bodyguard allows: the checker's Stage 4 command"),
+    (bash("nc -N 127.0.0.1 9999"), ALLOW, "bodyguard allows: netcat to loopback"),
+    (bash("echo 'restrict=on and one guestfwd on the netdev'"), ALLOW, "bodyguard allows: the cage's words in prose"),
+    (bash("ss -ltn | grep 9999"), ALLOW, "bodyguard allows: looking at listeners"),
+    (bash("truncate -s 16M stage4/out/notes.img"), ALLOW, "bodyguard allows: a fresh Stage 4 disk"),
+    (bash(QEMU + "-drive format=raw,file=/tmp/esp.img " + CAGE), DENY, "bodyguard: the cage does not excuse a bad drive"),
 ]
 
 
