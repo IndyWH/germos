@@ -39,7 +39,26 @@ Two modes, two acceptance tests:
                  screen; screen B the conversation restored with the
                  prompt below "> after".
 
-  --germline     Test 4. Item 7.
+  --germline     Test 4. First the checker inspects its OWN QEMU command
+                 and the REHEARSAL's (broker/rehearse.py): slirp user
+                 mode, restrict=on, exactly one guestfwd from 10.0.2.4:9999
+                 delivered by nc to 127.0.0.1 on 9999 and 9998
+                 respectively, no hostfwd, one virtio-net-pci, every drive
+                 a file under stage5/out/. Then, at -smp 8: "! fault" (the
+                 mock's ud2 blob - two rehearsals fail, the refusal comes
+                 back); "! test component" (rehearsed, cached, run, Esc);
+                 "! test component" again (served from the germline, the
+                 backend never invoked); "! big" (the test component padded
+                 to exactly the 1 MB cap - rehearsed, streamed whole, run;
+                 screendump A; Esc); then the marker cases "?", "?x", "!",
+                 "!x"; a note; screendump B. Assert: the boot lines; the
+                 echo exactly the nine typed lines; the record's six
+                 connections with the generation-call sequence 2/3/3/4/5,
+                 their sources, rehearsal verdicts and frame hashes; the
+                 germline's two entries with their provenance; the notebook
+                 exactly the note; screen A the strips of the 1 MB
+                 component; screen B the whole conversation with the fixed
+                 refusal and marker lines.
 
 Pure standard library on purpose. Everything runs inside QEMU with exactly
 two drives per guest, raw image files under stage5/out/, created here or
@@ -808,6 +827,7 @@ def check_screen(shot, geometry, expected):
         return problems
 
     base = hits[0]
+    block = set(range(base, base + len(expected)))   # the rows the conversation occupies
     for i, want in enumerate(expected):
         r = base + i
         if r >= rows:
@@ -830,7 +850,9 @@ def check_screen(shot, geometry, expected):
             problems.append("row %d: the cell after %r is not blank - %s (an indicator left behind?)"
                             % (r, want, cell_census(pixels, width, r, len(want))))
         if i > 0:
-            others = [x for x in range(rows) if x != r and strip_matches(pixels, width, font, x, want)]
+            # The same text may legitimately recur inside the conversation
+            # (a request typed twice); it must not appear anywhere else.
+            others = [x for x in range(rows) if x not in block and strip_matches(pixels, width, font, x, want)]
             if others:
                 problems.append("row %r also appears at row(s) %s" % (want, others))
 
@@ -994,12 +1016,186 @@ def run_grow(smp):
     return 0 if ok else 1
 
 
+def check_cage_argv(argv, port, want_mac):
+    """A QEMU command inspected for the cage: slirp user mode, restrict=on,
+    exactly one guestfwd from 10.0.2.4:9999 delivered by nc to 127.0.0.1 on
+    the given port, no hostfwd, no other network option, one virtio-net-pci
+    device on n0 (carrying the harness's MAC when one is wanted)."""
+    problems = []
+    netdevs = [argv[i + 1] for i, a in enumerate(argv) if a == "-netdev"]
+    devices = [argv[i + 1] for i, a in enumerate(argv) if a == "-device"]
+    if len(netdevs) != 1:
+        problems.append("expected exactly one -netdev, found %d" % len(netdevs))
+    for nd in netdevs:
+        if not nd.startswith("user,"):
+            problems.append("the netdev is not slirp's user mode: %r" % nd)
+        if "restrict=on" not in nd.split(","):
+            problems.append("the netdev lacks restrict=on: %r" % nd)
+        if nd.count("guestfwd=") != 1:
+            problems.append("expected exactly one guestfwd, found %d in %r" % (nd.count("guestfwd="), nd))
+        if not re.search(r"guestfwd=tcp:10\.0\.2\.4:9999-cmd:nc -N 127\.0\.0\.1 %d(,|$)" % port, nd):
+            problems.append("the guestfwd is not tcp:10.0.2.4:9999 delivered by 'nc -N 127.0.0.1 %d': %r" % (port, nd))
+        if "hostfwd" in nd:
+            problems.append("the netdev opens a hostfwd: %r" % nd)
+    for flag in ("-nic", "-net", "-netdev-add"):
+        if flag in argv:
+            problems.append("the command carries %s" % flag)
+    nics = [d for d in devices if d.startswith("virtio-net-pci")]
+    if len(nics) != 1 or len(devices) != 1:
+        problems.append("expected exactly one -device, a virtio-net-pci, found %r" % devices)
+    for d in nics:
+        if "netdev=n0" not in d.split(","):
+            problems.append("the NIC is not attached to netdev n0: %r" % d)
+        if want_mac and ("mac=" + want_mac) not in d.split(","):
+            problems.append("the NIC does not carry the harness's MAC %s: %r" % (want_mac, d))
+    drives = [argv[i + 1] for i, a in enumerate(argv) if a == "-drive"]
+    for dr in drives:
+        m = re.search(r"(?:^|,)file=([^,]*)", dr)
+        if not m or not m.group(1).startswith(OUT + os.sep):
+            problems.append("a drive is not a file under stage5/out/: %r" % dr)
+    return problems
+
+
+REFUSAL_FAULT = "rehearsal failed: the twin reported an error"
+REFUSAL_X = "mock: no canned component for: x"
+ANSWER_X = "mock: no canned answer for: x"
+
+
+def run_germline():
+    """Test 4: the rehearsal, the germline, the cap, the marker parse, at -smp 8."""
+    smp = 8
+    argv = qemu_argv(smp, NOTES, os.path.join(OUT, "x"))
+    problems = check_cage_argv(argv, BROKER_PORT, MAC)
+    if not report("the harness's own QEMU command is not the cage", problems):
+        return 1
+    say("the checker's QEMU command carries restrict=on and the single guestfwd to 10.0.2.4:9999 via nc to 127.0.0.1:%d" % BROKER_PORT)
+
+    import rehearse
+    rargv = rehearse.qemu_argv(ESP, os.path.join(REHEARSAL, "notes.img"), os.path.join(REHEARSAL, "serial.txt"), REHEARSAL_PORT)
+    problems = check_cage_argv(rargv, REHEARSAL_PORT, None)
+    if rehearse.DEFAULT_PORT != REHEARSAL_PORT:
+        problems.append("the rehearsal's default port is %d, not %d" % (rehearse.DEFAULT_PORT, REHEARSAL_PORT))
+    if not report("the rehearsal's QEMU command is not the cage", problems):
+        return 1
+    say("the rehearsal's QEMU command carries the same cage, its guestfwd via nc to 127.0.0.1:%d" % REHEARSAL_PORT)
+
+    blob, problems = component_self_check()
+    if not report("the test component is not what the repository says", problems):
+        return 1
+    big = blob + bytes(CAP - len(blob))
+
+    record = os.path.join(OUT, "broker.germline.jsonl")
+    serial = os.path.join(OUT, "serial.germline.txt")
+    shot_a = os.path.join(OUT, "screen.germline.a.ppm")
+    shot_b = os.path.join(OUT, "screen.germline.b.ppm")
+    mock, err = start_mock(record)
+    if err:
+        say(err)
+        return 1
+    say("mock broker listening on 127.0.0.1:%d, germline wiped at %s" % (BROKER_PORT, os.path.relpath(GERMLINE, REPO)))
+    try:
+        fresh_disk(NOTES)
+        steps = [
+            ("type", "! fault\n"), ("wait_record", record, 1, 240.0), ("sleep", SETTLE),
+            ("type", "! test component\n"), ("wait_record", record, 2, 150.0), ("sleep", 3.0),
+            ("type", "\x1b"), ("sleep", 2.0),
+            ("type", "! test component\n"), ("wait_record", record, 3, 20.0), ("sleep", 3.0),
+            ("type", "\x1b"), ("sleep", 2.0),
+            ("type", "! big\n"), ("wait_record", record, 4, 150.0), ("sleep", 3.0),
+            ("shot", shot_a),
+            ("type", "\x1b"), ("sleep", 2.0),
+            ("type", "?\n"), ("sleep", 1.5),
+            ("type", "?x\n"), ("wait_record", record, 5, 20.0), ("sleep", SETTLE),
+            ("type", "!\n"), ("sleep", 1.5),
+            ("type", "!x\n"), ("wait_record", record, 6, 20.0), ("sleep", SETTLE),
+            ("type", "last\n"), ("sleep", 1.5),
+            ("shot", shot_b),
+        ]
+        capture, err = drive(smp, NOTES, steps, serial)
+    finally:
+        stop_mock(mock)
+    if err:
+        say(err)
+        if capture:
+            dump_capture(capture)
+        return 1
+
+    ok = True
+    problems, geometry = check_boot_lines(capture, smp, "formatted")
+    problems += check_echo(capture, b"! fault\r\n! test component\r\n! test component\r\n! big\r\n"
+                                    b"?\r\n?x\r\n!\r\n!x\r\nlast\r\n")
+    ok &= report("the serial log is not what the spec asks for", problems, capture)
+    if not problems:
+        say("thirteen boot lines; the wire after ready carries exactly the nine typed lines")
+
+    entries, problems = read_record(record)
+    if entries is not None:
+        if len(entries) != 6:
+            problems.append("the broker saw %d connection(s), want 6" % len(entries))
+        checks = [
+            lambda e: check_grow_entry(1, e, "fault", "refused", 2,
+                                       ["fail: the twin reported an error"] * 2, "refusal",
+                                       refusal_frame(REFUSAL_FAULT.encode()), REFUSAL_FAULT),
+            lambda e: check_grow_entry(2, e, "test component", "generated", 3, ["pass"], "component", component_frame(blob)),
+            lambda e: check_grow_entry(3, e, "test component", "germline", 3, [], "component", component_frame(blob)),
+            lambda e: check_grow_entry(4, e, "big", "generated", 4, ["pass"], "component", component_frame(big)),
+            lambda e: check_question_entry(5, e, "x"),
+            lambda e: check_grow_entry(6, e, "x", "refused", 5, [], "refusal", refusal_frame(REFUSAL_X.encode()), REFUSAL_X),
+        ]
+        for check, entry in zip(checks, entries):
+            problems += check(entry)
+    ok &= report("the broker's record is not what GERMLINE.md asks for", problems)
+    if not problems:
+        say("the record: fault refused after two failed rehearsals (calls 2); test component generated (3) "
+            "then served from the germline (still 3); big generated (4) as a frame of exactly %d bytes; "
+            "x asked, then refused with no candidate (5)" % len(component_frame(big)))
+
+    problems = check_germline_entry(GERMLINE, "test component", blob)
+    problems += check_germline_entry(GERMLINE, "big", big)
+    names = germline_entries(GERMLINE)
+    if len(names) != 2:
+        problems.append("the germline holds %d entries %r, want exactly 2" % (len(names), names))
+    ok &= report("the germline is not what GERMLINE.md asks for", problems)
+    if not problems:
+        say("the germline holds exactly two entries - the test component and its 1 MB twin - each with provenance and a rehearsal log")
+
+    problems = check_image(NOTES, ["last"])
+    ok &= report("the notebook is not what it should be", problems)
+    if not problems:
+        say("the notebook holds exactly 'last' - no request, question or bare marker was journaled")
+
+    if None in geometry:
+        say("no picture to judge - the boot lines were wrong")
+        return 1
+    problems = check_component_screen(shot_a, geometry, "-")
+    ok &= report("screen A does not show the 1 MB component running", problems)
+    if not problems:
+        say("screen A: the five strips at their cells with 'key: -', every other cell blank - the 1 MB blob ran, its padding never reached")
+
+    problems = check_screen(shot_b, geometry, [
+        "> ! fault", REFUSAL_FAULT,
+        "> ! test component", "> ! test component", "> ! big",
+        "> ?", "nothing to ask",
+        "> ?x", ANSWER_X,
+        "> !", "nothing to grow",
+        "> !x", REFUSAL_X,
+        "> last", PROMPT])
+    ok &= report("screen B does not show the conversation", problems)
+    if not problems:
+        say("screen B: the refusal, the three requests, the four marker cases with their lines, '> last' and the prompt, two colours only")
+
+    say("the germline: %s" % ("proven - rehearsed, cached, served, capped, and the markers parsed" if ok else "not proven"))
+    return 0 if ok else 1
+
+
 def main(argv):
     if len(argv) == 2 and argv[0] == "--grow":
         try:
             return run_grow(int(argv[1]))
         except ValueError:
             pass
+    if argv == ["--germline"]:
+        return run_germline()
     say("usage: checkgermline.py --grow <smp> | --germline")
     return 1
 

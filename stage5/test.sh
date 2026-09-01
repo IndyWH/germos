@@ -395,6 +395,66 @@ else
 fi
 echo
 
+# --------------------------------------- test 4: the rehearsal and the germline
+# Two halves. First this harness inspects its OWN cage string - the one
+# every QEMU line above was given - and the checker inspects its own QEMU
+# argv and the rehearsal's: slirp user mode, restrict=on, exactly one
+# guestfwd, to tcp:10.0.2.4:9999, delivered by nc to 127.0.0.1 on 9999 (the
+# gate's guest) and 9998 (the rehearsal's twin), no hostfwd. Then the long
+# run at -smp 8: a deliberately faulting blob fails rehearsal twice and the
+# guest gets the refusal, nothing runs; the good component passes, is cached
+# with its provenance, and a second identical request is served from the
+# germline with the generation backend never invoked - the mock counts
+# calls; the component padded to exactly the 1 MB cap is rehearsed, streamed
+# whole and run; and the marker-parse cases - bare "?", "?x", bare "!",
+# "!x" - each route to the line GERMLINE.md fixes. The work is in
+# stage5/checkgermline.py --germline.
+
+echo "Test 4 - The rehearsal and the germline: a faulting blob refused, the good one cached and served, the 1 MB cap streamed, the markers parsed"
+cage_probs=()
+case "$CAGE_NETDEV" in
+  user,*) : ;;
+  *) cage_probs+=("the netdev is not slirp user mode: $CAGE_NETDEV") ;;
+esac
+case ",$CAGE_NETDEV," in
+  *,restrict=on,*) : ;;
+  *) cage_probs+=("the netdev lacks restrict=on: $CAGE_NETDEV") ;;
+esac
+n_fwd=$(printf '%s' "$CAGE_NETDEV" | grep -o 'guestfwd=' | wc -l)
+[ "$n_fwd" -eq 1 ] || cage_probs+=("expected exactly one guestfwd, found $n_fwd: $CAGE_NETDEV")
+printf '%s' "$CAGE_NETDEV" | grep -qE 'guestfwd=tcp:10\.0\.2\.4:9999-cmd:nc -N 127\.0\.0\.1 9999(,|$)' || \
+  cage_probs+=("the guestfwd is not tcp:10.0.2.4:9999 via 'nc -N 127.0.0.1 9999': $CAGE_NETDEV")
+case "$CAGE_NETDEV" in
+  *hostfwd*) cage_probs+=("the netdev opens a hostfwd: $CAGE_NETDEV") ;;
+esac
+IFS=',' read -ra dev_fields <<<"$CAGE_DEVICE"
+dev_ok=0
+if [ "${dev_fields[0]:-}" = "virtio-net-pci" ]; then
+  has_nd=0; has_mac=0
+  for f in "${dev_fields[@]:1}"; do
+    [ "$f" = "netdev=n0" ] && has_nd=1
+    [ "$f" = "mac=$MAC" ] && has_mac=1
+  done
+  [ "$has_nd" -eq 1 ] && [ "$has_mac" -eq 1 ] && dev_ok=1
+fi
+[ "$dev_ok" -eq 1 ] || \
+  cage_probs+=("the device is not a virtio-net-pci on netdev n0 with the harness's MAC: $CAGE_DEVICE")
+
+if [ "${#cage_probs[@]}" -ne 0 ]; then
+  fail "test 4: this harness's own cage string is not the cage"
+  for p in "${cage_probs[@]}"; do echo "    - $p"; done
+else
+  echo "    the harness's own -netdev carries restrict=on and the single guestfwd to 10.0.2.4:9999 via nc to 127.0.0.1:9999"
+  if [ ! -f "$ESP" ]; then
+    fail "test 4: no image was built"
+  elif python3 "$REPO/stage5/checkgermline.py" --germline; then
+    pass "test 4: rehearsed, refused, cached, served from the germline, the cap streamed, the markers parsed - inside the cage"
+  else
+    fail "test 4: the germline is not proven (see above)"
+  fi
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then
