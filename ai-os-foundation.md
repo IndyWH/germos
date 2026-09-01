@@ -1,8 +1,8 @@
-# The Homegrown Operating System
+# GermOS — the homegrown operating system
 
-**Foundation document — version 1.8, 31 August 2026** (v1.1 added Stage 8 — the molt; v1.2 the concurrency doctrine; v1.3 the meat-bag law; v1.4 the human-factors constitution; v1.5 Hick's law first and the LCARS clause; v1.6 the build loop from the AI-Native SDLC playbook; v1.7 the ignition key; v1.8 WSL2 retired — mlrig runs native Ubuntu, install steps updated)
+**Foundation document — version 1.9, 1 September 2026** (v1.1 added Stage 8 — the molt; v1.2 the concurrency doctrine; v1.3 the meat-bag law; v1.4 the human-factors constitution; v1.5 Hick's law first and the LCARS clause; v1.6 the build loop from the AI-Native SDLC playbook; v1.7 the ignition key; v1.8 WSL2 retired — mlrig runs native Ubuntu; v1.9 the name)
 
-Working title only. Naming the thing is Wajira's decision. Candidates so far: Seedling, Germline, Type-In. It can stay nameless until it draws its first pixel.
+**Named by the owner, 1 September 2026: GermOS.** Both meanings are intended — the germline it grows from, and the benign germ that settles in a machine, phones a faraway server, and starts mutating. It drew its first pixel the day before it got its name, as the old working-title rule required. The name reserved for the future shared germline network across machines: Mycelium.
 
 **Status: live.** Work began 31 August 2026 — consultation-ai is public and the paper is submitted. This document remains the single source of truth.
 
