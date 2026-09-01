@@ -3,14 +3,14 @@
 Rolling state of the AI OS project. Read this first, then `ai-os-foundation.md`
 (the single source of truth), then the current stage's `spec.md` and `plan.md`.
 
-**Last updated:** 1 September 2026 — **Stage 3 opens.** Stage 2 closed just
-after midnight: Wajira ran test 5 windowed, typed at the prompt, and confirmed
-both the echo and the picture. `stage3/spec.md` — Memory of its own — is
-approved; next is `stage3/plan.md`, drafted in plan mode and committed for his
-approval before any code. The foundation's hard safety rule governs the whole
-stage: storage code touches only QEMU disk images until Stage 7, never any disk
-holding real data — and this stage makes it mechanical, with a storage
-bodyguard in the hook before any driver code exists.
+**Last updated:** 1 September 2026, early morning — **Stage 3 built overnight;
+tests 1–4 green; test 5 pending Wajira.** The machine has memory of its own: a
+virtio-blk driver on the modern interface and the notebook, an append-only
+journal of notes on the disk. Type a note, reboot, and it greets you with it.
+The overnight scope guard was never invoked: no item needed a second attempt.
+The storage bodyguard went into the hook before any storage code existed and
+denied its first real command within the minute. Everything ran inside QEMU;
+the only disks in existence are raw files under `stage3/out/`.
 
 ---
 
@@ -19,7 +19,7 @@ bodyguard in the hook before any driver code exists.
 | | |
 |---|---|
 | Stage | 3 — Memory of its own |
-| Status | Spec **APPROVED** (1 September 2026). Plan pending approval. |
+| Status | Items 1–13 done. Tests 1–4 **GREEN**. Test 5 (oracle) **pending Wajira**. |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3, OVMF, mtools — Stage 3 needs no new packages |
@@ -130,20 +130,115 @@ by the owner's choice at launch.
 
 ---
 
+## Stage 3 — Memory of its own · built 1 September 2026, pending the oracle
+
+**Goal (foundation §7):** block storage (virtio first) and a simple filesystem.
+Proves the OS keeps what it grows. **Hard safety rule:** storage code touches
+only QEMU disk images until Stage 7, never any disk holding real data.
+
+Built on Stage 2's body, per the approved spec and plan (thirteen items, one
+commit each, no amendments needed). What grew:
+
+- **The storage bodyguard** (item 1, before any storage code): the hook denies
+  every Bash call that mentions a `/dev` path other than the harmless sources
+  and sinks, the words mount/umount/losetup/mkfs and the partitioning and
+  wiping tools, `sudo`, a QEMU `-drive file=` outside a repo `out/` directory,
+  the disk shorthands (`-hda`, `-cdrom`, `-blockdev`, `-pflash`, …), and
+  `qemu-img` on any path outside `out/`. The payload table is committed
+  (`.claude/hooks/payloads.py`, 300 payloads, 0 wrong) so a reviewer can re-run
+  it. It bit at once — proven with a harmless `ls` of a SATA device node that
+  the hook refused — and it also bit *me* once on a false deny (a heredoc that
+  mentioned a frozen filename near a write call), costing a reworded command,
+  as designed.
+- **The disk** (items 9–11): PCI bus 0 enumerated through `0xCF8`/`0xCFC`
+  (OVMF leaves ECAM off); the virtio-blk device found at bus 0 device 3
+  (`1af4:1001`, transitional, with modern capabilities); its capability region
+  read from the BAR the capability names and **mapped wherever the firmware
+  put it** — on this machine `0xC000000000`, above the 4 GB identity map *and*
+  above the first PML4 entry — by a generic uncached 2 MB mapper drawing on a
+  spare page pool (two pages used: a new PDPT and PD under a fresh PML4[1]);
+  command register set to MEMORY | BUS MASTER | INTX_DISABLE; modern
+  negotiation with VERSION_1 required and alone accepted, FEATURES_OK read
+  back; capacity read as two 32-bit halves; one virtqueue, three-descriptor
+  chains, polled completion bounded at five seconds. `S3: disk 32768 sectors`
+  on the harness's 16 MB image. Every failure path is a named `ERR:` line.
+- **The notebook** (item 12): `stage3/NOTEBOOK.md` in code — header at sector
+  0, one note per sector from sector 1, the journal ending at the first
+  invalid record; a blank disk formatted (header plus a zeroed sector 1); a
+  recognised one scanned and counted, its notes drawn console-only above the
+  first prompt; every non-empty line written through on Enter before the new
+  prompt appears.
+
+The eleven serial lines: Stage 2's nine as `S3:` with `S3: disk <N> sectors`
+and `S3: notebook formatted` / `S3: notebook <N> notes` between console and
+keyboard, so `keyboard ready` stays the last line before `sti` and the echo
+contract after it stays exactly Stage 2's.
+
+| # | Test | Status |
+|---|---|---|
+| 1 | Artefact — PE32+ magics, x86-64, subsystem 10, relocs stripped, packed image | **PASS** |
+| 2 | Serial, first boot — eleven `S3:` lines on a fresh disk, found = woken = 8, sector count = image size / 512, notebook formatted | **PASS** |
+| 3 | Persistence — type `remember me`, quit; image parsed from the host holds exactly that note byte-exact; same image rebooted logs `notebook 1 notes`, nothing on the wire after ready, image unchanged; at `-smp 2` and `-smp 8` | **PASS** |
+| 4 | Pixels — after the second boot, `remember me` pixel-correct from the shared font, `> ` and cursor on the row below, only the two console colours | **PASS** |
+| 5 | **Oracle — Wajira's eyeball** | **PENDING** — see *Next action* |
+
+Tests 1–4 were committed **red** before any of `stage3.asm` existed and went
+green exactly where the plan predicted: test 1 at item 8, tests 2–4 at item 12
+— on the first run of the gate at that item. The gate takes about four minutes
+(seven QEMU boots).
+
+**Verified in the plan, before any code:** the device identity, the BAR
+address, and the absence of ECAM were all read out of a running QEMU with the
+monitor before `plan.md` was drafted; the driver was then written to those
+facts and the item 9 probe confirmed them from inside the guest.
+
+**One thing that bit, now a gotcha:** NASM `%define` is positional. The
+virtqueue constants were first used in `efi_main`, above their definition,
+and the cascade of "label changed during code generation" errors that
+followed pointed everywhere but the cause.
+
+**Caveats carried forward:**
+
+- **Stage 1's and Stage 2's stand:** the x2APIC path and the trampoline
+  fallback remain unproven; the i8042 is not reconfigured; unshifted keys
+  only; a parked AP that faults prints over serial; one machine, one firmware.
+- **Modern interface only.** The legacy virtio I/O BAR is never touched; a
+  legacy-only device is an `ERR:`, not a fallback. NVMe is the foundation's
+  "second" and is deferred to a later ring.
+- **One request in flight at a time, polled.** Interrupt-driven completion
+  and multiple outstanding requests are a later ring's concern.
+- **The notebook's edges are by design, not by test:** a line is capped at
+  500 bytes (keys beyond it are ignored); an empty line is not a note; a full
+  journal drops the line silently. None is reachable by the acceptance tests.
+- **32-bit sector arithmetic.** A disk of 2^32 sectors (2 TB) or more is an
+  `ERR:` naming the limit.
+- **The spare page pool holds eight pages** — room for four MMIO regions
+  beyond the identity map. Exhaustion is a named `ERR:`.
+- **OVMF's own virtio driver binds the device during boot** and resets it at
+  ExitBootServices; ours resets it again and assumes nothing.
+
+---
+
 ## The frozen acceptance machinery
 
 `stage0/test.sh`, `stage0/checkpixels.py`, `stage1/test.sh`,
-`stage1/checkbands.py`, `stage2/test.sh`, `stage2/checktext.py` and
-`stage2/font8x8.bin` are frozen by `.claude/hooks/protect-tests.py`. The
-builders (`stage1/mkimage.sh`, `stage2/mkimage.sh`) and `stage2/FONT.md` are
-deliberately **not** frozen: recipe and paperwork, judged by their product.
+`stage1/checkbands.py`, `stage2/test.sh`, `stage2/checktext.py`,
+`stage2/font8x8.bin`, `stage3/test.sh`, `stage3/checknotes.py` and
+`stage3/NOTEBOOK.md` are frozen by `.claude/hooks/protect-tests.py`. The
+format document is frozen for the reason the font is: the assembler
+implements it and the checker parses by it, so an editable format would be an
+editable criterion. The builders (`stage1/mkimage.sh`, `stage2/mkimage.sh`,
+`stage3/mkimage.sh`) and `stage2/FONT.md` are deliberately **not** frozen:
+recipe and paperwork, judged by their product.
 
-The Stage 2 extension was verified with 55 payloads — 33 that must be denied,
-22 that must be allowed — with Stage 0's and Stage 1's cases re-run alongside,
-so freezing a new stage is shown not to have loosened an older one. The freeze
-bit immediately (per Stage 1's amendment A4), demonstrated live: the first
-attempt to run the payload table as a heredoc was itself denied, because the
-payload text mentions frozen names near mutating verbs.
+The same hook is the **storage bodyguard** from Stage 3 item 1 (see the Stage
+3 section). From Stage 3 the payload table is committed as
+`.claude/hooks/payloads.py` — the Stage 0–2 freeze cases reconstructed from
+their commit records, the storage cases, and the Stage 3 freeze cases: 300
+payloads, 203 denied, 97 allowed, 0 wrong. Run it with
+`python3 .claude/hooks/payloads.py`; it exits non-zero on a single wrong
+verdict. Every freeze and the bodyguard bit immediately (per Stage 1's
+amendment A4), demonstrated live each time.
 
 Two things learned about the hook, both now in CLAUDE.md:
 
@@ -162,29 +257,36 @@ file we have not written is a wall, not a freeze. Recorded as amendment A3 in
 ## Safety
 
 Everything has run inside QEMU. Stages 1 and 2 give QEMU firmware plus exactly
-one drive: a raw FAT image under the stage's `out/`. OVMF is mapped read-only by
-`-bios`. No block device, no loop mount, no `sudo`, nothing written outside
+one drive: a raw FAT image under the stage's `out/`. Stage 3 adds exactly one
+more: a raw 16 MB notebook image under `stage3/out/`, created fresh by the
+harness with `truncate`. OVMF is mapped read-only by `-bios`. No block device,
+no loop mount, no `mkfs`, no `sudo` — and from Stage 3 item 1 the hook denies
+each of those mechanically before the shell sees them. Nothing written outside
 `/home/indy/Projects/ai-os` (bar scratch files in the session temp directory).
 Stage 2's single network touch was the one-time fetch of the public-domain font,
-verified against the sha256 pins recorded in `stage2/plan.md`.
+verified against the sha256 pins recorded in `stage2/plan.md`; Stage 3 touched
+the network not at all.
 
 ## Next action
 
-`stage3/spec.md` is approved. Its shape: a virtio-blk driver found on the PCI
-bus and driven through the modern interface, a tiny append-only notebook
-filesystem of our own design specified in `stage3/NOTEBOOK.md` so the tests can
-parse the disk image from the host, and one behaviour — every line entered at
-the prompt is written through to disk before the next prompt, and the next boot
-replays it above the prompt. Five acceptance tests; test 3 (persistence across
-two boots of the same image) is the soul of the stage. Three owner decisions
-stand: our own notebook format, every entered line persists automatically, and
-the overnight scope guard is in force — if virtio negotiation fights back for
-more than two honest attempts, stop, record where things stand here, and leave
-the rest for the morning.
+**Test 5 — the oracle.** Wajira runs, from the repo root:
 
-Next: `stage3/plan.md`, drafted in plan mode and committed for Wajira's
-approval. Its first implementation-facing item, before any driver or filesystem
-code, is the storage bodyguard: the hook grows a denial for Bash calls that
-mention `/dev` block devices, mount, losetup, mkfs, or a QEMU drive file outside
-the repo's `out/` directories. Then acceptance tests first and committed red,
-one commit per numbered item, Stages 0–2 green throughout.
+```
+qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
+  -drive format=raw,file=stage3/out/esp.img \
+  -drive format=raw,file=stage3/out/notes.img,if=virtio -serial stdio
+```
+
+`stage3/out/notes.img` is the image the pixel test left behind: it holds one
+note, `remember me`, typed by the harness the night before. The boot should
+show it above the prompt with `S3: notebook 1 notes` in the log. He types a
+note of his own and Enter, closes QEMU, runs the same command again, and sees
+both notes above the prompt with `S3: notebook 2 notes`. His word closes the
+stage. (For a completely blank start: `rm stage3/out/notes.img && truncate -s
+16M stage3/out/notes.img`, and the first boot will say `notebook formatted`.)
+
+After closure: Cowork's review per `REVIEW.md` (the storage code is the part
+that gets a disassembly-level read), then Stage 4 — the umbilical — opens with
+a Cowork spec. The foundation says the subscription policy is re-checked
+there, and the model question (Opus by rule; Fable considered for Stages 4 and
+8) is the owner's to decide at that gate.

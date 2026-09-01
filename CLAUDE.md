@@ -19,13 +19,25 @@ nasm -f bin stage0/stage0.asm -o stage0/out/stage0.img
 ./stage2/mkimage.sh    # assemble stage2.asm, pack the FAT image (not frozen)
 ./stage2/test.sh       # acceptance tests 1-4: artefact, nine serial lines,
                        # sendkey typing at -smp 2 and 8, pixel-checked console
+
+# Stage 3
+./stage3/mkimage.sh    # assemble stage3.asm, pack the FAT image (not frozen)
+./stage3/test.sh       # acceptance tests 1-4: artefact, eleven serial lines on
+                       # a fresh disk, persistence across two boots at -smp 2
+                       # and 8 (image parsed from the host), pixel-checked
+                       # replay. ~4 min, seven QEMU boots.
+
+# The hook's payload table - every freeze and bodyguard case, 0 wrong or exit 1
+python3 .claude/hooks/payloads.py
 ```
 
-Windowed, for the oracle test:
+Windowed, for the oracle test (Stage 3 shape; earlier stages drop the second
+drive and point at their own `esp.img`):
 
 ```bash
 qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
-  -drive format=raw,file=stage1/out/esp.img -serial stdio
+  -drive format=raw,file=stage3/out/esp.img \
+  -drive format=raw,file=stage3/out/notes.img,if=virtio -serial stdio
 ```
 
 Each stage's `test.sh` is its gate. It must be green before every commit that
@@ -49,7 +61,12 @@ should pass it, and earlier stages stay green forever.
 - **The gate is frozen; the builder is not.** `test.sh` and the pixel checkers
   hold the criteria. `mkimage.sh` holds the recipe, and stays fixable.
 - **QEMU only.** Nothing outside this folder is written. No real disk device is
-  touched, ever, at any stage before Stage 7.
+  touched, ever, at any stage before Stage 7 — and since Stage 3 the same hook
+  is the **storage bodyguard**: any `/dev` path bar the harmless sources and
+  sinks, mount/umount/losetup/mkfs and the partitioning tools, `sudo`, a QEMU
+  `-drive file=` outside a repo `out/`, the disk shorthands, and `qemu-img`
+  outside `out/` are denied in any Bash command, prose included. The only
+  disks are raw files the harness makes under `<stage>/out/`.
 
 ## Bare-metal gotchas
 
@@ -116,6 +133,27 @@ test in the twin.
 - **A 0xE0 scancode prefix swallows its successor.** Ignoring just the prefix
   turns keypad Delete (`E0 53`) into keypad-dot's make code - a stray `.` on
   screen.
+- **NASM `%define` is positional.** A constant used above its definition is
+  "symbol not defined", and the *cascade* that follows — dozens of "label
+  changed during code generation" errors — points everywhere but the cause.
+  Read the first error only. Constants live at the top of the file.
+- **A 64-bit BAR can land above the identity map — and above the first PML4
+  entry.** OVMF puts virtio's modern region at `0xC000000000` here. Read the
+  BAR at runtime and map what the firmware assigned, uncached, creating
+  PML4/PDPT entries as needed; never assume the 4 GB map covers a device.
+- **Virtio common-config fields are accessed at their own width**, the 64-bit
+  ones (queue addresses, capacity) as two 32-bit halves. The spec requires it
+  and QEMU implements only the natural widths; never rely on a qword access.
+- **No DMA without PCI bus mastering.** Set COMMAND bit 2 before handing a
+  device any ring address, or every request times out with a perfect-looking
+  ring.
+- **Disable INTx when polling a device behind a PIC that has not unmasked its
+  line.** COMMAND bit 10, plus `NO_INTERRUPT` on the available ring.
+- **A note on the console is not a byte on the wire.** Anything that must
+  appear on screen but not on serial goes through `console_putc`, never the
+  serial tee — the persistence test asserts an empty channel after `ready`.
+- **OVMF's own driver has already bound the virtio device** and reset it at
+  ExitBootServices. Reset it again and assume nothing about its state.
 
 ## Working with the hooks
 
@@ -131,3 +169,8 @@ test in the twin.
 - **Don't undo a temporary probe with `git checkout --`.** It reverts to HEAD
   and takes the current item's uncommitted work with it. Copy the file aside
   first, and restore from the copy.
+- **A heredoc that mentions a frozen file near `open(`/`write` is denied**
+  even when it only reads. Edit prose with the Edit tool; if a script must
+  mention a frozen name, write the script to a file first and run the file.
+- **Commit messages that mention the bodyguard's words go in via `-F`** from
+  a file written with the Write tool; `-m` puts the words in the command.
