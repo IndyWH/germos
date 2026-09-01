@@ -115,6 +115,13 @@ org 0                           ; file offsets == RVAs
 %define VIO_QUEUES          2           ; queue blocks per device block
 %define VIO_BLOCK_SIZE      (VIO_Q + VIO_QUEUES * VQ_BLK)
 
+; The NIC's receive buffers (plan decision 8): sixteen of 2048 bytes, each
+; holding the 12-byte virtio-net header and a whole frame, since buffers do
+; not merge. One transmit buffer of the same size.
+%define NIC_RX_BUFS         16
+%define NIC_RX_BUF          2048
+%define VNET_HDR_LEN        12          ; struct virtio_net_hdr with num_buffers
+
 ; The notebook (stage3/NOTEBOOK.md): one note per 512-byte sector, the text
 ; from offset 12, so a note is at most 500 bytes. The line buffer is capped
 ; there: what is on screen is exactly what will be on disk.
@@ -732,6 +739,22 @@ efi_main:
         ; scanned and counted; a blank one is formatted. Line ten either way.
         ; -------------------------------------------------------------------
         call    notebook_init
+
+        ; -------------------------------------------------------------------
+        ; The NIC - the stage's new organ: found by the same scan, negotiated
+        ; on the same interface, its receive buffers posted, its MAC read
+        ; from device config. Line eleven. Nothing is sent on the network at
+        ; boot. Still with interrupts off and polled.
+        ; -------------------------------------------------------------------
+        call    nic_find
+        call    nic_negotiate
+        call    nic_queue_init
+
+        lea     rsi, [msg_nic]          ; line eleven
+        call    serial_puts
+        call    serial_putmac
+        lea     rsi, [msg_crlf]
+        call    serial_puts
 
         ; -------------------------------------------------------------------
         ; The keyboard - the third organ, and the machine's first sense.
@@ -1582,6 +1605,142 @@ disk_rw:
 .failed:
         lea     rsi, [err_disk_failed]
         call    serial_err
+
+; ---------------------------------------------------------------------------
+; The NIC - a virtio-net device on the same plumbing (plan decision 8). Two
+; feature bits, MAC and VERSION_1, nothing else: no mergeable buffers, no
+; offloads, no control queue. Queue 0 receives, queue 1 transmits; both
+; polled, NO_INTERRUPT set, INTx off. With VERSION_1 every packet carries a
+; 12-byte virtio-net header; a receive buffer is one device-writable
+; descriptor holding header and frame contiguously, and must hold the whole
+; packet since buffers do not merge - 2048 bytes covers 12 + 1514. One
+; transmit descriptor in flight, reaped before the next. Only the BSP ever
+; touches any of it.
+; ---------------------------------------------------------------------------
+
+%define VNET_F_MAC          (1 << 5)    ; the config MAC is valid only if negotiated
+%define VNET_CFG_MAC        0           ; the six MAC bytes in device config
+
+; nic_find - the NIC's block attached, or a named error. Called once from
+; efi_main after the disk is up, interrupts off; clobbers registers freely.
+nic_find:
+        lea     rbp, [nic_dev]
+        cmp     dword [rbp + VIO_FOUND], 0
+        jne     .have
+        lea     rsi, [err_no_vnet]
+        call    serial_err
+.have:
+        call    vio_attach
+        ret
+
+; nic_negotiate - MAC | VERSION_1, and the MAC read into nic_mac. Clobbers.
+nic_negotiate:
+        lea     rbp, [nic_dev]
+        mov     ecx, VNET_F_MAC
+        mov     edx, VF_VERSION_1_HI
+        call    vio_negotiate
+        mov     rsi, [rbp + VIO_DEVICE]
+        lea     rdi, [nic_mac]
+        mov     ecx, 6
+.mac:
+        mov     al, [rsi + VNET_CFG_MAC]
+        mov     [rdi], al
+        inc     rsi
+        inc     rdi
+        dec     ecx
+        jnz     .mac
+        ret
+
+; nic_queue_init - queue 0 (receive) on the rx rings with every receive
+; buffer posted, queue 1 (transmit) on the tx rings, then DRIVER_OK and one
+; kick of the receive queue. The receive descriptors are filled once -
+; descriptor i always names buffer i - and a buffer is re-posted later by
+; putting its descriptor index back in the available ring. Clobbers
+; registers freely.
+nic_queue_init:
+        lea     rbp, [nic_dev]
+        xor     ecx, ecx
+        lea     rsi, [nic_rx_desc]
+        lea     rdi, [nic_rx_avail]
+        lea     r8, [nic_rx_used]
+        call    vq_init
+        mov     ecx, 1
+        lea     rsi, [nic_tx_desc]
+        lea     rdi, [nic_tx_avail]
+        lea     r8, [nic_tx_used]
+        call    vq_init
+
+        lea     rsi, [nic_rx_desc]
+        lea     rdx, [nic_rx_bufs]
+        lea     rdi, [nic_rx_avail]
+        xor     ecx, ecx
+.rx_desc:
+        mov     [rsi], rdx                      ; descriptor i: buffer i, whole,
+        mov     dword [rsi + 8], NIC_RX_BUF     ; device-writable, no chain
+        mov     word [rsi + 12], VQ_DESC_WRITE
+        mov     word [rsi + 14], 0
+        mov     [rdi + 4 + rcx*2], cx           ; available ring[i] = i
+        add     rsi, 16
+        add     rdx, NIC_RX_BUF
+        inc     ecx
+        cmp     ecx, NIC_RX_BUFS
+        jb      .rx_desc
+        mfence
+        mov     word [rdi + 2], NIC_RX_BUFS     ; all of them, at once
+        mfence
+
+        ; The one transmit descriptor: the tx buffer, length set per send.
+        lea     rsi, [nic_tx_desc]
+        lea     rdx, [nic_tx_buf]
+        mov     [rsi], rdx
+        mov     word [rsi + 12], 0
+        mov     word [rsi + 14], 0
+
+        call    vio_driver_ok
+        mov     rax, [rbp + VIO_Q + Q_DOORBELL] ; tell the device its buffers exist
+        mov     word [rax], 0
+        ret
+
+; serial_putmac - the six bytes at nic_mac as lowercase hex pairs, colon
+; separated. Preserves everything.
+serial_putmac:
+        push    rax
+        push    rcx
+        push    rsi
+        lea     rsi, [nic_mac]
+        mov     ecx, 6
+.pair:
+        lodsb
+        call    serial_puthex8
+        dec     ecx
+        jz      .done
+        mov     al, ':'
+        call    serial_putc
+        jmp     .pair
+.done:
+        pop     rsi
+        pop     rcx
+        pop     rax
+        ret
+
+; serial_puthex8 - AL as two lowercase hex digits. Preserves everything.
+serial_puthex8:
+        push    rax
+        push    rbx
+        push    rdx
+        mov     dl, al
+        lea     rbx, [hex_digits]
+        shr     al, 4
+        xlatb
+        call    serial_putc
+        mov     al, dl
+        and     al, 15
+        xlatb
+        call    serial_putc
+        pop     rdx
+        pop     rbx
+        pop     rax
+        ret
 
 ; ---------------------------------------------------------------------------
 ; The notebook - stage3/NOTEBOOK.md in code. Sector 0 is the header; the
@@ -2861,7 +3020,9 @@ msg_sectors:    db      ' sectors', 13, 10, 0
 msg_nb:         db      'S4: notebook ', 0
 msg_notes:      db      ' notes', 13, 10, 0
 msg_nb_fmt:     db      'S4: notebook formatted', 13, 10, 0
+msg_nic:        db      'S4: nic ', 0
 msg_kbd:        db      'S4: keyboard ready', 13, 10, 0
+hex_digits:     db      '0123456789abcdef'
 
 msg_err:        db      'ERR: ', 0
 msg_exc:        db      'ERR: exception ', 0
@@ -2895,6 +3056,7 @@ err_vio_reset:  db      'virtio device did not complete its reset', 0
 err_vio_v1:     db      'virtio device does not offer VIRTIO_F_VERSION_1 - legacy only', 0
 err_vio_feat:   db      'virtio device refused our features - FEATURES_OK not set', 0
 err_vio_missing: db     'virtio device does not offer a feature this driver needs', 0
+err_no_vnet:    db      'no virtio-net device on PCI bus 0', 0
 err_disk_big:   db      'disk has 2^32 sectors or more - beyond this stage', 0
 err_vq_size:    db      'virtqueue size is 0, above VQ_MAX, or not a power of two', 0
 err_disk_beyond: db     'disk request beyond the capacity', 0
@@ -3101,6 +3263,26 @@ disk_vq_desc:   resb    VQ_MAX * 16
 disk_vq_avail:  resb    6 + VQ_MAX * 2
         alignb  4096
 disk_vq_used:   resb    6 + VQ_MAX * 8
+
+; The NIC: its address, its two queues' rings, its receive buffers and the
+; one transmit buffer. Rings 4 KB aligned as the disk's are.
+        alignb  16
+nic_mac:        resb    6
+        alignb  4096
+nic_rx_desc:    resb    VQ_MAX * 16
+        alignb  4096
+nic_rx_avail:   resb    6 + VQ_MAX * 2
+        alignb  4096
+nic_rx_used:    resb    6 + VQ_MAX * 8
+        alignb  4096
+nic_tx_desc:    resb    VQ_MAX * 16
+        alignb  4096
+nic_tx_avail:   resb    6 + VQ_MAX * 2
+        alignb  4096
+nic_tx_used:    resb    6 + VQ_MAX * 8
+        alignb  4096
+nic_rx_bufs:    resb    NIC_RX_BUFS * NIC_RX_BUF
+nic_tx_buf:     resb    NIC_RX_BUF
 
 ; Page tables. 4 KB alignment is architectural, not a preference.
         alignb  4096
