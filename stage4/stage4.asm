@@ -2170,10 +2170,480 @@ ip_send:
         call    net_send
         ret
 
-; tcp_input - RSI = the frame, ECX = its length, EDX = the IPv4 payload
-; length. Item 12 gives this a body; until then a segment is dropped. Must
-; preserve R12-R14 (net_poll's loop state).
+; ---------------------------------------------------------------------------
+; TCP, client-only (plan decisions 4, 5 and 6): one connection at a time,
+; one segment in flight, in-order delivery only, immediate ACKs, MSS 1460
+; offered, a 4096-byte window, the guest the active closer, a RST honoured
+; from any state. Timers count PIT breaths of 200 us. Nothing here halts:
+; every failure is a verdict umbilical_ask turns into "no answer from the
+; broker". The connection block is tcb (the TCB_* offsets below); the
+; response is assembled by its length prefix into rx_stream. Only the BSP
+; calls any of this.
+; ---------------------------------------------------------------------------
+
+%define TCB_STATE           0           ; u32  one of TS_*
+%define TCB_LPORT           4           ; u32  our port, host order
+%define TCB_ISS             8           ; u32  our initial sequence number
+%define TCB_SND_NXT         12          ; u32  next sequence number to send
+%define TCB_SND_UNA         16          ; u32  oldest unacknowledged
+%define TCB_RCV_NXT         20          ; u32  next sequence number expected
+%define TCB_PEER_FIN        24          ; u32  the peer has finished sending
+%define TCB_PEER_RST        28          ; u32  the peer reset the connection
+%define TCB_SIZE            32
+
+%define TS_CLOSED           0
+%define TS_SYN_SENT         1
+%define TS_ESTABLISHED      2
+%define TS_FIN_SENT         3
+
+%define TCP_SPORT           0           ; offsets inside a TCP header
+%define TCP_DPORT           2
+%define TCP_SEQ             4
+%define TCP_ACK             8
+%define TCP_DOFF            12
+%define TCP_FLAGS           13
+%define TCP_WINDOW          14
+%define TCP_CSUM            16
+%define TCP_URG             18
+%define TCP_HDR             20
+
+%define TF_FIN              0x01
+%define TF_SYN              0x02
+%define TF_RST              0x04
+%define TF_PSH              0x08
+%define TF_ACK              0x10
+
+%define BROKER_PORT         9999
+%define BROKER_PORT_BE      0x0F27      ; 27 0F in memory order
+%define FIRST_PORT          49152
+%define TCP_WINDOW_BYTES    4096
+%define TCP_MSS_OPTION      0xB4050402  ; 02 04 05 B4 in memory order
+
+%define TICKS_PER_SECOND    5000        ; 200 us breaths
+%define SYN_TRIES           5
+%define DATA_TRIES          5
+%define RESPONSE_TICKS      750000      ; 150 s
+%define CLOSE_TICKS         5000        ; a second, then we stop caring
+
+%define RX_STREAM_MAX       (4 + RESPONSE_MAX)
+%define RESPONSE_MAX        4096
+%define REQUEST_MAX         498
+
+; net_breathe - one 200 us breath of a wait loop: poll the wire, and give
+; the working indicator its tick. Preserves everything.
+net_breathe:
+        push    rax
+        push    rcx
+        push    rdx
+        push    rsi
+        push    rdi
+        push    rbp
+        push    r8
+        push    r9
+        push    r10
+        push    r11
+        call    net_poll
+        test    eax, eax
+        jnz     .polled                 ; something arrived: no nap this breath
+        mov     ax, PIT_200US
+        call    pit_wait
+.polled:
+        call    spinner_tick
+        pop     r11
+        pop     r10
+        pop     r9
+        pop     r8
+        pop     rbp
+        pop     rdi
+        pop     rsi
+        pop     rdx
+        pop     rcx
+        pop     rax
+        ret
+
+; tcp_checksum - RSI = a TCP segment (header and payload), ECX = its length,
+; EDX = the peer's IP as it sits in memory. Returns AX = the checksum with
+; the pseudo-header folded in. Preserves everything else.
+tcp_checksum:
+        push    rcx
+        push    rdx
+        push    rsi
+        push    rdi
+        lea     rdi, [pseudo_hdr]
+        mov     dword [rdi], OUR_IP             ; source, then destination -
+        mov     [rdi + 4], edx                  ; order does not change a sum
+        mov     byte [rdi + 8], 0
+        mov     byte [rdi + 9], IP_PROTO_TCP
+        mov     eax, ecx
+        xchg    al, ah
+        mov     [rdi + 10], ax                  ; TCP length, big endian
+        push    rsi
+        push    rcx
+        mov     rsi, rdi
+        mov     ecx, 12
+        xor     eax, eax
+        call    csum_add
+        pop     rcx
+        pop     rsi
+        call    csum_add
+        call    csum_fold
+        pop     rdi
+        pop     rsi
+        pop     rdx
+        pop     rcx
+        ret
+
+; tcp_output - AL = flags, ECX = payload length (the payload already sits at
+; nic_tx_buf + TX_PAYLOAD + TCP_HDR, or + TCP_HDR + 4 when AL has SYN, which
+; carries the MSS option), EBX = the sequence number to send. Builds the
+; header with the current acknowledgement and window, checksums with the
+; pseudo-header, and hands it to ip_send.
+tcp_output:
+        push    rax
+        lea     rdi, [nic_tx_buf + TX_PAYLOAD]
+        mov     edx, [tcb + TCB_LPORT]
+        xchg    dl, dh
+        mov     [rdi + TCP_SPORT], dx
+        mov     word [rdi + TCP_DPORT], BROKER_PORT_BE
+        mov     edx, ebx
+        bswap   edx
+        mov     [rdi + TCP_SEQ], edx
+        mov     edx, [tcb + TCB_RCV_NXT]
+        bswap   edx
+        mov     [rdi + TCP_ACK], edx
+        mov     edx, 5                          ; header words
+        test    al, TF_SYN
+        jz      .no_option
+        mov     edx, 6
+        mov     dword [rdi + TCP_HDR], TCP_MSS_OPTION
+.no_option:
+        shl     dl, 4
+        mov     [rdi + TCP_DOFF], dl
+        mov     [rdi + TCP_FLAGS], al
+        mov     word [rdi + TCP_WINDOW], (TCP_WINDOW_BYTES >> 8) | ((TCP_WINDOW_BYTES & 0xFF) << 8)
+        mov     word [rdi + TCP_CSUM], 0
+        mov     word [rdi + TCP_URG], 0
+        shr     dl, 4
+        movzx   edx, dl
+        shl     edx, 2                          ; header bytes
+        add     ecx, edx                        ; ECX = the segment length
+        mov     rsi, rdi
+        mov     edx, BROKER_IP
+        call    tcp_checksum
+        mov     [rdi + TCP_CSUM], ax
+        mov     dl, IP_PROTO_TCP
+        call    ip_send
+        pop     rax
+        ret
+
+; tcp_input - RSI = an Ethernet frame carrying IPv4/TCP, ECX = the frame
+; length, EDX = the IPv4 payload length. Ours only (the broker's port to our
+; port), checksum verified with the pseudo-header, then the state machine:
+; RST from any state; SYN-ACK while connecting; in-order data and FIN while
+; established, acknowledged at once; the ACK of our FIN. Must preserve
+; R12-R14 (net_poll's loop) - it uses none of them.
 tcp_input:
+        cmp     edx, TCP_HDR
+        jb      .drop
+        cmp     dword [tcb + TCB_STATE], TS_CLOSED
+        je      .drop
+        cmp     dword [rsi + IP_SRC], BROKER_IP
+        jne     .drop
+        lea     rdi, [rsi + ETH_HDR + IP_HDR]   ; RDI = the TCP header
+        cmp     word [rdi + TCP_SPORT], BROKER_PORT_BE
+        jne     .drop
+        movzx   eax, word [rdi + TCP_DPORT]
+        xchg    al, ah
+        cmp     eax, [tcb + TCB_LPORT]
+        jne     .drop
+
+        push    rsi
+        push    rcx
+        mov     rsi, rdi
+        mov     ecx, edx
+        push    rdx
+        mov     edx, BROKER_IP
+        call    tcp_checksum
+        pop     rdx
+        pop     rcx
+        pop     rsi
+        test    ax, ax
+        jnz     .drop                           ; a bad checksum is silence
+
+        movzx   ecx, byte [rdi + TCP_DOFF]
+        shr     ecx, 4
+        shl     ecx, 2                          ; ECX = header bytes
+        cmp     ecx, TCP_HDR
+        jb      .drop
+        cmp     ecx, edx
+        ja      .drop
+        sub     edx, ecx                        ; EDX = payload bytes
+        lea     r8, [rdi + rcx]                 ; R8 = the payload
+        movzx   r9d, byte [rdi + TCP_FLAGS]
+        mov     r10d, [rdi + TCP_SEQ]
+        bswap   r10d                            ; R10D = seq
+        mov     r11d, [rdi + TCP_ACK]
+        bswap   r11d                            ; R11D = ack
+
+        test    r9d, TF_RST
+        jz      .not_rst
+        mov     dword [tcb + TCB_PEER_RST], 1
+        mov     dword [tcb + TCB_STATE], TS_CLOSED
+        ret
+.not_rst:
+        cmp     dword [tcb + TCB_STATE], TS_SYN_SENT
+        jne     .open
+        and     r9d, TF_SYN | TF_ACK
+        cmp     r9d, TF_SYN | TF_ACK
+        jne     .drop
+        cmp     r11d, [tcb + TCB_SND_NXT]       ; must acknowledge our SYN
+        jne     .drop
+        lea     eax, [r10 + 1]
+        mov     [tcb + TCB_RCV_NXT], eax
+        mov     [tcb + TCB_SND_UNA], r11d
+        mov     dword [tcb + TCB_STATE], TS_ESTABLISHED
+        jmp     .ack
+
+.open:
+        test    r9d, TF_ACK
+        jz      .no_ack
+        ; Accept an acknowledgement that lies within what is outstanding:
+        ; snd_una < ack <= snd_nxt, in modular arithmetic.
+        mov     eax, r11d
+        sub     eax, [tcb + TCB_SND_UNA]
+        mov     ecx, [tcb + TCB_SND_NXT]
+        sub     ecx, [tcb + TCB_SND_UNA]
+        cmp     eax, ecx
+        ja      .no_ack
+        mov     [tcb + TCB_SND_UNA], r11d
+.no_ack:
+        test    edx, edx
+        jnz     .has_data
+        test    r9d, TF_FIN
+        jz      .done                           ; a bare ACK: nothing to answer
+.has_data:
+        cmp     r10d, [tcb + TCB_RCV_NXT]
+        jne     .ack                            ; not the next byte: repeat our ACK
+        ; In order: take what fits in the stream, then the FIN if everything fit.
+        mov     ecx, RX_STREAM_MAX
+        sub     ecx, [rx_len]
+        cmp     ecx, edx
+        jbe     .take
+        mov     ecx, edx
+.take:
+        push    rsi
+        push    rdi
+        mov     rsi, r8
+        lea     rdi, [rx_stream]
+        add     edi, [rx_len]                   ; rx_stream is below 4 GB
+        mov     eax, ecx
+        rep     movsb
+        pop     rdi
+        pop     rsi
+        add     [rx_len], eax
+        add     [tcb + TCB_RCV_NXT], eax
+        cmp     eax, edx
+        jne     .ack                            ; the rest waits for room
+        test    r9d, TF_FIN
+        jz      .ack
+        inc     dword [tcb + TCB_RCV_NXT]
+        mov     dword [tcb + TCB_PEER_FIN], 1
+.ack:
+        mov     al, TF_ACK
+        xor     ecx, ecx
+        mov     ebx, [tcb + TCB_SND_NXT]
+        call    tcp_output
+.done:
+.drop:
+        ret
+
+; tcp_connect - a fresh port and initial sequence number, SYN sent and
+; retransmitted after a second up to SYN_TRIES times. Returns EAX = 1
+; established, or 0.
+tcp_connect:
+        lea     rdi, [tcb]
+        mov     ecx, TCB_SIZE / 4
+        xor     eax, eax
+        rep     stosd
+        mov     dword [rx_len], 0
+        movzx   eax, word [next_port]   ; a fresh port per question, from
+        test    eax, eax                ; FIRST_PORT on the first
+        jnz     .have_port
+        mov     eax, FIRST_PORT
+.have_port:
+        mov     [tcb + TCB_LPORT], eax
+        inc     eax
+        mov     [next_port], ax
+        rdtsc
+        mov     [tcb + TCB_ISS], eax
+        mov     [tcb + TCB_SND_UNA], eax
+        inc     eax
+        mov     [tcb + TCB_SND_NXT], eax        ; the SYN takes one number
+        mov     dword [tcb + TCB_STATE], TS_SYN_SENT
+        mov     r15d, SYN_TRIES
+.try:
+        mov     al, TF_SYN
+        xor     ecx, ecx
+        mov     ebx, [tcb + TCB_ISS]
+        call    tcp_output
+        mov     edx, TICKS_PER_SECOND
+.wait:
+        cmp     dword [tcb + TCB_STATE], TS_ESTABLISHED
+        je      .yes
+        cmp     dword [tcb + TCB_PEER_RST], 0
+        jne     .no
+        call    net_breathe
+        dec     edx
+        jnz     .wait
+        dec     r15d
+        jnz     .try
+.no:
+        mov     dword [tcb + TCB_STATE], TS_CLOSED
+        xor     eax, eax
+        ret
+.yes:
+        mov     eax, 1
+        ret
+
+; tcp_send - RSI = bytes, ECX = how many (at most one segment). Sent with
+; PSH|ACK, retransmitted after a second up to DATA_TRIES times, until the
+; peer acknowledges every byte. Returns EAX = 1 acknowledged, or 0.
+tcp_send:
+        mov     [send_ptr], rsi
+        mov     [send_len], ecx
+        ; The data occupies [snd_una, snd_una + len). snd_nxt advances past it
+        ; now, so the peer's acknowledgement of it falls inside the window the
+        ; ACK check accepts; each (re)transmission goes out from snd_una.
+        mov     eax, [tcb + TCB_SND_UNA]
+        add     eax, ecx
+        mov     [tcb + TCB_SND_NXT], eax
+        mov     [send_want], eax                ; acknowledged when snd_una reaches this
+        mov     r15d, DATA_TRIES
+.try:
+        mov     rsi, [send_ptr]
+        mov     ecx, [send_len]
+        lea     rdi, [nic_tx_buf + TX_PAYLOAD + TCP_HDR]
+        rep     movsb
+        mov     al, TF_PSH | TF_ACK
+        mov     ecx, [send_len]
+        mov     ebx, [tcb + TCB_SND_UNA]        ; retransmit from the oldest unacked
+        call    tcp_output
+        mov     edx, TICKS_PER_SECOND
+.wait:
+        mov     eax, [tcb + TCB_SND_UNA]
+        cmp     eax, [send_want]
+        je      .yes
+        cmp     dword [tcb + TCB_PEER_RST], 0
+        jne     .no
+        call    net_breathe
+        dec     edx
+        jnz     .wait
+        dec     r15d
+        jnz     .try
+.no:
+        xor     eax, eax
+        ret
+.yes:
+        mov     eax, 1
+        ret
+
+; tcp_recv_response - waits for one whole response frame in rx_stream: the
+; length prefix, then that many bytes, within RESPONSE_TICKS. Returns EAX = 1
+; with [rx_len] covering the frame, or 0 on a RST, a FIN before the frame
+; is whole, a length above RESPONSE_MAX, or the deadline.
+tcp_recv_response:
+        mov     edx, RESPONSE_TICKS
+.loop:
+        mov     eax, [rx_len]
+        cmp     eax, 4
+        jb      .more
+        mov     ecx, [rx_stream]                ; the length prefix
+        cmp     ecx, RESPONSE_MAX
+        ja      .no
+        add     ecx, 4
+        cmp     eax, ecx
+        jae     .yes
+.more:
+        cmp     dword [tcb + TCB_PEER_RST], 0
+        jne     .no
+        cmp     dword [tcb + TCB_PEER_FIN], 0
+        jne     .no                             ; finished without a whole frame
+        call    net_breathe
+        dec     edx
+        jnz     .loop
+.no:
+        xor     eax, eax
+        ret
+.yes:
+        mov     eax, 1
+        ret
+
+; tcp_close - our FIN, then up to a second for its acknowledgement; either
+; way the connection is closed afterwards. A fresh port per question makes
+; the rest of the close moot.
+tcp_close:
+        cmp     dword [tcb + TCB_STATE], TS_ESTABLISHED
+        jne     .closed
+        mov     al, TF_FIN | TF_ACK
+        xor     ecx, ecx
+        mov     ebx, [tcb + TCB_SND_NXT]
+        call    tcp_output
+        inc     dword [tcb + TCB_SND_NXT]       ; the FIN takes one number
+        mov     dword [tcb + TCB_STATE], TS_FIN_SENT
+        mov     edx, CLOSE_TICKS
+.wait:
+        mov     eax, [tcb + TCB_SND_UNA]
+        cmp     eax, [tcb + TCB_SND_NXT]
+        je      .closed
+        cmp     dword [tcb + TCB_PEER_RST], 0
+        jne     .closed
+        call    net_breathe
+        dec     edx
+        jnz     .wait
+.closed:
+        mov     dword [tcb + TCB_STATE], TS_CLOSED
+        ret
+
+; umbilical_ask - RSI = the question, ECX = its length (1..REQUEST_MAX).
+; ARP, connect, one request frame, one response frame, close. Returns
+; EAX = 1 with the answer at rx_stream + 4 and its length at [rx_stream],
+; or 0: no answer from the broker.
+umbilical_ask:
+        lea     rdi, [req_buf]
+        mov     [rdi], ecx                      ; the frame: length, then bytes
+        add     rdi, 4
+        push    rcx
+        rep     movsb
+        pop     rcx
+        add     ecx, 4
+        mov     [req_len], ecx
+
+        call    arp_resolve
+        test    eax, eax
+        jz      .fail
+        call    tcp_connect
+        test    eax, eax
+        jz      .fail
+        lea     rsi, [req_buf]
+        mov     ecx, [req_len]
+        call    tcp_send
+        test    eax, eax
+        jz      .fail_close
+        call    tcp_recv_response
+        test    eax, eax
+        jz      .fail_close
+        call    tcp_close
+        mov     eax, 1
+        ret
+.fail_close:
+        call    tcp_close
+.fail:
+        xor     eax, eax
+        ret
+
+; spinner_tick - the working indicator's clock; item 14 gives it a body.
+; Preserves everything.
+spinner_tick:
         ret
 
 ; ---------------------------------------------------------------------------
@@ -3726,6 +4196,24 @@ broker_mac:     resb    6
         alignb  4
 broker_mac_ok:  resd    1
 ip_ident:       resw    1
+
+; TCP: the connection block, the response stream assembled by its length
+; prefix, the request frame kept for retransmission, the pseudo-header
+; scratch, and the next source port.
+        alignb  16
+tcb:            resb    TCB_SIZE
+rx_len:         resd    1               ; bytes of the response stream so far
+next_port:      resw    1               ; 0 until the first question
+        alignb  16
+pseudo_hdr:     resb    12
+send_ptr:       resq    1
+send_len:       resd    1
+send_want:      resd    1
+req_len:        resd    1
+        alignb  16
+req_buf:        resb    4 + 512         ; the request frame: length, then bytes
+        alignb  16
+rx_stream:      resb    4 + 4096        ; the response frame as it arrives
 
 ; Page tables. 4 KB alignment is architectural, not a preference.
         alignb  4096
