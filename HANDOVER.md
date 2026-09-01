@@ -3,18 +3,15 @@
 Rolling state of the AI OS project. Read this first, then `ai-os-foundation.md`
 (the single source of truth), then the current stage's `spec.md` and `plan.md`.
 
-**Last updated:** 1 September 2026 — **Stage 4 opens.** Stage 3 closed on
-the morning of 1 September: Wajira booted the machine windowed and it
-remembered his note — *"It remembers!"* `stage4/spec.md` — The umbilical — is
-approved, with the foundation's Stage 4 policy gate already cleared and
-recorded in it. Two owner decisions taken at the opening: **Fable 5 at high
-effort implements this stage**, and the **subscription policy re-check
-passed** (`claude -p` still draws from the Max subscription; the June 2026
-credit-pool change is paused; re-check again at Stage 5). Next is
-`stage4/plan.md`, drafted in plan mode and committed for his approval before
-any code — and this is the first stage where the plan gate is a hook, not a
-convention: exiting plan mode is blocked until he writes the approval marker
-from his own terminal.
+**Last updated:** 1 September 2026 — **Stage 4 green, pending the oracle.**
+All four automated tests pass: the booted machine reaches its broker on
+mlrig over a caged virtio network, asks a question typed as `? ...`, and
+prints the answer on its own console. The umbilical works. Built on Fable 5
+at high effort (the owner's decision), one commit per numbered item, the
+plan gate hook holding until Wajira approved — its first live use. **Test 5
+is his:** boot windowed with the real broker and ask Claude something true.
+Everything ran inside QEMU with the cage (`restrict=on`, one `guestfwd`);
+the gate spoke only to the mock broker and never spent a token.
 
 ---
 
@@ -23,7 +20,7 @@ from his own terminal.
 | | |
 |---|---|
 | Stage | 4 — The umbilical |
-| Status | Spec **APPROVED** (1 September 2026). Plan pending approval at the plan gate. |
+| Status | Tests 1–4 **GREEN**. Test 5 (oracle) pending Wajira. |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3, OVMF, mtools — Stage 4 needs no new packages (the broker is standard-library Python and shells out to `claude`) |
@@ -234,22 +231,28 @@ followed pointed everywhere but the cause.
 
 `stage0/test.sh`, `stage0/checkpixels.py`, `stage1/test.sh`,
 `stage1/checkbands.py`, `stage2/test.sh`, `stage2/checktext.py`,
-`stage2/font8x8.bin`, `stage3/test.sh`, `stage3/checknotes.py` and
-`stage3/NOTEBOOK.md` are frozen by `.claude/hooks/protect-tests.py`. The
-format document is frozen for the reason the font is: the assembler
-implements it and the checker parses by it, so an editable format would be an
-editable criterion. The builders (`stage1/mkimage.sh`, `stage2/mkimage.sh`,
-`stage3/mkimage.sh`) and `stage2/FONT.md` are deliberately **not** frozen:
-recipe and paperwork, judged by their product.
+`stage2/font8x8.bin`, `stage3/test.sh`, `stage3/checknotes.py`,
+`stage3/NOTEBOOK.md`, `stage4/test.sh`, `stage4/checkumbilical.py`,
+`stage4/UMBILICAL.md` and **`broker/broker.py`** are frozen by
+`.claude/hooks/protect-tests.py`. The format and protocol documents are
+frozen for the reason the font is: the assembler implements them and the
+checker parses by them, so an editable criterion would be no criterion. The
+broker is frozen because the mock's framing, record and canned table are what
+test 3 judges the guest by — but `broker/claude_backend.py` (the one
+`claude -p` function the automated gate never runs) is **not** frozen, split
+at the trust boundary. The builders (`stage<N>/mkimage.sh`) and `stage2/FONT.md`
+are deliberately not frozen: recipe and paperwork, judged by their product.
 
 The same hook is the **storage bodyguard** from Stage 3 item 1 (see the Stage
-3 section). From Stage 3 the payload table is committed as
-`.claude/hooks/payloads.py` — the Stage 0–2 freeze cases reconstructed from
-their commit records, the storage cases, and the Stage 3 freeze cases: 300
-payloads, 203 denied, 97 allowed, 0 wrong. Run it with
+3 section). The committed payload table `.claude/hooks/payloads.py` covers
+the Stage 0–2 freeze cases (reconstructed from their commit records), the
+storage cases, and the Stage 3 and Stage 4 freeze cases — including the cage
+in real commands and the `nc`/`restrict`/`guestfwd` words in prose: **400
+payloads, 267 denied, 133 allowed, 0 wrong**. Run it with
 `python3 .claude/hooks/payloads.py`; it exits non-zero on a single wrong
 verdict. Every freeze and the bodyguard bit immediately (per Stage 1's
-amendment A4), demonstrated live each time.
+amendment A4), demonstrated live each time — the Stage 4 freeze denied a
+redirect into `stage4/UMBILICAL.md` the moment it was armed.
 
 Two things learned about the hook, both now in CLAUDE.md:
 
@@ -278,12 +281,103 @@ Stage 2's single network touch was the one-time fetch of the public-domain font,
 verified against the sha256 pins recorded in `stage2/plan.md`; Stage 3 touched
 the network not at all.
 
-## Stage 4 — The umbilical · opened 1 September 2026
+Stage 4 adds a network, but a caged one: slirp with `restrict=on` and a single
+`guestfwd`, so the guest reaches nothing but the broker on `127.0.0.1:9999`
+and every other destination gets a RST (measured before any guest code
+existed, by injecting raw frames into slirp from the host). The broker binds
+`127.0.0.1` only. The automated gate talks only to `broker/broker.py --mock`,
+which makes no outward call of any kind, and `stage4/test.sh` refuses to run
+while anything else holds the port — so **this session made no real Claude
+call and spent no token.** The only outward connection in the whole design is
+`claude -p`'s own HTTPS from the real broker, and that happens only in
+Wajira's hands at test 5.
+
+## Stage 4 — The umbilical · green-pending-oracle 1 September 2026
 
 **Goal (foundation §7):** network driver, minimal TCP/IP, and a broker on
 mlrig that relays to Claude. Done when the booted OS asks Claude a question
-and prints the answer. Proves the OS has a brain. `stage4/spec.md` is
-approved (Cowork, 1 September 2026).
+and prints the answer. Proves the OS has a brain. `stage4/spec.md` and
+`stage4/plan.md` are approved (the plan through the plan-gate hook, its
+first live use).
+
+**What grew, on Stage 3's proven body:**
+
+- **The wire, one document** — `stage4/UMBILICAL.md`, frozen: the cage, the
+  addressing, the length-prefixed frame (a `u32` little-endian length then
+  the bytes; requests 1–498 printable ASCII, responses 0–4096 printable or
+  LF), the timers, the no-answer rule, the `? ` question rule, the mock's
+  canned table, the record format, worked-example bytes, and the Python
+  parser the checker and the broker share.
+- **The broker** — `broker/broker.py` (frozen: framing, listener, record,
+  the mock's canned table are criteria) binds `127.0.0.1` only, one
+  connection at a time; `--mock` answers from the table and calls nothing;
+  `--record` logs the raw bytes as hex so the checker judges by the document.
+  `broker/claude_backend.py` (**not** frozen) is the one swappable function:
+  `claude -p --output-format text --tools "" --no-session-persistence --bare`
+  with a two-line brief, its output folded to the wire's ASCII.
+- **Two virtio devices** — Stage 3's globals became a per-device block; one
+  PCI pass records both BDFs; `vio_attach`/`vio_negotiate`/`vq_init` are
+  generic. On this machine the NIC is at bus 0 device 2 (`1af4:1000`, BAR4
+  `0xC000000000`), the disk moved to device 3 (`0xC000004000`) — same 2 MB
+  page, and `disk_rw` is unchanged, so the notebook still persists.
+- **virtio-net** — `VIRTIO_NET_F_MAC | VERSION_1` only; queue 0 receives
+  (sixteen 2048-byte buffers, whole-frame, no merge), queue 1 transmits, both
+  polled with INTx off; the MAC read from device config. `S4: nic <mac>` is
+  line eleven.
+- **The stack** — Ethernet, ARP (reply for `10.0.2.15`, resolve `10.0.2.4`),
+  IPv4 with the checksum verified on receive, client-only TCP (one connection
+  and one segment at a time, in-order only, MSS 1460, a 4096-byte window, the
+  guest the active closer, RST honoured). No gateway, no route — the guest's
+  world is one on-link peer.
+- **The question** — a line typed `? ...` goes to the broker as one frame;
+  the answer is drawn console-only with a spinning working indicator while it
+  waits, wrapped, above a fresh prompt; keys pressed during the wait are
+  discarded. A note (no marker) still takes Stage 3's path. The serial echo
+  contract is unchanged — the wire carries only the typed line and its CRLF.
+
+| # | Test | Status |
+|---|---|---|
+| 1 | Artefact — PE32+ magics, x86-64, subsystem 10, relocs stripped, packed image | **PASS** |
+| 2 | Serial — twelve `S4:` lines, `S4: nic <mac>` in its slot carrying the harness's chosen MAC, found = woken = 8 | **PASS** |
+| 3 | The question — mock up, `? ping` and `? hello` round-trip (broker receives exactly those frames per UMBILICAL.md; the canned answers are on the screen pixel-correct; a note typed between them is the only thing journaled; the wire echo untouched), at `-smp 2` and `-smp 8` | **PASS** |
+| 4 | The cage — `restrict=on` with the single guestfwd asserted in both harnesses; a mock-down run ends in `no answer from the broker`, not a hang | **PASS** |
+| 5 | **Oracle — Wajira's eyeball, with the real broker** | **PENDING** |
+
+Tests 1–4 were committed **red** before any of `stage4.asm` existed and went
+green where the plan predicted: test 1 at item 8, test 2 at item 10, tests 3
+and 4 at item 14. The gate is five QEMU boots and refuses to run while
+anything holds port 9999.
+
+**The three deviations from the spec, approved with the plan** (each forced
+by a measured fact): the broker's guest-side address is `10.0.2.4`, not
+`10.0.2.2` (libslirp rejects a forward on its own host); the guestfwd's host
+side is `cmd:nc -N 127.0.0.1 9999`, not a bare `-tcp:` target (which is one
+chardev opened at QEMU start, shared, and refuses to boot with the broker
+down); and test 3 types a note between the two questions to prove notes still
+persist on Stage 4's own binary. The `nc` in the cage line is a real
+dependency (OpenBSD netcat, stock Ubuntu).
+
+**One bug caught and fixed during item 12, now a gotcha:** the first
+`tcp_send` left `snd_nxt` unadvanced, so the peer's ACK of the data fell
+outside the accepted window and the guest gave up while holding an answered
+request. Advancing `snd_nxt` at send time fixed it.
+
+**Caveats carried forward:**
+
+- **Everything Stage 3 carried**, minus "unshifted only" — the shifted US
+  layout now exists (`? ` is typeable). The x2APIC path and the trampoline
+  fallback remain unproven; the i8042 is not reconfigured; one machine, one
+  firmware.
+- **The stack's omissions are by design:** no DHCP, DNS, UDP, IPv6, ICMP,
+  congestion control, IP options or fragments, out-of-order reassembly, TCP
+  options beyond MSS, window scaling, or keepalives. One connection at a
+  time, polled, no NIC interrupts.
+- **Plaintext inside the cage this ring.** TLS lives in the broker; the
+  pre-built TLS blob joins the guest at the ring where its traffic first
+  touches a real wire (Stage 7). Cryptography is never improvised.
+- **The broker's `claude -p` backend is exercised only at test 5.** Its
+  flags are its own to get right there; the file is unfrozen for that reason,
+  and the automated gate never runs it.
 
 **The two gate questions, settled by the owner at the opening:**
 
@@ -320,20 +414,43 @@ ready, and wait.
 
 ## Next action
 
-`stage4/plan.md`, drafted in plan mode and committed for Wajira's approval,
-evaluation-first: `stage4/UMBILICAL.md` (the wire protocol, byte-exact — the
-NOTEBOOK.md precedent), `broker/broker.py` with its `--mock` mode,
-`stage4/test.sh` and its checker for acceptance tests 1–4 committed red, then
-the implementation grown on `stage3/stage3.asm`: the PCI scan generalised to
-two virtio devices, modern virtio-net with receive and transmit queues, ARP,
-IPv4, client-only TCP, and the `? ` question path drawn console-only. After
-the gate opens: one commit per numbered item, `./stage4/test.sh` green before
-each commit that should pass it, Stages 0–3 green throughout.
+**Test 5 — the oracle — is Wajira's.** In two terminals at the repo root.
+Start the real broker:
 
-Cowork's review of Stage 3 (per `REVIEW.md`: bugs first, a disassembly-level
-read of `disk_rw`, `map_mmio_2m` and `record_valid`; `python3
-.claude/hooks/payloads.py` re-run rather than trusted) still stands as the
-reviewer's task and does not block Stage 4's plan.
+```
+python3 broker/broker.py
+```
+
+Then boot the grown machine, windowed (no `mac=`, so it prints QEMU's
+default MAC):
+
+```
+qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
+  -drive format=raw,file=stage4/out/esp.img \
+  -drive format=raw,file=stage4/out/notes.img,if=virtio \
+  -netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9999' \
+  -device virtio-net-pci,netdev=n0 -serial stdio
+```
+
+He types `? ` and something true, watches the indicator turn, and reads
+Claude's answer on GermOS's own screen. His word closes the stage. (The
+broker calls `claude -p` on the Max subscription — no API key, per the
+policy re-check.) `stage4/out/` is gitignored; if the boot image is gone,
+`./stage4/mkimage.sh` rebuilds it and `truncate -s 16M stage4/out/notes.img`
+makes a blank notebook the first boot formats. A note typed at the prompt
+(no `?`) still persists across a reboot, exactly as Stage 3.
+
+Then **Cowork reviews CC's Stage 4 diffs** per `REVIEW.md`: bugs first, and
+the foundation asks for a disassembly-level read on anything touching memory
+maps or the wire — the places to look hardest are `tcp_input`'s state
+machine and checksums, `net_poll`'s ring handling, `vio_attach`'s capability
+walk on two devices now, and the frozen `broker/broker.py`. Cowork's Stage 3
+review (`disk_rw`, `map_mmio_2m`, `record_valid`, `payloads.py` re-run) also
+still stands.
+
+Then **Stage 5 — the conversation** (foundation §7): English in, machine
+code back, verified in the twin, then run; the germline as a local cache.
+The subscription policy is re-checked again at that gate, per the foundation.
 
 To boot Stage 3 again at any time, from the repo root:
 

@@ -27,6 +27,19 @@ nasm -f bin stage0/stage0.asm -o stage0/out/stage0.img
                        # and 8 (image parsed from the host), pixel-checked
                        # replay. ~4 min, seven QEMU boots.
 
+# Stage 4
+./stage4/mkimage.sh    # assemble stage4.asm, pack the FAT image (not frozen)
+./stage4/test.sh       # acceptance tests 1-4: artefact, twelve serial lines
+                       # with the nic MAC, the "? " question round-trip through
+                       # the MOCK broker at -smp 2 and 8 (a note between two
+                       # questions, the wire echo untouched), and the cage -
+                       # restrict=on with one guestfwd asserted, a mock-down
+                       # run ending in a console message not a hang. Refuses to
+                       # start if anything listens on 9999. Five QEMU boots.
+
+# The mock broker (what the gate talks to; never spends a token)
+python3 broker/broker.py --mock --port 9999
+
 # The hook's payload table - every freeze and bodyguard case, 0 wrong or exit 1
 python3 .claude/hooks/payloads.py
 ```
@@ -67,6 +80,15 @@ should pass it, and earlier stages stay green forever.
   `-drive file=` outside a repo `out/`, the disk shorthands, and `qemu-img`
   outside `out/` are denied in any Bash command, prose included. The only
   disks are raw files the harness makes under `<stage>/out/`.
+- **The network is a cage too (Stage 4).** slirp with `restrict=on` and one
+  `guestfwd`: the guest reaches nothing but the broker on `127.0.0.1:9999`,
+  and every other destination gets a RST. The broker binds `127.0.0.1` only.
+  The automated gate talks only to `broker/broker.py --mock`, which calls
+  nothing, and `stage4/test.sh` refuses to run while anything else holds the
+  port — so the gate never spends a token or reaches the real Claude. Only
+  Wajira's test 5, with `python3 broker/broker.py`, makes a real `claude -p`
+  call, over ordinary HTTPS from the broker; the guest link stays plaintext
+  inside the cage until the TLS ring (Stage 7).
 
 ## Bare-metal gotchas
 
@@ -154,6 +176,31 @@ test in the twin.
   serial tee — the persistence test asserts an empty channel after `ready`.
 - **OVMF's own driver has already bound the virtio device** and reset it at
   ExitBootServices. Reset it again and assume nothing about its state.
+- **A `guestfwd` cannot sit on slirp's own addresses.** libslirp rejects a
+  forward on the virtual host `10.0.2.2` or the DNS `10.0.2.3`
+  (`Conflicting/invalid host:port`). Use another on-link address — `10.0.2.4`
+  is slirp's own default for a guest forward, and it answers ARP for it.
+- **A `-tcp:host:port` guestfwd target is one chardev opened at QEMU start**,
+  shared by every guest connection, and QEMU refuses to boot when nothing
+  listens. For a connection-per-request that also survives the listener being
+  down (a prompt RST), use `guestfwd=...-cmd:nc -N 127.0.0.1 <port>` instead.
+- **slirp drops a bad checksum in silence.** A segment with a wrong IPv4 or
+  TCP checksum gets no reply at all — so when a well-formed-looking request
+  gets nothing back, suspect the checksum before anything else. The twin
+  enforces this both ways, which is exactly why the guest must compute them.
+- **Advance `snd_nxt` when you send TCP data, not when it is acked.** Leave it
+  and the send window `snd_nxt - snd_una` is zero, so the peer's legitimate
+  ACK of the data falls outside the acceptable range and is discarded; the
+  sender retransmits until it gives up while the receiver has the data. Send
+  and retransmit from `snd_una`; move `snd_nxt` past the data at send time.
+- **With `VIRTIO_F_VERSION_1` the virtio-net header is 12 bytes**, and a
+  non-mergeable receive buffer must hold the whole frame (header plus up to
+  1514) in one descriptor — QEMU requires it when `MRG_RXBUF` is not
+  negotiated. The config MAC is valid only if `VIRTIO_NET_F_MAC` was
+  negotiated; read it from device config, never assume the default.
+- **QEMU sizes a virtio device's queues to the vCPU count.** virtio-blk here
+  reports two queues at `-smp 2`, not one; drive only the queue you enabled
+  and do not read a count into an assumption.
 
 ## Working with the hooks
 
