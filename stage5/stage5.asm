@@ -876,18 +876,23 @@ main_loop:
         call    serial_putc
         mov     al, 10
         call    serial_putc
-        ; A line whose first two bytes are "? " is a question, not a note
-        ; (UMBILICAL.md, "What is a question"); everything else takes Stage
-        ; 3's path unchanged. Nothing after this reaches the wire.
-        cmp     dword [line_len], 2
-        jb      .note
-        cmp     word [line_buf], 0x203F ; '?' then ' ', in memory order
-        jne     .note
-        call    ask_question            ; console-only, then the prompt
-        jmp     main_loop
-.note:
+        ; The forgiving marker parse (GERMLINE.md, "What is a question, what
+        ; is a request"): leading spaces skipped, "?" asks, "!" requests,
+        ; anything else is a note on Stage 3's path. Nothing after this
+        ; reaches the wire.
+        call    parse_marker            ; EAX = 0, '?' or '!'; RSI, ECX = the body
+        cmp     eax, '?'
+        je      .question
+        cmp     eax, '!'
+        je      .request
         call    notebook_append         ; ...the line goes to disk, and only
         call    console_prompt          ; then a new prompt, console-only
+        jmp     main_loop
+.question:
+        call    ask_question            ; console-only, then the prompt
+        jmp     main_loop
+.request:
+        call    grow_request            ; console-only, then the prompt
         jmp     main_loop
 .backspace:
         mov     eax, [cur_col]          ; only within this line's typed text -
@@ -2358,7 +2363,10 @@ ip_send:
 %define TICKS_PER_SECOND    5000        ; 200 us breaths
 %define SYN_TRIES           5
 %define DATA_TRIES          5
-%define RESPONSE_TICKS      750000      ; 150 s
+%define RESPONSE_TICKS      750000      ; 150 s, a question (UMBILICAL.md)
+%define GROW_TICKS          3000000     ; 600 s, a request (GERMLINE.md)
+%define QUESTION_MAX        498         ; a question's body, bytes
+%define REQUEST_BODY_MAX    497         ; a request's body: the marker takes one
 %define CLOSE_TICKS         5000        ; a second, then we stop caring
 
 %define RX_STREAM_MAX       (4 + RESPONSE_MAX)
@@ -2561,7 +2569,7 @@ tcp_input:
         cmp     r10d, [tcb + TCB_RCV_NXT]
         jne     .ack                            ; not the next byte: repeat our ACK
         ; In order: take what fits in the stream, then the FIN if everything fit.
-        mov     ecx, RX_STREAM_MAX
+        mov     ecx, [rx_max]                   ; room left in this response's home
         sub     ecx, [rx_len]
         cmp     ecx, edx
         jbe     .take
@@ -2570,8 +2578,9 @@ tcp_input:
         push    rsi
         push    rdi
         mov     rsi, r8
-        lea     rdi, [rx_stream]
-        add     edi, [rx_len]                   ; rx_stream is below 4 GB
+        mov     rdi, [rx_dst]                   ; rx_stream, or the component region
+        mov     eax, [rx_len]
+        add     rdi, rax
         mov     eax, ecx
         rep     movsb
         pop     rdi
@@ -2683,18 +2692,21 @@ tcp_send:
         mov     eax, 1
         ret
 
-; tcp_recv_response - waits for one whole response frame in rx_stream: the
-; length prefix, then that many bytes, within RESPONSE_TICKS. Returns EAX = 1
-; with [rx_len] covering the frame, or 0 on a RST, a FIN before the frame
-; is whole, a length above RESPONSE_MAX, or the deadline.
+; tcp_recv_response - waits for one whole response frame at [rx_dst]: the
+; length prefix, then that many bytes, within [rx_deadline] breaths. Returns
+; EAX = 1 with [rx_len] covering the frame, or 0 on a RST, a FIN before the
+; frame is whole, a length above what [rx_max] can hold, or the deadline.
 tcp_recv_response:
-        mov     edx, RESPONSE_TICKS
+        mov     edx, [rx_deadline]
 .loop:
         mov     eax, [rx_len]
         cmp     eax, 4
         jb      .more
-        mov     ecx, [rx_stream]                ; the length prefix
-        cmp     ecx, RESPONSE_MAX
+        mov     rdi, [rx_dst]
+        mov     ecx, [rdi]                      ; the length prefix
+        mov     edi, [rx_max]
+        sub     edi, 4
+        cmp     ecx, edi                        ; above this response's cap
         ja      .no
         add     ecx, 4
         cmp     eax, ecx
@@ -2777,17 +2789,77 @@ umbilical_ask:
         xor     eax, eax
         ret
 
-; ask_question - the line buffer holds "? " and the question. Sends it to the
-; broker, shows the working indicator meanwhile, draws the answer or the
-; no-answer line, discards any keys pressed during the wait, and prompts.
-; Console only: nothing here reaches the wire (plan decisions 4 and 11).
-; Clobbers registers freely.
-ask_question:
+; parse_marker - the line buffer, read by GERMLINE.md's rule ("What is a
+; question, what is a request"). Returns EAX = '?' for a question, '!' for a
+; request, or 0 for a note (the line buffer left for notebook_append). For a
+; marker line RSI and ECX are the body - the bytes after the marker with
+; leading and trailing spaces removed, cut at the wire's maximum - and the
+; line buffer is emptied: a marker line is never a note. Clobbers RDX.
+parse_marker:
+        lea     rsi, [line_buf]
         mov     ecx, [line_len]
-        sub     ecx, 2                  ; drop the "? " marker
+.lead:
+        test    ecx, ecx
+        jz      .note
+        cmp     byte [rsi], ' '
+        jne     .first
+        inc     rsi
+        dec     ecx
+        jmp     .lead
+.first:
+        movzx   eax, byte [rsi]
+        cmp     al, '?'
+        je      .marker
+        cmp     al, '!'
+        jne     .note
+.marker:
+        inc     rsi                     ; past the marker
+        dec     ecx
+.body_lead:
+        test    ecx, ecx
+        jz      .trimmed
+        cmp     byte [rsi], ' '
+        jne     .body_trail
+        inc     rsi
+        dec     ecx
+        jmp     .body_lead
+.body_trail:                            ; ECX >= 1 and [RSI] is not a space here
+        cmp     byte [rsi + rcx - 1], ' '
+        jne     .trimmed
+        dec     ecx
+        jmp     .body_trail
+.trimmed:
+        mov     edx, QUESTION_MAX
+        cmp     al, '?'
+        je      .cap
+        mov     edx, REQUEST_BODY_MAX
+.cap:
+        cmp     ecx, edx
+        jbe     .done
+        mov     ecx, edx
+.done:
         mov     dword [line_len], 0
-        jz      .prompt                 ; "? " alone: nothing is sent
-        lea     rsi, [line_buf + 2]
+        ret
+.note:
+        xor     eax, eax
+        ret
+
+; ask_question - RSI = the question, ECX = its length. Sends it to the
+; broker as UMBILICAL.md's request frame, shows the working indicator
+; meanwhile, draws the answer or the no-answer line, discards any keys
+; pressed during the wait, and prompts. An empty question sends nothing and
+; says so. Console only: nothing here reaches the wire.
+ask_question:
+        test    ecx, ecx
+        jnz     .ask
+        lea     rsi, [msg_nothing_ask]
+        call    console_puts
+        jmp     finish_line
+.ask:
+        lea     rax, [rx_stream]        ; the answer lands in the 4 KB stream
+        mov     [rx_dst], rax
+        mov     dword [rx_max], RX_STREAM_MAX
+        mov     dword [rx_deadline], RESPONSE_TICKS
         call    spinner_start
         call    umbilical_ask
         push    rax
@@ -2795,43 +2867,169 @@ ask_question:
         pop     rax
         test    eax, eax
         jz      .no_answer
-
         mov     ecx, [rx_stream]        ; the response frame: length, then bytes
         lea     rsi, [rx_stream + 4]
+        call    draw_answer
+        jmp     finish_line
+.no_answer:
+        lea     rsi, [msg_no_answer]
+        call    console_puts
+        jmp     finish_line
+
+; grow_request - RSI = the body, ECX = its length. GERMLINE.md's grow
+; request - the marker byte 0x01, then the body - goes to the broker with
+; the response received straight into the component region under the 600 s
+; deadline. A refusal is drawn like an answer; a component frame is checked
+; against the document and run; anything else is named. An empty body
+; sends nothing and says so. Console only.
+grow_request:
+        test    ecx, ecx
+        jnz     .grow
+        lea     rsi, [msg_nothing_grow]
+        call    console_puts
+        jmp     finish_line
+.grow:
+        lea     rdi, [grow_buf]
+        mov     byte [rdi], 0x01        ; the grow marker
+        inc     rdi
+        push    rcx
+        rep     movsb
+        pop     rcx
+        inc     ecx                     ; the marker counts
+        lea     rsi, [grow_buf]
+        lea     rax, [comp_region + COMP_RX_OFF]
+        mov     [rx_dst], rax
+        mov     dword [rx_max], COMP_RX_MAX
+        mov     dword [rx_deadline], GROW_TICKS
+        call    spinner_start
+        call    umbilical_ask
+        push    rax
+        call    spinner_stop
+        pop     rax
+        test    eax, eax
+        jz      .no_answer
+        lea     rsi, [comp_region + COMP_RX_OFF]
+        mov     ecx, [rsi]              ; N
+        add     rsi, 4                  ; the content: the kind byte first
+        test    ecx, ecx
+        jz      .bad
+        mov     al, [rsi]
+        test    al, al
+        jz      .refusal
+        cmp     al, 0x01
+        jne     .bad
+        call    component_valid         ; RSI = the content, ECX = N
+        test    eax, eax
+        jz      .bad
+        jmp     .bad                    ; item 12 runs it from here
+.refusal:
+        inc     rsi
+        dec     ecx
+        call    draw_answer
+        jmp     finish_line
+.no_answer:
+        lea     rsi, [msg_no_answer]
+        call    console_puts
+        jmp     finish_line
+.bad:
+        lea     rsi, [msg_bad_frame]
+        call    console_puts
+        jmp     finish_line
+
+; component_valid - RSI = a component frame's content (the kind byte first),
+; ECX = its length N. EAX = 1 if it is what GERMLINE.md describes - bytes
+; 1-3 zero, ABI 1, L in 1..COMP_BLOB_MAX, bytes 12-31 zero, N = 32 + L -
+; else 0. Preserves RSI and ECX; clobbers RDX.
+component_valid:
+        cmp     ecx, COMP_HDR
+        jb      .no
+        cmp     byte [rsi + 1], 0
+        jne     .no
+        cmp     word [rsi + 2], 0
+        jne     .no
+        cmp     dword [rsi + 4], 1      ; the ABI version
+        jne     .no
+        mov     edx, [rsi + 8]          ; L
+        test    edx, edx
+        jz      .no
+        cmp     edx, COMP_BLOB_MAX
+        ja      .no
+        add     edx, COMP_HDR
+        cmp     edx, ecx
+        jne     .no
+        push    rcx
+        push    rsi
+        add     rsi, 12
+        mov     ecx, 20
+.zeros:
+        cmp     byte [rsi], 0
+        jne     .no_pop
+        inc     rsi
+        dec     ecx
+        jnz     .zeros
+        pop     rsi
+        pop     rcx
+        mov     eax, 1
+        ret
+.no_pop:
+        pop     rsi
+        pop     rcx
+.no:
+        xor     eax, eax
+        ret
+
+; draw_answer - RSI = bytes, ECX = how many: drawn through console_putc from
+; the cursor, LF a new line, anything outside the wire's alphabet ignored
+; (the broker never sends it). Console only.
+draw_answer:
 .draw:
         test    ecx, ecx
-        jz      .fresh_line
+        jz      .done
         lodsb
         dec     ecx
         cmp     al, 10
-        je      .draw_byte              ; LF: a new line
+        je      .draw_byte
         cmp     al, 0x20
-        jb      .draw                   ; anything outside the wire's alphabet
-        cmp     al, 0x7E                ; is ignored (the broker never sends it)
+        jb      .draw
+        cmp     al, 0x7E
         ja      .draw
 .draw_byte:
         call    console_putc
         jmp     .draw
-.no_answer:
-        lea     rsi, [msg_no_answer]
-.na:
+.done:
+        ret
+
+; console_puts - RSI = a NUL-terminated string, drawn on the console only.
+; Preserves everything.
+console_puts:
+        push    rax
+        push    rsi
+.next:
         lodsb
         test    al, al
-        jz      .fresh_line
+        jz      .done
         call    console_putc
-        jmp     .na
-.fresh_line:
-        cmp     dword [cur_col], 0      ; the prompt goes on the next line,
-        je      .discard                ; unless we already start one
+        jmp     .next
+.done:
+        pop     rsi
+        pop     rax
+        ret
+
+; finish_line - after an answer, a refusal or a console line: a fresh line
+; unless we already start one; the keys pressed meanwhile discarded (they
+; showed nothing, so they do nothing - the screen owes the user no invisible
+; debt); the prompt. Jumped to from the routines above, so its ret is theirs.
+finish_line:
+        cmp     dword [cur_col], 0
+        je      .discard
         mov     al, 10
         call    console_putc
 .discard:
-        cli                             ; keys pressed while the indicator
-        mov     eax, [kbd_head]         ; turned are discarded: the screen
-        mov     [kbd_tail], eax         ; owed the user nothing for them, so
-        mov     dword [kbd_e0], 0       ; they do nothing now
+        cli
+        mov     eax, [kbd_head]
+        mov     [kbd_tail], eax
+        mov     dword [kbd_e0], 0
         sti
-.prompt:
         call    console_prompt
         ret
 
@@ -4164,6 +4362,9 @@ msg_nic:        db      'S5: nic ', 0
 msg_region:     db      'S5: component region 0x', 0
 msg_region_cap: db      ' 1048576 bytes', 13, 10, 0     ; COMP_BLOB_MAX, spelled
 msg_no_answer:  db      'no answer from the broker', 0
+msg_nothing_ask: db     'nothing to ask', 0
+msg_nothing_grow: db    'nothing to grow', 0
+msg_bad_frame:  db      'bad component frame', 0
 spin_chars:     db      '-', '\', '|', '/'
 msg_kbd:        db      'S5: keyboard ready', 13, 10, 0
 hex_digits:     db      '0123456789abcdef'
@@ -4477,7 +4678,13 @@ req_len:        resd    1
         alignb  16
 req_buf:        resb    4 + 512         ; the request frame: length, then bytes
         alignb  16
-rx_stream:      resb    4 + 4096        ; the response frame as it arrives
+rx_stream:      resb    4 + 4096        ; a question's response frame as it arrives
+        alignb  16
+rx_dst:         resq    1               ; where the current response is assembled
+rx_max:         resd    1               ; the most it may hold, prefix included
+rx_deadline:    resd    1               ; breaths allowed for the whole response
+        alignb  16
+grow_buf:       resb    1 + 512         ; the grow request's text: the marker, then the body
 
 ; The clock: the TSC's rate per millisecond and its reading at boot.
         alignb  16
