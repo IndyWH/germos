@@ -133,6 +133,20 @@ org 0                           ; file offsets == RVAs
 %define NOTE_MAX            500
 %define NB_TEXT_OFF         12
 
+; The component region (stage5/GERMLINE.md, "The component region, and line
+; twelve"): 0x100040 bytes of our own BSS, page-aligned. A grow response is
+; received straight into it from +28, so the 4-byte length prefix sits at
+; +28..+31, the kind byte and header at +32..+63, and the blob - byte 32 of
+; the frame's content - at +64, 64-aligned; the largest legal frame (4 + 32
+; + 1 MB) ends exactly at +0x100040. Measured before planning: a blob
+; copied here and called returns - our page tables carry no NX bits.
+%define COMP_REGION_SIZE    0x100040
+%define COMP_RX_OFF         28          ; where the response stream begins
+%define COMP_BLOB_OFF       64          ; where the component's first byte lives
+%define COMP_HDR            32          ; the kind byte and the 31 after it
+%define COMP_BLOB_MAX       0x100000    ; the cap, 1048576 bytes
+%define COMP_RX_MAX         (4 + COMP_HDR + COMP_BLOB_MAX)
+
 ; More enabled processors than this in the MADT is an error we report, not a
 ; buffer we overrun. mlrig has 32 logical CPUs; the mirror run uses all of them.
 %define MAX_CORES       64
@@ -704,6 +718,14 @@ efi_main:
         call    serial_puts
 
         ; -------------------------------------------------------------------
+        ; The clock - the time-stamp counter calibrated once against the PIT
+        ; (Stage 5 plan decision 6), so ticks_ms can answer a component
+        ; without a new interrupt. Interrupts are still off; nothing is
+        ; racing the PIT.
+        ; -------------------------------------------------------------------
+        call    tsc_calibrate
+
+        ; -------------------------------------------------------------------
         ; The console - the second new organ. Clears the screen, replays the
         ; mirrored boot log, and from here every serial byte is drawn live by
         ; the tee - this very line included.
@@ -762,6 +784,18 @@ efi_main:
         call    serial_puts
 
         ; -------------------------------------------------------------------
+        ; The component region - where a grown component will live. Line
+        ; twelve says where, because the address moves with every build and
+        ; a component must never assume it (GERMLINE.md).
+        ; -------------------------------------------------------------------
+        lea     rsi, [msg_region]       ; line twelve
+        call    serial_puts
+        lea     rax, [comp_region + COMP_BLOB_OFF]
+        call    serial_puthex64
+        lea     rsi, [msg_region_cap]
+        call    serial_puts
+
+        ; -------------------------------------------------------------------
         ; The keyboard - the third organ, and the machine's first sense.
         ; PIC remapped with only IRQ1 unmasked, the two gates installed, the
         ; i8042 drained, and only then the ready line, the prompt, and sti.
@@ -783,7 +817,7 @@ efi_main:
         jmp     .drain
 .drained:
 
-        lea     rsi, [msg_kbd]          ; line eleven; after this the channel
+        lea     rsi, [msg_kbd]          ; line thirteen; after this the channel
         call    serial_puts             ; carries only the raw echo
 
         ; The machine's memory, drawn on the console - and only the console -
@@ -810,53 +844,17 @@ main_loop:
         jmp     main_loop
 .have:
         sti
-        lea     rdx, [kbd_ring]         ; pop one scancode
-        movzx   ebx, byte [rdx + rax]
-        inc     eax
-        and     eax, KBD_RING_SIZE - 1
-        mov     [kbd_tail], eax
-
-        ; An 0xE0 prefix marks an extended key; the byte after it would
-        ; otherwise read as an ordinary make code (E0 53, keypad Delete,
-        ; would print '.'), so the prefix swallows its successor.
-        cmp     dword [kbd_e0], 0
-        je      .no_pending
-        mov     dword [kbd_e0], 0
-        jmp     main_loop
-.no_pending:
-        cmp     bl, 0xE0
-        jne     .not_e0
-        mov     dword [kbd_e0], 1
-        jmp     main_loop
-.not_e0:
-        ; Shift is a state, not a key: both Shift keys' make and break codes
-        ; set and clear it, and select which table translates what follows.
-        ; (E0 2A, the fake shift around some extended keys, is already
-        ; swallowed by the prefix rule above.)
-        cmp     bl, 0x2A                ; LShift make
-        je      .shift_down
-        cmp     bl, 0x36                ; RShift make
-        je      .shift_down
-        cmp     bl, 0xAA                ; LShift break
-        je      .shift_up
-        cmp     bl, 0xB6                ; RShift break
-        je      .shift_up
-        test    bl, 0x80                ; other break codes: ignored
-        jnz     main_loop
-
-        lea     rdx, [scan1_map]        ; set 1, US, unshifted...
-        cmp     dword [kbd_shift], 0
-        je      .translate
-        lea     rdx, [scan1_shift_map]  ; ...or shifted
-.translate:
-        movzx   ebx, byte [rdx + rbx]
-        test    bl, bl
-        jz      main_loop               ; not a key this stage listens to
+        call    kbd_next                ; AL = the next translated key, or 0
+        test    al, al
+        jz      main_loop
+        movzx   ebx, al
 
         cmp     bl, 13
         je      .enter
         cmp     bl, 8
         je      .backspace
+        cmp     bl, 0x1B                ; Esc at the prompt does nothing - it
+        je      main_loop               ; is a component's way home, not ours
 
         ; A printable: into the line buffer if there is room (a key beyond
         ; the cap is ignored - not echoed, not drawn - so the screen and the
@@ -904,12 +902,113 @@ main_loop:
         call    serial_putc             ; the tee steps back and erases
         call    draw_cursor
         jmp     main_loop
+
+; kbd_next - the keyboard's consumer, factored out of the main loop (plan
+; decision 8) so a running component's poll_key sees exactly what the prompt
+; would: pops scancodes from the ring until one translates, and returns it
+; in AL - a printable with Shift applied, 13 Enter, 8 Backspace, 0x1B Esc -
+; or 0 with the ring empty. The handler still only buffers; this is the one
+; consumer, on the BSP. Preserves everything but RAX.
+kbd_next:
+        push    rbx
+        push    rdx
+.again:
+        mov     eax, [kbd_tail]
+        cmp     eax, [kbd_head]
+        je      .none
+        lea     rdx, [kbd_ring]         ; pop one scancode
+        movzx   ebx, byte [rdx + rax]
+        inc     eax
+        and     eax, KBD_RING_SIZE - 1
+        mov     [kbd_tail], eax
+
+        ; An 0xE0 prefix marks an extended key; the byte after it would
+        ; otherwise read as an ordinary make code (E0 53, keypad Delete,
+        ; would print '.'), so the prefix swallows its successor.
+        cmp     dword [kbd_e0], 0
+        je      .no_pending
+        mov     dword [kbd_e0], 0
+        jmp     .again
+.no_pending:
+        cmp     bl, 0xE0
+        jne     .not_e0
+        mov     dword [kbd_e0], 1
+        jmp     .again
+.not_e0:
+        ; Shift is a state, not a key: both Shift keys' make and break codes
+        ; set and clear it, and select which table translates what follows.
+        ; (E0 2A, the fake shift around some extended keys, is already
+        ; swallowed by the prefix rule above.)
+        cmp     bl, 0x2A                ; LShift make
+        je      .shift_down
+        cmp     bl, 0x36                ; RShift make
+        je      .shift_down
+        cmp     bl, 0xAA                ; LShift break
+        je      .shift_up
+        cmp     bl, 0xB6                ; RShift break
+        je      .shift_up
+        test    bl, 0x80                ; other break codes: ignored
+        jnz     .again
+
+        lea     rdx, [scan1_map]        ; set 1, US, unshifted...
+        cmp     dword [kbd_shift], 0
+        je      .translate
+        lea     rdx, [scan1_shift_map]  ; ...or shifted
+.translate:
+        movzx   eax, byte [rdx + rbx]
+        test    al, al
+        jz      .again                  ; not a key this stage listens to
+        pop     rdx
+        pop     rbx
+        ret
 .shift_down:
         mov     dword [kbd_shift], 1
-        jmp     main_loop
+        jmp     .again
 .shift_up:
         mov     dword [kbd_shift], 0
-        jmp     main_loop
+        jmp     .again
+.none:
+        xor     eax, eax
+        pop     rdx
+        pop     rbx
+        ret
+
+; tsc_calibrate - count time-stamp ticks across one PIT wait of 10 ms, and
+; keep the rate per millisecond and the reading at boot. A rate of zero (a
+; TSC that does not run, in some future twin) is clamped to one so that a
+; division can never fault. Clobbers RAX, RBX, RDX.
+tsc_calibrate:
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        mov     [tsc_boot], rax
+        mov     rbx, rax
+        mov     ax, PIT_10MS
+        call    pit_wait
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        sub     rax, rbx
+        xor     edx, edx
+        mov     ebx, 10
+        div     rbx                     ; ticks per millisecond
+        test    rax, rax
+        jnz     .keep
+        mov     eax, 1
+.keep:
+        mov     [tsc_per_ms], rax
+        ret
+
+; ticks_ms - RAX = milliseconds since boot, from the calibrated TSC.
+; Clobbers RDX. The service table's fourth entry calls straight here.
+ticks_ms:
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        sub     rax, [tsc_boot]
+        xor     edx, edx
+        div     qword [tsc_per_ms]
+        ret
 
 halt_forever:
         cli
@@ -4062,6 +4161,8 @@ msg_nb:         db      'S5: notebook ', 0
 msg_notes:      db      ' notes', 13, 10, 0
 msg_nb_fmt:     db      'S5: notebook formatted', 13, 10, 0
 msg_nic:        db      'S5: nic ', 0
+msg_region:     db      'S5: component region 0x', 0
+msg_region_cap: db      ' 1048576 bytes', 13, 10, 0     ; COMP_BLOB_MAX, spelled
 msg_no_answer:  db      'no answer from the broker', 0
 spin_chars:     db      '-', '\', '|', '/'
 msg_kbd:        db      'S5: keyboard ready', 13, 10, 0
@@ -4118,7 +4219,7 @@ font8x8:        incbin  "stage2/font8x8.bin"
 ; listens to" (Esc, Tab, the modifiers, the function keys, the keypad).
         align   8
 scan1_map:
-        db      0, 0                                    ; 00 -, 01 Esc
+        db      0, 0x1B                                 ; 00 -, 01 Esc (a component's way home)
         db      '1','2','3','4','5','6','7','8','9','0' ; 02-0B
         db      '-','='                                 ; 0C, 0D
         db      8, 0                                    ; 0E Backspace, 0F Tab
@@ -4139,7 +4240,7 @@ scan1_map:
 ; 10). Same shape as the unshifted table; Caps Lock, Ctrl and Alt stay
 ; ignored.
 scan1_shift_map:
-        db      0, 0                                    ; 00 -, 01 Esc
+        db      0, 0x1B                                 ; 00 -, 01 Esc
         db      '!','@','#','$','%','^','&','*','(',')' ; 02-0B
         db      '_','+'                                 ; 0C, 0D
         db      8, 0                                    ; 0E Backspace, 0F Tab
@@ -4377,6 +4478,17 @@ req_len:        resd    1
 req_buf:        resb    4 + 512         ; the request frame: length, then bytes
         alignb  16
 rx_stream:      resb    4 + 4096        ; the response frame as it arrives
+
+; The clock: the TSC's rate per millisecond and its reading at boot.
+        alignb  16
+tsc_per_ms:     resq    1
+tsc_boot:       resq    1
+
+; The component region (the COMP_* layout at the top of the file): a grow
+; response lands here from +28, and a component runs from +64. Page-aligned
+; BSS, so the loader zero-fills it and the identity map already covers it.
+        alignb  4096
+comp_region:    resb    COMP_REGION_SIZE
 
 ; Page tables. 4 KB alignment is architectural, not a preference.
         alignb  4096

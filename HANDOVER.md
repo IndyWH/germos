@@ -477,11 +477,16 @@ request served from the cache and no generation call. The automated gate
 speaks only to the mock and spends no token; the cage, the bodyguard and
 every existing frozen file stand.
 
-**Where this session is:** housekeeping at the opening — this record, the
-missing history screenshots (`history/`), the README's commands verified by
-running them — then `stage5/plan.md` drafted in plan mode and committed,
-and the session **stops at the gate** until Wajira writes the approval
-marker from his own terminal.
+**Where this session is (as-you-go):** housekeeping done (three commits);
+`stage5/plan.md` approved at the plan gate after Cowork's review (one
+amendment — the mock's `big` component at the 1 MB cap; one correction —
+the 31-byte header). **Part 1 is closed:** items 1–8 — `GERMLINE.md`, the
+test component (448 bytes), `broker/germline.py` + `broker/rehearse.py` +
+the backend's `grow()`, the harness and tests 1–4 committed red, the
+freeze (seven paths; the `-o` side door closed; 567 payloads, 0 wrong).
+Part 2 in progress: item 9 (`stage5.asm`, test 1 green), item 10 (the
+region at `0x4b4040`, `tsc_per_ms` 2999478, `kbd_next`, line twelve;
+test 2 green).
 
 ## Next action
 
