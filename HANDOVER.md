@@ -3,12 +3,14 @@
 Rolling state of the AI OS project. Read this first, then `ai-os-foundation.md`
 (the single source of truth), then the current stage's `spec.md` and `plan.md`.
 
-**Last updated:** 1 September 2026 — **Stage 2 closed.** Wajira ran test 5
-windowed, typed, and watched his keystrokes land; his word closes the stage.
-The machine is interactive. Next: Stage 3 — Memory of its own (block storage,
-virtio first, and a simple filesystem), which opens with a Cowork spec and
-carries the foundation's hard safety rule: storage code touches only QEMU disk
-images until Stage 7, never any disk holding real data.
+**Last updated:** 1 September 2026 — **Stage 3 opens.** Stage 2 closed just
+after midnight: Wajira ran test 5 windowed, typed at the prompt, and confirmed
+both the echo and the picture. `stage3/spec.md` — Memory of its own — is
+approved; next is `stage3/plan.md`, drafted in plan mode and committed for his
+approval before any code. The foundation's hard safety rule governs the whole
+stage: storage code touches only QEMU disk images until Stage 7, never any disk
+holding real data — and this stage makes it mechanical, with a storage
+bodyguard in the hook before any driver code exists.
 
 ---
 
@@ -16,11 +18,11 @@ images until Stage 7, never any disk holding real data.
 
 | | |
 |---|---|
-| Stage | 3 — Memory of its own (not yet opened) |
-| Status | Stage 2 **CLOSED**. No Stage 3 spec yet. |
+| Stage | 3 — Memory of its own |
+| Status | Spec **APPROVED** (1 September 2026). Plan pending approval. |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
-| Toolchain | NASM 3.01, QEMU 10.2.1, Python 3, OVMF, mtools — Stage 2 needs no new packages |
+| Toolchain | NASM 3.01, QEMU 10.2.1, Python 3, OVMF, mtools — Stage 3 needs no new packages |
 
 ## The project in three lines
 
@@ -99,13 +101,21 @@ handler only buffers; the BSP main loop draws. On this machine the console is
 | 2 | Serial — nine `S2:` lines in order, found = woken = smp, console = W/16 x H/16 | **PASS** |
 | 3 | Typing — monitor `sendkey` hello+Enter; echo exactly `hello` CRLF, at `-smp 2` and `-smp 8` | **PASS** |
 | 4 | Pixels — `> hello` pixel-correct per the shared font, prompt+cursor below, only the two console colours on screen | **PASS** |
-| 5 | **Oracle — Wajira's eyeball** | **PASS — confirmed 1 September 2026** |
+| 5 | **Oracle — Wajira's eyeball** | **PASS — confirmed 1 September 2026, just after midnight: typed at the prompt, echo and picture both confirmed** |
 
 Tests 1–4 were committed **red** before any of `stage2.asm` existed and went
 green exactly where the plan predicted: test 1 at item 7, tests 2–4 at item 10.
 The shared font is `stage2/font8x8.bin` (public-domain font8x8, provenance and
 hashes in `stage2/FONT.md` and pinned in `plan.md`), frozen alongside the tests
 because the checker renders its expectations from it.
+
+**The owner's model experiment, recorded for the record.** Stage 2 was
+implemented on Fable 5 at high effort rather than on Opus, as an experiment by
+the owner. Cowork's review found zero defects — the same result as Opus's
+Stages 0 and 1. The standing rule from the foundation remains Opus at high
+effort for implementation; Fable is to be considered for Stages 4 and 8, and
+that is an owner-reserved decision. This Stage 3 session also runs on Fable 5,
+by the owner's choice at launch.
 
 **Caveats carried forward:**
 
@@ -160,11 +170,21 @@ verified against the sha256 pins recorded in `stage2/plan.md`.
 
 ## Next action
 
-Cowork writes the Stage 3 spec — Memory of its own: block storage (virtio
-first, NVMe second) and a simple filesystem, per foundation §7. The hard
-safety rule is already standing and gets restated in the spec: **storage code
-touches only QEMU disk images until Stage 7, and never any disk holding real
-data.** Wajira approves the spec; then a fresh Claude Code session starts in
-plan mode, commits `stage3/plan.md` for approval, and implements one commit
-per numbered item — acceptance tests first and committed red, as ever. All
-three closed stages' `test.sh` remain standing regression checks.
+`stage3/spec.md` is approved. Its shape: a virtio-blk driver found on the PCI
+bus and driven through the modern interface, a tiny append-only notebook
+filesystem of our own design specified in `stage3/NOTEBOOK.md` so the tests can
+parse the disk image from the host, and one behaviour — every line entered at
+the prompt is written through to disk before the next prompt, and the next boot
+replays it above the prompt. Five acceptance tests; test 3 (persistence across
+two boots of the same image) is the soul of the stage. Three owner decisions
+stand: our own notebook format, every entered line persists automatically, and
+the overnight scope guard is in force — if virtio negotiation fights back for
+more than two honest attempts, stop, record where things stand here, and leave
+the rest for the morning.
+
+Next: `stage3/plan.md`, drafted in plan mode and committed for Wajira's
+approval. Its first implementation-facing item, before any driver or filesystem
+code, is the storage bodyguard: the hook grows a denial for Bash calls that
+mention `/dev` block devices, mount, losetup, mkfs, or a QEMU drive file outside
+the repo's `out/` directories. Then acceptance tests first and committed red,
+one commit per numbered item, Stages 0–2 green throughout.
