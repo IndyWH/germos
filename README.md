@@ -1,0 +1,104 @@
+# GermOS
+
+An operating system that is grown on each machine rather than shipped to it: a small trusted core boots the computer and connects it to Claude, which writes everything else — kernel, drivers, applications — as machine code fitted to that exact hardware, and nothing touches the real machine until it has survived a rehearsal on a copy.
+
+The name carries both meanings: the **germline** it grows from, and the benign **germ** that settles into a machine, phones a faraway server, and starts mutating.
+
+Everything here follows one rule: **nothing that exists for human convenience is allowed to run at runtime.** Human convenience belongs in the conversation, at authorship time. Claude is the last interpreter, moved out of the machine and into the cloud, with English as the source language — the interpretation cost is paid once, at authorship, not on every run. The full design is in [`ai-os-foundation.md`](ai-os-foundation.md), the project's single source of truth. `HANDOVER.md` is the rolling state.
+
+## The story so far
+
+The project went live on 31 August 2026 with an empty folder. Every stage is a growth ring: small enough to finish, ends with something you can see, and gated by acceptance tests written before the code existed.
+
+| Stage | What grew | Closed | Picture |
+|---|---|---|---|
+| **0 — First pixel** | A 512-byte BIOS boot sector: Spectrum loading stripes and a hello over serial. 211 of 510 bytes used. | 31 Aug 2026 — pixels by teatime | [the stripes](history/2026-08-31-stage0-stripes.png) |
+| **1 — Owning the processor** | A hand-written PE32+ UEFI application: own GDT and paging, all cores woken with INIT-SIPI-SIPI, each painting its own band at native resolution. The picture *is* the core count. | 31 Aug 2026 | [eight bands, eight cores](history/2026-08-31-stage1-bands.png) |
+| **2 — Senses** | Interrupt-driven PS/2 keyboard and a framebuffer text console. First words typed into the OS: *hello world. yay. thank you claude.* | 1 Sep 2026, midnight | [the first words](history/2026-09-01-stage2-first-words.png) |
+| **3 — Memory of its own** | A virtio-blk driver and an append-only notebook filesystem, grown overnight in one unattended run. Typed lines survive a reboot: *"It remembers!"* | 1 Sep 2026 | [it remembers](history/2026-09-01-stage3-it-remembers.png) |
+| **4 — The umbilical** | virtio-net, a minimal TCP/IP stack, and a caged network with one door to a broker that relays to Claude. The booted OS asked Claude its first question and printed the answer. | 1 Sep 2026 | [the first conversation](history/2026-09-01-first-conversation.png) |
+
+The pictures in `history/` are the machine's own screendumps, taken by each stage's acceptance harness (Stage 4's is a window capture from the oracle run).
+
+![The first conversation — GermOS asks Claude a question over its own TCP stack](history/2026-09-01-first-conversation.png)
+
+Next: **Stage 5 — the conversation.** English in, machine code back, verified in the twin, then run. Done when "make me a clock" produces a running clock.
+
+## Running it
+
+Everything runs inside QEMU — that is a design rule, not a convenience: nothing touches real hardware until Stage 7, on a sacrificial machine. On Ubuntu:
+
+```
+sudo apt install nasm qemu-system-x86 ovmf mtools python3
+```
+
+Each stage keeps a frozen acceptance gate — `./stageN/test.sh` from the repo root builds it and proves it still works. To *see* each one:
+
+**Stage 0** — stripes and a serial hello:
+
+```
+./stage0/test.sh
+qemu-system-x86_64 -drive format=raw,file=stage0/out/stage0.img -serial stdio
+```
+
+**Stage 1** — one band per core (the machine's core count, painted):
+
+```
+./stage1/mkimage.sh
+qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
+  -drive format=raw,file=stage1/out/esp.img -serial stdio
+```
+
+**Stage 2** — type at the prompt:
+
+```
+./stage2/mkimage.sh
+qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
+  -drive format=raw,file=stage2/out/esp.img -serial stdio
+```
+
+**Stage 3** — type a line, quit, boot again: it remembers.
+
+```
+./stage3/mkimage.sh
+truncate -s 16M stage3/out/notes.img
+qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
+  -drive format=raw,file=stage3/out/esp.img \
+  -drive format=raw,file=stage3/out/notes.img,if=virtio -serial stdio
+```
+
+**Stage 4** — ask Claude a question from inside the OS. Two terminals; the broker shells out to the [Claude Code CLI](https://claude.com/claude-code) (`claude`), which must be installed and logged in:
+
+```
+python3 broker/broker.py
+```
+
+```
+./stage4/mkimage.sh
+truncate -s 16M stage4/out/notes.img
+qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
+  -drive format=raw,file=stage4/out/esp.img \
+  -drive format=raw,file=stage4/out/notes.img,if=virtio \
+  -netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9999' \
+  -device virtio-net-pci,netdev=n0 -serial stdio
+```
+
+Type `? ` and a question. A line without the marker is a note, and persists — exactly as Stage 3. The guest's network is a cage: `restrict=on` means it can reach nothing at all except that one forwarded socket to the broker on localhost.
+
+## The team of three
+
+GermOS is built by a team of three, and the division of labour is the experiment as much as the OS is:
+
+- **Wajira** ([@IndyWH](https://github.com/IndyWH)) — product owner and QA oracle. A UK GP and health-informatician who verifies every stage by eyeball; the medical model runs through the project's verification (the trial protocol precedes the treatment).
+- **Claude Cowork** — design and specs. Writes each stage's one-page spec for approval, reviews every diff, flags the judgement calls.
+- **Claude Code** — implementation. Writes all the assembly, one commit per numbered plan item, tests green before every commit — mechanically held to an approved plan by hooks it cannot edit.
+
+The acceptance tests are written before the code and frozen by a hook; the human's word is the final gate of every stage. Every spec, plan, decision and mistake is in the git history and `HANDOVER.md` — the project's coordination channel is the audit trail.
+
+## What this is not
+
+Not a Linux replacement. Not a product. Not secure enough to trust with anything that matters — and never, under any circumstances, connected to clinical work or patient data. It is a laboratory for one thesis — that software can be grown rather than shipped — and the most fun available per kilobyte.
+
+## Licence
+
+[MIT](LICENSE).
