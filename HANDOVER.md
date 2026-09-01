@@ -3,19 +3,22 @@
 Rolling state of the AI OS project. Read this first, then `ai-os-foundation.md`
 (the single source of truth), then the current stage's `spec.md` and `plan.md`.
 
-**Last updated:** 1 September 2026 — **Stage 4 CLOSED.** Wajira ran test 5
-with the real broker: the booted machine reached Claude over the caged
-virtio network, asked a question typed as `? ...`, and printed the answer
-on its own console — *"The booted OS asks Claude a question and prints the
-answer!"* The umbilical works. Built on Fable 5 at high effort (the owner's
-decision), one commit per numbered item, the plan gate hook holding until he
-approved — its first live use. Test 5 surfaced one real thing (below): the
-broker's `--bare` flag skipped the CLI's own login, so the real `claude -p`
-could not authenticate; dropping it (commit `5b9e8fa`) closed the stage.
-Everything ran inside QEMU with the cage (`restrict=on`, one `guestfwd`);
-the automated gate spoke only to the mock and never spent a token. Next:
-Cowork's review, then Stage 5 — the conversation. The project now has a
-name: **GermOS** (foundation v1.9).
+**Last updated:** 1 September 2026 — **Stage 4 CLOSED; Stage 5 — the
+conversation — OPENS.** Wajira ran Stage 4's test 5 with the real broker:
+the booted machine reached Claude over the caged virtio network, asked a
+question typed as `? ...`, and printed the answer on its own console —
+*"The booted OS asks Claude a question and prints the answer!"* The
+umbilical works. Test 5 surfaced two things, both recorded in the Stage 4
+section below: the broker's `--bare` flag skipped the CLI's own login
+(dropped, commit `5b9e8fa`), and a **usability finding** — the first user
+typed `?` without the trailing space and the line went silently to the
+notebook, which the Stage 5 spec fixes with a forgiving marker parse. The
+project has a name, **GermOS** (foundation v1.9), and on 1 September 2026 it
+was **published**: `github.com/IndyWH/germos`, public, MIT licence. Stage 5
+opens with `stage5/spec.md` approved by the owner, the policy gate
+re-checked (see the Stage 5 section), and this session — Fable 5 at high
+effort, the owner's decision — doing the opening housekeeping, then
+drafting `stage5/plan.md` in plan mode for the gate.
 
 ---
 
@@ -23,9 +26,9 @@ name: **GermOS** (foundation v1.9).
 
 | | |
 |---|---|
-| Stage | 4 — The umbilical **CLOSED** |
-| Status | All five tests **PASS** (test 5 confirmed by Wajira, 1 September 2026). |
-| Repo | `/home/indy/Projects/ai-os` (branch `main`) |
+| Stage | 5 — The conversation **OPEN** (Stage 4 closed 1 September 2026, all five tests PASS) |
+| Status | Spec approved by the owner. Housekeeping at the opening (this record, the history screenshots, the README verified), then `stage5/plan.md` drafted in plan mode and held at the gate for Wajira's approval. |
+| Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3, OVMF, mtools — Stage 4 needs no new packages (the broker is standard-library Python and shells out to `claude`) |
 | Model | **Fable 5, high effort** — the owner's decision for Stage 4 (see below) |
@@ -375,6 +378,19 @@ test 5 (commit `5b9e8fa`). The lesson: the frozen mock proves the wire, but
 the real backend has its own failure surface that only the oracle exercises,
 and Stage 5 will lean on `claude -p` far harder.
 
+**One more thing test 5 surfaced — a usability finding, not a bug in the
+code:** the first user typed `?` without the trailing space, and the line
+went silently to the notebook as a note instead of to Claude. That is
+exactly what Stage 4's plan decision 3 specified (the marker explicit and
+exact: `?` alone or `?x` is a note), and the gate proved it — but a rule the
+first user trips over on the first line is a design error, per the
+foundation's human-factors constitution, not a user error. The Stage 5 spec
+fixes it with a **forgiving marker parse**: the marker character alone, or
+with any spacing, is recognised, and a marker line that cannot reach the
+broker says so on the console instead of silently doing nothing. Stage 4's
+frozen machinery is untouched by that fix — it lands in Stage 5's binary
+and Stage 5's own tests (test 4's marker-parse cases).
+
 **Caveats carried forward:**
 
 - **Everything Stage 3 carried**, minus "unshifted only" — the shifted US
@@ -426,20 +442,63 @@ his own terminal; the other hook denies this session every route to that
 file. The correct behaviour on drafting the plan is: commit it, say it is
 ready, and wait.
 
+## Stage 5 — The conversation · opened 1 September 2026
+
+**Goal (foundation §7):** the prompt itself: English in, machine code back,
+verified in the twin, then run. The germline starts as a local cache of
+proven components. **Done when "make me a clock" produces a running clock.**
+Proves the loop closes — the Spectrum prompt is back. `stage5/spec.md` is
+approved by the owner.
+
+**The policy gate, re-checked 1 September 2026 as the foundation requires:**
+the June 2026 credit-pool change is **still paused** per Anthropic's help
+centre — Agent SDK, `claude -p` and third-party app usage still draw from
+subscription limits, there is no separate credit pool, and any future
+change is to be announced before it takes effect. So **`claude -p` still
+draws from the Max subscription, no API keys anywhere**, and the broker's
+backend stays one swappable unfrozen function. **Next re-check at the
+following stage gate** (Stage 6). The germline cache this stage builds is
+itself the mitigation if the policy ever tightens: a proven component is
+never generated twice.
+
+**The model:** the spec's decision 4 recommended Fable 5 at high effort
+(Stages 2, 3 and 4 shipped on it with zero review defects); the owner
+launched this session on Fable 5 at high effort, so that is the decision.
+
+**The shape, from the spec:** a third kind of line — `! make me a clock` —
+asks Claude to grow something; both markers get the forgiving parse; the
+guest gains a loader (a fixed component region, a binary frame over the
+wire, a jump into the blob with one register at a small service table, Esc
+back to the prompt); one new frozen document, `stage5/GERMLINE.md`, carries
+the whole new wire — `stage4/UMBILICAL.md` is frozen and not touched; the
+broker grows the pipeline generate → rehearse (a headless boot of the same
+guest image) → cache (`germline/`, gitignored) → deliver, with a repeat
+request served from the cache and no generation call. The automated gate
+speaks only to the mock and spends no token; the cage, the bodyguard and
+every existing frozen file stand.
+
+**Where this session is:** housekeeping at the opening — this record, the
+missing history screenshots (`history/`), the README's commands verified by
+running them — then `stage5/plan.md` drafted in plan mode and committed,
+and the session **stops at the gate** until Wajira writes the approval
+marker from his own terminal.
+
 ## Next action
 
-**Stage 4 is closed.** **Cowork reviews CC's Stage 4 diffs** per `REVIEW.md`:
-bugs first, and
-the foundation asks for a disassembly-level read on anything touching memory
-maps or the wire — the places to look hardest are `tcp_input`'s state
-machine and checksums, `net_poll`'s ring handling, `vio_attach`'s capability
-walk on two devices now, and the frozen `broker/broker.py`. Cowork's Stage 3
-review (`disk_rw`, `map_mmio_2m`, `record_valid`, `payloads.py` re-run) also
-still stands.
+**Stage 5's plan.** Draft `stage5/plan.md` from the approved spec in plan
+mode (numbered items, one commit each; tests 1–4 written and committed red
+before any of `stage5.asm` exists; `stage5/GERMLINE.md`; the canned test
+component; the mock's grow path and the rehearsal pipeline with its call
+counter; the freeze-list extension with the payload table re-run), commit
+it, and wait for the owner's approval. Then implement item by item.
 
-Then **Stage 5 — the conversation** (foundation §7): English in, machine
-code back, verified in the twin, then run; the germline as a local cache.
-The subscription policy is re-checked again at that gate, per the foundation.
+**Cowork's Stage 4 review** per `REVIEW.md` still stands as an open item:
+bugs first, and the foundation asks for a disassembly-level read on anything
+touching memory maps or the wire — the places to look hardest are
+`tcp_input`'s state machine and checksums, `net_poll`'s ring handling,
+`vio_attach`'s capability walk on two devices now, and the frozen
+`broker/broker.py`. Cowork's Stage 3 review (`disk_rw`, `map_mmio_2m`,
+`record_valid`, `payloads.py` re-run) also still stands.
 
 To ask GermOS a question again at any time, in two terminals at the repo
 root — the real broker, then the machine windowed:
