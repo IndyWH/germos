@@ -32,6 +32,8 @@ FROZEN_1 = ["stage1/test.sh", "stage1/checkbands.py"]
 FROZEN_2 = ["stage2/test.sh", "stage2/checktext.py", "stage2/font8x8.bin"]
 FROZEN_3 = ["stage3/test.sh", "stage3/checknotes.py", "stage3/NOTEBOOK.md"]
 FROZEN_4 = ["stage4/test.sh", "stage4/checkumbilical.py", "stage4/UMBILICAL.md", "broker/broker.py"]
+FROZEN_5 = ["stage5/test.sh", "stage5/checkgermline.py", "stage5/GERMLINE.md",
+            "stage5/component.asm", "stage5/component.bin", "broker/germline.py", "broker/rehearse.py"]
 FROZEN = FROZEN_0 + FROZEN_1 + FROZEN_2
 
 
@@ -217,8 +219,9 @@ CASES += [
     (write("stage3/mkimage.sh"), ALLOW, "stage3 freeze allows: Write the builder"),
     (write("stage3/stage3.asm"), ALLOW, "stage3 freeze allows: Write the implementation"),
     (write("stage3/plan.md"), ALLOW, "stage3 freeze allows: the plan is paperwork"),
-    # Was stage4/test.sh until Stage 4 froze it - the case moves on a stage.
-    (write("stage5/test.sh"), ALLOW, "stage3 freeze allows: creating a later stage's test file"),
+    # Was stage4/test.sh until Stage 4 froze it, then stage5/test.sh until
+    # Stage 5 did - the case moves on a stage each time.
+    (write("stage6/test.sh"), ALLOW, "stage3 freeze allows: creating a later stage's test file"),
     (write("stage4/NOTEBOOK.md"), ALLOW, "stage3 freeze allows: a later stage's format document"),
     (bash("nasm -f bin stage3/stage3.asm -o stage3/out/BOOTX64.EFI"), ALLOW, "stage3 freeze allows: assembling"),
 ]
@@ -247,7 +250,7 @@ CASES += [
     (bash("sed -i 's/--bare//' broker/claude_backend.py"), ALLOW, "stage4 freeze allows: fixing the backend's flags"),
     (write("stage4/stage4.asm"), ALLOW, "stage4 freeze allows: Write the implementation"),
     (write("stage4/plan.md"), ALLOW, "stage4 freeze allows: the plan is paperwork"),
-    (write("stage5/test.sh"), ALLOW, "stage4 freeze allows: creating the next stage's test file"),
+    (write("stage6/test.sh"), ALLOW, "stage4 freeze allows: creating a later stage's test file"),
     (write("stage5/UMBILICAL.md"), ALLOW, "stage4 freeze allows: a later stage's document"),
     (bash("nasm -f bin stage4/stage4.asm -o stage4/out/BOOTX64.EFI"), ALLOW, "stage4 freeze allows: assembling"),
     (bash(QEMU + "-drive format=raw,file=stage4/out/esp.img -drive format=raw,file=stage4/out/notes.img,if=virtio "
@@ -260,6 +263,64 @@ CASES += [
     (bash("ss -ltn | grep 9999"), ALLOW, "bodyguard allows: looking at listeners"),
     (bash("truncate -s 16M stage4/out/notes.img"), ALLOW, "bodyguard allows: a fresh Stage 4 disk"),
     (bash(QEMU + "-drive format=raw,file=/tmp/esp.img " + CAGE), DENY, "bodyguard: the cage does not excuse a bad drive"),
+]
+
+# --- Stage 5: the freeze (plan item 8), the -o rule, the rehearsal's cage ----
+CAGE5 = ("-netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9999' "
+         "-device virtio-net-pci,netdev=n0,mac=52:54:00:a1:05:01 ")
+REHEARSAL_CAGE = ("-netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9998' "
+                  "-device virtio-net-pci,netdev=n0 ")
+CASES += [(c, v, "stage5 freeze: " + w) for c, v, w in freeze_cases(FROZEN_5)]
+CASES += [
+    (write("stage5/GERMLINE.md"), DENY, "stage5 freeze: the wire document is a criterion"),
+    (write("stage5/component.asm"), DENY, "stage5 freeze: the test component's source"),
+    (write("stage5/component.bin"), DENY, "stage5 freeze: the test component's binary"),
+    (write("broker/germline.py"), DENY, "stage5 freeze: the mock table, record and cache are criteria"),
+    (write("broker/rehearse.py"), DENY, "stage5 freeze: the rehearsal's verdicts are criteria"),
+    (bash("nasm -f bin stage5/component.asm -o stage5/component.bin"), DENY, "stage5 freeze: -o over the frozen binary (the side door)"),
+    (bash("cd stage5 && nasm -f bin component.asm -o component.bin"), DENY, "stage5 freeze: -o over the bare basename"),
+    (bash("nasm -f bin stage5/component.asm -o=stage5/component.bin"), DENY, "stage5 freeze: -o= over the frozen binary"),
+    (bash("gcc -o broker/rehearse.py x.c"), DENY, "stage5 freeze: any tool's -o aimed at a frozen file"),
+    (bash("python3 - <<'EOF'\nopen('broker/germline.py','w').write('x')\nEOF"), DENY, "stage5 freeze: python writing the broker"),
+    (bash("nasm -f bin stage5/component.asm -o stage5/out/component.check.bin"), ALLOW, "stage5 freeze allows: the checker's self-check assembles to out/"),
+    (bash("nasm -f bin stage5/stage5.asm -o stage5/out/BOOTX64.EFI"), ALLOW, "stage5 freeze allows: assembling the implementation"),
+    (bash("./stage5/test.sh"), ALLOW, "stage5 freeze allows: running the gate"),
+    (bash("./stage5/test.sh > stage5/out/gate.log 2>&1"), ALLOW, "stage5 freeze allows: gate output redirected"),
+    (bash("python3 stage5/checkgermline.py --grow 2"), ALLOW, "stage5 freeze allows: the checker"),
+    (bash("python3 stage5/checkgermline.py --germline"), ALLOW, "stage5 freeze allows: the checker"),
+    (bash("python3 broker/germline.py --mock --port 9999 --germline stage5/out/germline --image stage5/out/esp.img "
+          "--workdir stage5/out/rehearsal --record stage5/out/broker.germline.jsonl"),
+     ALLOW, "stage5 freeze allows: the mock with the gate's germline"),
+    (bash("python3 broker/germline.py"), ALLOW, "stage5 freeze allows: the real broker"),
+    (bash("python3 broker/rehearse.py stage5/component.bin"), ALLOW, "stage5 freeze allows: a hand rehearsal"),
+    (bash("cat stage5/GERMLINE.md"), ALLOW, "stage5 freeze allows: reading the wire document"),
+    (bash("grep -n grow stage5/GERMLINE.md broker/germline.py broker/rehearse.py"), ALLOW, "stage5 freeze allows: grepping"),
+    (bash("sha256sum stage5/component.bin"), ALLOW, "stage5 freeze allows: hashing the binary"),
+    (bash("objdump -D -b binary -m i386:x86-64 stage5/component.bin"), ALLOW, "stage5 freeze allows: disassembling the binary"),
+    (bash("sed -i 's/48/64/' stage5/mkimage.sh"), ALLOW, "stage5 freeze allows: the builder is not frozen"),
+    (write("stage5/mkimage.sh"), ALLOW, "stage5 freeze allows: Write the builder"),
+    (write("stage5/stage5.asm"), ALLOW, "stage5 freeze allows: Write the implementation"),
+    (write("broker/claude_backend.py"), ALLOW, "stage5 freeze allows: the Claude backend is not frozen"),
+    (bash("sed -i 's/ASSEMBLY_ROUNDS = 3/ASSEMBLY_ROUNDS = 4/' broker/claude_backend.py"), ALLOW, "stage5 freeze allows: fixing the backend"),
+    (write("stage5/plan.md"), ALLOW, "stage5 freeze allows: the plan is paperwork"),
+    (write("stage6/test.sh"), ALLOW, "stage5 freeze allows: creating the next stage's test file"),
+    (write("stage6/GERMLINE.md"), ALLOW, "stage5 freeze allows: a later stage's document"),
+    (write("stage6/component.bin"), ALLOW, "stage5 freeze allows: a later stage's component"),
+    (bash("ls germline/"), ALLOW, "stage5 freeze allows: the germline directory is not the broker file"),
+    (bash("rm -rf germline/"), ALLOW, "stage5 freeze allows: clearing the machine's own cache"),
+    (bash("rm -rf stage5/out/germline stage5/out/rehearsal"), ALLOW, "stage5 freeze allows: clearing the gate's scratch"),
+    (bash("git add stage5/GERMLINE.md broker/germline.py broker/rehearse.py"), ALLOW, "stage5 freeze allows: git add"),
+    (bash("git commit -F msg.txt"), ALLOW, "stage5 freeze allows: commit from a file"),
+    (bash(QEMU + "-drive format=raw,file=stage5/out/esp.img -drive format=raw,file=stage5/out/notes.img,if=virtio "
+          + CAGE5 + "-display none -serial file:stage5/out/serial.grow.8.txt -monitor stdio"),
+     ALLOW, "bodyguard allows: the checker's Stage 5 command"),
+    (bash("qemu-system-x86_64 -machine q35 -m 256M -smp 2 -bios /usr/share/ovmf/OVMF.fd "
+          "-drive format=raw,file=stage5/out/esp.img -drive format=raw,file=stage5/out/rehearsal/notes.img,if=virtio "
+          + REHEARSAL_CAGE + "-display none -serial file:stage5/out/rehearsal/serial.txt -monitor stdio"),
+     ALLOW, "bodyguard allows: the rehearsal's command, drives under stage5/out/rehearsal/"),
+    (bash(QEMU + "-drive format=raw,file=stage5/out/esp.img -drive format=raw,file=germline/notes.img,if=virtio " + REHEARSAL_CAGE),
+     DENY, "bodyguard: a drive under germline/ is not under an out/"),
+    (bash("echo 'the germline caches a component after rehearsal'"), ALLOW, "bodyguard allows: the stage's words in prose"),
 ]
 
 

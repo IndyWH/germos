@@ -99,6 +99,18 @@ PLAN_MARKER = "PLAN_APPROVED"
 # the one function that shells out to claude -p, is deliberately NOT frozen:
 # the automated gate never runs it, and its flags must stay fixable at test
 # 5. stage4/mkimage.sh stays unfrozen as every builder has.
+#
+# Stage 5 (plan decision 15) freezes stage5/GERMLINE.md for the UMBILICAL.md
+# reason; stage5/component.asm AND stage5/component.bin because the test
+# component's picture is what test 3 demands pixel by pixel and the checker
+# holds the source to the binary; broker/germline.py because its mock
+# table, its record, its cache and its dispatch are what tests 3 and 4
+# judge by; and broker/rehearse.py because a bent rehearsal could pass a
+# faulting blob - its verdicts are criteria. broker/broker.py stands
+# untouched and still frozen: germline.py imports its framing. Deliberately
+# NOT frozen: stage5/mkimage.sh (the recipe), stage5/stage5.asm (the thing
+# under test) and broker/claude_backend.py (the one file the gate never
+# runs, whose brief must stay fixable at test 5).
 PROTECTED = (
     "stage0/test.sh",
     "stage0/checkpixels.py",
@@ -114,6 +126,13 @@ PROTECTED = (
     "stage4/checkumbilical.py",
     "stage4/UMBILICAL.md",
     "broker/broker.py",
+    "stage5/test.sh",
+    "stage5/checkgermline.py",
+    "stage5/GERMLINE.md",
+    "stage5/component.asm",
+    "stage5/component.bin",
+    "broker/germline.py",
+    "broker/rehearse.py",
 )
 
 BASENAMES = sorted({os.path.basename(p) for p in PROTECTED})
@@ -136,6 +155,10 @@ MUTATIONS = (
     (r"\bgit\s+(?:checkout|restore|stash|apply|reset|revert|clean)\b[^;|&]*%s",
      "rewriting it from git"),
     (r"\bchmod\b[^;|&]*%s", "changing its mode"),
+    # An assembler's or compiler's output flag aimed at it. Found at Stage 5:
+    # with stage5/component.bin frozen, "nasm ... -o stage5/component.bin" was
+    # a side door none of the patterns above knew.
+    (r"(?:^|\s)-o\s*=?\s*['\"]?%s", "writing a tool's output (-o) over it"),
 )
 
 # An interpreter invocation that both mentions a protected file and shows a sign
