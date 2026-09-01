@@ -670,6 +670,14 @@ efi_main:
         ; last line before sti and the echo contract stays Stage 2's.
         ; -------------------------------------------------------------------
         call    disk_find
+        call    disk_negotiate
+
+        lea     rsi, [msg_disk]         ; line nine
+        call    serial_puts
+        mov     eax, [disk_sectors]
+        call    serial_putdec
+        lea     rsi, [msg_sectors]
+        call    serial_puts
 
         ; -------------------------------------------------------------------
         ; The keyboard - the third organ, and the machine's first sense.
@@ -1184,6 +1192,84 @@ disk_find:
 .bad_bar:
 .bar_io:
         lea     rsi, [err_bar_io]
+        call    serial_err
+
+; The common configuration structure (virtio 1.1, 4.1.4.3). Every field is
+; accessed at exactly its own width, and the 64-bit ones as two 32-bit
+; halves: the spec says so, and QEMU enforces it (plan decision 12).
+%define VC_DEV_FEAT_SEL     0x00        ; u32
+%define VC_DEV_FEAT         0x04        ; u32
+%define VC_DRV_FEAT_SEL     0x08        ; u32
+%define VC_DRV_FEAT         0x0C        ; u32
+%define VC_NUM_QUEUES       0x12        ; u16
+%define VC_STATUS           0x14        ; u8
+%define VC_Q_SELECT         0x16        ; u16
+%define VC_Q_SIZE           0x18        ; u16
+%define VC_Q_ENABLE         0x1C        ; u16
+%define VC_Q_NOTIFY_OFF     0x1E        ; u16
+%define VC_Q_DESC           0x20        ; u64
+%define VC_Q_DRIVER         0x28        ; u64
+%define VC_Q_DEVICE         0x30        ; u64
+
+%define VS_ACKNOWLEDGE      1
+%define VS_DRIVER           2
+%define VS_DRIVER_OK        4
+%define VS_FEATURES_OK      8
+%define VF_VERSION_1_HI     1           ; feature bit 32 = bit 0 of the high word
+
+; disk_negotiate - reset, ACKNOWLEDGE, DRIVER, features (VERSION_1 required
+; and alone accepted), FEATURES_OK confirmed, capacity read. Only the modern
+; interface is spoken: a device without VERSION_1 is a message, not a
+; fallback (plan decision 9). Called once from efi_main after disk_find;
+; clobbers registers freely. DRIVER_OK is set by vq_init once a queue exists.
+disk_negotiate:
+        mov     rdi, [vio_common]
+
+        mov     byte [rdi + VC_STATUS], 0       ; reset
+        mov     ecx, 100000
+.reset_wait:
+        cmp     byte [rdi + VC_STATUS], 0       ; the device says so by reading 0
+        je      .reset_done
+        pause
+        dec     ecx
+        jnz     .reset_wait
+        lea     rsi, [err_vio_reset]
+        call    serial_err
+.reset_done:
+        mov     byte [rdi + VC_STATUS], VS_ACKNOWLEDGE
+        mov     byte [rdi + VC_STATUS], VS_ACKNOWLEDGE | VS_DRIVER
+
+        mov     dword [rdi + VC_DEV_FEAT_SEL], 1
+        mov     eax, [rdi + VC_DEV_FEAT]        ; feature bits 32-63
+        test    eax, VF_VERSION_1_HI
+        jz      .no_v1
+        mov     dword [rdi + VC_DRV_FEAT_SEL], 0
+        mov     dword [rdi + VC_DRV_FEAT], 0    ; nothing from the low word
+        mov     dword [rdi + VC_DRV_FEAT_SEL], 1
+        mov     dword [rdi + VC_DRV_FEAT], VF_VERSION_1_HI
+        mov     byte [rdi + VC_STATUS], VS_ACKNOWLEDGE | VS_DRIVER | VS_FEATURES_OK
+        movzx   eax, byte [rdi + VC_STATUS]
+        test    eax, VS_FEATURES_OK             ; the device must leave it set
+        jz      .not_ok
+
+        ; The capacity, in 512-byte sectors: a u64 at device config offset 0,
+        ; read as two halves. The high half must be zero - a disk of 2^32
+        ; sectors or more is beyond this stage's 32-bit sector arithmetic.
+        mov     rsi, [vio_device]
+        mov     eax, [rsi + 4]
+        test    eax, eax
+        jnz     .too_big
+        mov     eax, [rsi]
+        mov     [disk_sectors], eax
+        ret
+.no_v1:
+        lea     rsi, [err_vio_v1]
+        call    serial_err
+.not_ok:
+        lea     rsi, [err_vio_feat]
+        call    serial_err
+.too_big:
+        lea     rsi, [err_disk_big]
         call    serial_err
 
 ; cpu_phys_bits - phys_limit = 1 << (the physical address width from CPUID
@@ -2257,6 +2343,8 @@ msg_idt:        db      'S3: idt ready', 13, 10, 0
 msg_found:      db      'S3: cores found ', 0
 msg_woken:      db      'S3: cores woken ', 0
 msg_console:    db      'S3: console ', 0
+msg_disk:       db      'S3: disk ', 0
+msg_sectors:    db      ' sectors', 13, 10, 0
 msg_kbd:        db      'S3: keyboard ready', 13, 10, 0
 
 msg_err:        db      'ERR: ', 0
@@ -2287,6 +2375,10 @@ err_vio_cap:    db      'virtio device lacks a modern capability (common, notify
 err_bar_io:     db      'virtio capability names an I/O BAR or a BAR beyond 5 - not a modern device', 0
 err_bar_high:   db      'BAR lies beyond the physical address width', 0
 err_spare:      db      'page-table pool exhausted - raise SPARE_PAGES', 0
+err_vio_reset:  db      'virtio device did not complete its reset', 0
+err_vio_v1:     db      'virtio device does not offer VIRTIO_F_VERSION_1 - legacy only', 0
+err_vio_feat:   db      'virtio device refused our features - FEATURES_OK not set', 0
+err_disk_big:   db      'disk has 2^32 sectors or more - beyond this stage', 0
 
 ; The shared font, byte for byte the file the pixel checker renders from.
 ; 128 glyphs, 8 bytes each, row per byte, bit 0 leftmost - stage2/FONT.md.
@@ -2463,6 +2555,7 @@ vio_notify:     resq    1               ; notification region base
 vio_isr:        resq    1               ; ISR status
 vio_device:     resq    1               ; device-specific configuration (capacity)
 vio_notify_mult: resd   1               ; notify_off_multiplier
+disk_sectors:   resd    1               ; the capacity, in 512-byte sectors
 
 ; Page tables. 4 KB alignment is architectural, not a preference.
         alignb  4096
