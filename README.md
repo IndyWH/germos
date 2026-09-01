@@ -85,6 +85,24 @@ qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
 
 Type `? ` and a question. A line without the marker is a note, and persists — exactly as Stage 3. The guest's network is a cage: `restrict=on` means it can reach nothing at all except that one forwarded socket to the broker on localhost.
 
+**Stage 5** — ask the OS to grow something. The Stage 5 broker answers questions *and* requests; on a request it asks Claude for a flat binary against the ABI in [`stage5/GERMLINE.md`](stage5/GERMLINE.md), **rehearses it in a headless boot of the same image** (the twin) before it is allowed anywhere near your screen, caches what passed in `germline/` (per machine, gitignored), and delivers it. Two terminals:
+
+```
+python3 broker/germline.py
+```
+
+```
+./stage5/mkimage.sh
+truncate -s 16M stage5/out/notes.img
+qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
+  -drive format=raw,file=stage5/out/esp.img \
+  -drive format=raw,file=stage5/out/notes.img,if=virtio \
+  -netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9999' \
+  -device virtio-net-pci,netdev=n0 -serial stdio
+```
+
+Type `! make me a clock`. The indicator turns while Claude writes and the twin rehearses; a clock ticks; **Esc** brings the prompt back; ask again and it comes from the germline at once. `?` still asks (with or without the space now), and a plain line is still a note. The automated gate (`./stage5/test.sh`) uses only a mock broker with a canned test component, so it never spends a token.
+
 ## The team of three
 
 GermOS is built by a team of three, and the division of labour is the experiment as much as the OS is:

@@ -3,22 +3,23 @@
 Rolling state of the AI OS project. Read this first, then `ai-os-foundation.md`
 (the single source of truth), then the current stage's `spec.md` and `plan.md`.
 
-**Last updated:** 1 September 2026 — **Stage 4 CLOSED; Stage 5 — the
-conversation — OPENS.** Wajira ran Stage 4's test 5 with the real broker:
-the booted machine reached Claude over the caged virtio network, asked a
-question typed as `? ...`, and printed the answer on its own console —
-*"The booted OS asks Claude a question and prints the answer!"* The
-umbilical works. Test 5 surfaced two things, both recorded in the Stage 4
-section below: the broker's `--bare` flag skipped the CLI's own login
-(dropped, commit `5b9e8fa`), and a **usability finding** — the first user
-typed `?` without the trailing space and the line went silently to the
-notebook, which the Stage 5 spec fixes with a forgiving marker parse. The
-project has a name, **GermOS** (foundation v1.9), and on 1 September 2026 it
-was **published**: `github.com/IndyWH/germos`, public, MIT licence. Stage 5
-opens with `stage5/spec.md` approved by the owner, the policy gate
-re-checked (see the Stage 5 section), and this session — Fable 5 at high
-effort, the owner's decision — doing the opening housekeeping, then
-drafting `stage5/plan.md` in plan mode for the gate.
+**Last updated:** 1 September 2026 — **Stage 5 GREEN, pending the
+oracle.** All four automated tests pass: the machine sends a request typed
+`! ...` to the broker as GERMLINE.md's frame, the broker generates (the
+mock, in the gate), **rehearses the candidate in a headless boot of the
+same image**, caches what passes in the germline, and delivers a binary
+component the machine loads into a fixed region and runs against a
+four-entry service table; Esc brings the conversation back; a repeat
+request is served from the germline with no generation call; a faulting
+blob never reaches the screen; a component at exactly the 1 MB cap streams
+and runs. Built on Fable 5 at high effort (the owner's decision), one
+commit per numbered item, the plan gate holding until he approved; the
+automated gate spoke only to the mock and spent no token. One stop on the
+way, recorded in the Stage 5 section: QEMU's image lock in the frozen
+rehearsal, fixed by the owner's own hand as item 8b. **Test 5 is Wajira's:
+`! make me a clock`.** Earlier in the day: Stage 4 closed at its test 5,
+the project was named **GermOS** and **published** (`github.com/IndyWH/germos`,
+MIT), and the history screenshots and README were put in order.
 
 ---
 
@@ -26,12 +27,12 @@ drafting `stage5/plan.md` in plan mode for the gate.
 
 | | |
 |---|---|
-| Stage | 5 — The conversation **OPEN** (Stage 4 closed 1 September 2026, all five tests PASS) |
-| Status | Spec approved by the owner. Housekeeping at the opening (this record, the history screenshots, the README verified), then `stage5/plan.md` drafted in plan mode and held at the gate for Wajira's approval. |
+| Stage | 5 — The conversation — **tests 1–4 GREEN, test 5 pending Wajira** |
+| Status | Items 0–13 committed (8b the owner's fix to the frozen rehearsal). `./stage5/test.sh` green at `-smp 2` and `-smp 8`, against the mock, no token spent. Next: test 5 with the real broker, then Cowork's review. |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
-| Toolchain | NASM 3.01, QEMU 10.2.1, Python 3, OVMF, mtools — Stage 4 needs no new packages (the broker is standard-library Python and shells out to `claude`) |
-| Model | **Fable 5, high effort** — the owner's decision for Stage 4 (see below) |
+| Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.252 — Stage 5 needs no new packages |
+| Model | **Fable 5, high effort** — the owner's decision for Stages 4 and 5 |
 
 ## The project in three lines
 
@@ -240,8 +241,17 @@ followed pointed everywhere but the cause.
 `stage1/checkbands.py`, `stage2/test.sh`, `stage2/checktext.py`,
 `stage2/font8x8.bin`, `stage3/test.sh`, `stage3/checknotes.py`,
 `stage3/NOTEBOOK.md`, `stage4/test.sh`, `stage4/checkumbilical.py`,
-`stage4/UMBILICAL.md` and **`broker/broker.py`** are frozen by
-`.claude/hooks/protect-tests.py`. The format and protocol documents are
+`stage4/UMBILICAL.md`, **`broker/broker.py`**, and from Stage 5
+`stage5/test.sh`, `stage5/checkgermline.py`, `stage5/GERMLINE.md`,
+`stage5/component.asm`, `stage5/component.bin`, **`broker/germline.py`**
+and **`broker/rehearse.py`** are frozen by `.claude/hooks/protect-tests.py`.
+Stage 5 also closed a side door: a tool's `-o` aimed at a frozen path is
+now a mutation the hook knows (with the binary frozen, `nasm ... -o
+stage5/component.bin` had been allowed). The Stage 5 table is **569
+payloads, 383 denied, 186 allowed, 0 wrong**. And it recorded the first
+deliberate opening of a freeze: `broker/rehearse.py` was fixed by the
+owner's own hand (item 8b) after the session stopped at the scope guard
+and wrote the diff out unapplied — by decision, not by drift. The format and protocol documents are
 frozen for the reason the font is: the assembler implements them and the
 checker parses by them, so an editable criterion would be no criterion. The
 broker is frozen because the mock's framing, record and canned table are what
@@ -298,6 +308,17 @@ while anything else holds the port — so **this session made no real Claude
 call and spent no token.** The only outward connection in the whole design is
 `claude -p`'s own HTTPS from the real broker, and that happens only in
 Wajira's hands at test 5.
+
+Stage 5 adds a second guest per grow — the rehearsal's twin — booted by
+the broker from a private byte-identical copy of the image under
+`stage5/out/rehearsal/`, with its own fresh notebook image, inside the
+same cage with its `guestfwd` delivering to a private listener on
+`127.0.0.1:9998`. Every drive is still a raw file under an `out/`; the
+gate refuses to run while anything listens on 9999 or 9998. A grown
+component runs at ring 0 with the whole (virtual) machine in reach — that
+is the thesis — and the rehearsal in the twin is the mitigation the
+foundation prescribes. This session made no Claude call:
+`claude_backend.grow()` has never been run.
 
 ## Stage 4 — The umbilical · closed 1 September 2026
 
@@ -477,104 +498,157 @@ request served from the cache and no generation call. The automated gate
 speaks only to the mock and spends no token; the cage, the bodyguard and
 every existing frozen file stand.
 
-**Where this session is (as-you-go):** housekeeping done (three commits);
-`stage5/plan.md` approved at the plan gate after Cowork's review (one
-amendment — the mock's `big` component at the 1 MB cap; one correction —
-the 31-byte header). **Part 1 is closed:** items 1–8 — `GERMLINE.md`, the
-test component (448 bytes), `broker/germline.py` + `broker/rehearse.py` +
-the backend's `grow()`, the harness and tests 1–4 committed red, the
-freeze (seven paths; the `-o` side door closed; 567 payloads, 0 wrong).
-Part 2 in progress: item 9 (`stage5.asm`, test 1 green), item 10 (the
-region at `0x4b4040`, `tsc_per_ms` 2999478, `kbd_next`, line twelve;
-test 2 green), item 11 (the marker parse, the grow path, the generalised
-receive — every conversation row proven by a probe against the mock).
+**What grew, on Stage 4's proven body** (items 9–12, `stage5/stage5.asm`):
 
-**STOPPED before item 12 — a defect in a frozen file, for the owner's
-decision (the plan's scope guard).** Item 11's probe drove a real grow
-request through the mock, and the pipeline's rehearsal failed with `the
-twin did not boot` in 0 s — the twin's QEMU died at start. The cause,
-measured directly: **QEMU locks a raw image its guest holds, and refuses
-a second QEMU on it** (`qemu-system-x86_64: Failed to get "write" lock —
-Is another process using the image [stage5/out/esp.img]?`).
-`broker/rehearse.py` boots `stage5/out/esp.img` — the very image the
-user's guest is running from — so the rehearsal can never boot while a
-guest is up: every real use, the gate's tests 3 and 4, and test 5 alike.
-The plan's environment table did not catch it because the pre-planning
-probes never ran two QEMUs on one image. `rehearse.py` is frozen (item
-8), and the hook is right to hold it: this is a spec question, not an
-edit.
+- **The wire, one new document** — `stage5/GERMLINE.md`, frozen:
+  the forgiving marker parse; the grow request (a request frame whose
+  first byte is `0x01`, deliberately not printable, then the body); the
+  grow response — a refusal (kind `0x00`, drawn like an answer) or a
+  component (kind `0x01`, a 32-byte header, the blob at byte 32 of the
+  content, the 1 MB cap); the 600 s deadline; the component region and
+  line twelve; the entry contract; the four-entry service table; what the
+  screen does around a component; the fixed console lines and refusal
+  phrases; the rehearsal's seven criteria; the germline's key,
+  normalisation, machine string and provenance; the mock's grow table;
+  the record's grow fields; worked-example bytes; the shared Python.
+  `stage4/UMBILICAL.md` is untouched.
+- **The component region** — `0x100040` bytes of page-aligned BSS; a grow
+  response is received straight into it from +28, the blob at +64. On this
+  build `S5: component region 0x00000000004b4040 1048576 bytes` (line
+  twelve). Code there executes: EFER.NXE is on under OVMF but our tables
+  carry no NX bits — measured before planning.
+- **The clock** — the TSC calibrated once at boot against one PIT 10 ms
+  wait (`tsc_per_ms` 2,999,478 here); `ticks_ms` divides by it.
+- **The keyboard** — `kbd_next` factored out of the main loop as the
+  ring's one consumer; Esc (`0x1B`) in both tables, ignored at the prompt.
+- **The marker parse and the third kind of line** — `parse_marker`
+  (leading spaces skipped, `?` asks, `!` requests, the body trimmed and
+  capped, a marker line never a note, an empty body drawing `nothing to
+  ask` / `nothing to grow`); `grow_request` (the `0x01` frame; the refusal
+  drawn; the component frame checked by `component_valid` and run; `bad
+  component frame` otherwise); `umbilical_ask` generalised with `rx_dst`,
+  `rx_max` and `rx_deadline`.
+- **The loader and the services** — `run_component` (`fb_clear`, the
+  `call` into region + 64 with `RDI` = the table and `RSP` 16-aligned,
+  `console_redraw` from the shadow after, the ring discarded, the
+  prompt); `svc_draw_text` (pixels only), `svc_console_size`,
+  `svc_poll_key`, `ticks_ms`; the table filled at boot RIP-relative.
 
-Two fixes were measured, each one line in `rehearse.py`:
+**The broker grew** (item 3): `broker/germline.py`, frozen, imports the
+frozen Stage 4 framing from `broker/broker.py` (byte-identical) and adds
+the marker-byte dispatch and the pipeline — generate, rehearse, cache,
+deliver — with a running generation-call counter, `--tries 2` with the
+failure fed back, the germline lookup (hash-verified) and write
+(`component.bin`, `provenance.json`, `rehearsal.log`), the mock's grow
+table (`test component`, `big` = the same padded to the cap, `fault` =
+`ud2`). `broker/rehearse.py`, frozen: the twin driver — a one-shot
+listener on 9998, a headless `-smp 2` boot of **a private byte-identical
+copy** of the guest image under `stage5/out/rehearsal/` (item 8b), `!
+rehearsal` typed through the monitor, two screendumps, Esc, a note, the
+seven criteria in the document's order. `broker/claude_backend.py`
+(unfrozen) gained `grow()`: `claude -p` with a brief that lifts the entry
+contract and service table verbatim from `GERMLINE.md`, NASM source back,
+assembled on the host, up to three assembly rounds; never run by the gate.
 
-1. **A private copy of the image for the twin (recommended).** In
-   `rehearse()`, after `disk = ...`: `twin = os.path.join(workdir,
-   "esp.img")` then `shutil.copyfile(image, twin)` beside the notebook's
-   `truncate`, and `qemu_argv(twin, disk, serial_path, port)` instead of
-   `qemu_argv(image, ...)`. 48 MB copied per rehearsal (about 50 ms), QEMU's
-   locking left intact, the twin's disks entirely its own, all under
-   `stage5/out/rehearsal/` as the bodyguard requires. "The same guest
-   image" stays literally true: a byte-identical copy.
-2. **`file.locking=off` on the twin's boot drive** — in `qemu_argv`,
-   `"format=raw,file=" + image + ",file.locking=off"`. Measured to boot
-   the in-use image straight through its `S5:` lines. Cheaper, but it
-   switches off a safety QEMU provides, on an image two machines then
-   share; `read-only=on` does *not* work (the SATA node must be writable).
+**The test component** (item 2): `stage5/component.asm` and its 448-byte
+binary, both frozen; five strips through the table, `key: <ch>` for each
+key, Esc to return. The checker assembles the source to `stage5/out/` and
+demands the committed binary byte for byte.
 
-A cosmetic second thing in the same file, worth the same decision: when
-the twin's QEMU exits early, Python's finaliser prints `Exception ignored
-... BrokenPipeError` for the monitor pipe on the broker's stderr — `tell()`
-already swallows the write error, so a `proc.stdin.close()` inside a
-`try` in the `finally` block silences it. No behaviour changes.
+| # | Test | Status |
+|---|---|---|
+| 1 | Artefact — PE32+ magics, x86-64, subsystem 10, relocs stripped, packed image | **PASS** |
+| 2 | Serial — thirteen `S5:` lines inside the cage with the harness's MAC, line twelve the region by shape (non-zero, below 4 GB, ≡ 64 mod 4096, the 1048576-byte cap), found = woken = 8 | **PASS** |
+| 3 | The growth, mocked — `before`, `? ping`, `! test component` rehearsed in the twin, cached, delivered as the exact frame, run; `k` shown; Esc; `after`; the record, the germline entry, the notebook, both screens, at `-smp 2` and `-smp 8` | **PASS** |
+| 4 | The rehearsal and the germline — both cages asserted; `! fault` refused after two failed rehearsals (`the twin reported an error`); `! test component` generated then served from the germline with no generation call; `! big` streamed as a `4 + 32 + 1,048,576` byte frame and run; `?`, `?x`, `!`, `!x` routed; the record's call sequence 2 / 3 / 3 / 4 / 5; two germline entries with provenance | **PASS** |
+| 5 | **Oracle — Wajira, real broker** — `! make me a clock` | **PENDING** |
 
-**What the owner decides:** either apply fix 1 (and the cosmetic close)
-by his own hand in his terminal — the freeze never opens, the diff is
-his: **`git apply stage5/out/rehearse.fix.patch`** at the repo root (the
-patch is written out there, validated with `git apply --check`, not
-applied; `stage5/out/` is gitignored, so it is a note to him, not repo
-content) — or authorise the next session to open the freeze on
-`broker/rehearse.py` for exactly that change and re-freeze in the same
-commit (Stage 4's decision 13 anticipated this shape: by decision, not by
-drift). Either way the fixed file is committed as its own item ("item
-8b") and the payload table re-run.
+Tests 1–4 were committed **red** before any of `stage5.asm` existed and
+went green where the plan predicted: test 1 at item 9, test 2 at item 10,
+tests 3 and 4 at item 12. The gate is five boots of its own plus six
+rehearsal boots, about eight minutes, and refuses to run while anything
+listens on 9999 or 9998.
 
-**Item 12 is written and proven, and waits in the working tree
-uncommitted** (`git status` shows `stage5/stage5.asm` modified on top of
-item 11): the loader (`run_component`: `fb_clear`, the call with `RDI` =
-the service table and `RSP` 16-aligned, `console_redraw` after), the four
-services (`svc_draw_text`, `svc_console_size`, `svc_poll_key` on
-`kbd_next`, `ticks_ms`), the table filled at boot RIP-relative. Its commit
-must be the green one, so it stays uncommitted until the rehearsal can
-boot. It was proven end to end by a scratch probe that gave the mock a
-byte-identical *copy* of the image to rehearse on — exactly what fix 1
-does — judged by the checker's own functions with zero problems: `!
-fault` refused after two rehearsals failing `the twin reported an error`
-(14 s each); `! test component` rehearsed, cached with provenance, run —
-the five strips with `key: k` on a cleared screen — served from the
-germline the second time with no generation call; `! big` streamed as a
-1,048,612-byte frame, run, its strips on screen; Esc restoring the
-conversation each time; the echo exactly the typed lines; the notebook
-exactly the note; the record's generation-call sequence 2 / 3 / 3 / 4. Once
-`rehearse.py` boots a copy, `./stage5/test.sh` is expected green at
-item 12's commit.
+**One thing bit, hard, and is now a gotcha:** QEMU locks the raw image a
+running guest boots from, so the rehearsal — which booted the very
+`stage5/out/esp.img` the guest runs from — could never boot the twin
+beside a guest. Found at item 11's probe, after the freeze. The session
+stopped at the scope guard (commit `f22eea3`), measured the alternatives,
+wrote the fix out as a patch under `stage5/out/` and did not apply it;
+Cowork verified the diff, the owner applied it by his own hand, and item
+8b committed it with the payload table re-run (569, 0 wrong). The freeze
+was opened for exactly that change and nothing else. Lesson: probe two
+QEMUs on one image before freezing anything that boots one.
+
+**Smaller things that bit:** `%define` is positional (again — `CHAR_SPACE`
+below `svc_draw_text`; the first error was the only one that mattered);
+`pkill -f` matches its own shell; a probe's first expected screen row must
+not be a prefix of another row (`> ?` matched `> ?x`).
+
+**Caveats carried forward:**
+
+- **Everything Stage 4 carried.** The x2APIC path and the trampoline
+  fallback remain unproven; the i8042 is not reconfigured; one machine,
+  one firmware; the stack's omission list; plaintext inside the cage.
+- **One component at a time, cooperatively run, no watchdog.** A component
+  that never returns hangs the real machine; the rehearsal's 90 s budget
+  catches it in the twin first. Esc is a convention the component honours.
+- **The rehearsal proves safe, not correct.** Whether the thing on the
+  screen is what was asked for is the oracle's judgement this ring.
+- **The machine string is the twin's** (`qemu-q35-ovmf`): the machine the
+  user faces and the twin are the same image this ring. At Stage 7 it
+  becomes the scanned hardware.
+- **The generation brief's quality is the backend's own affair.** The gate
+  proves the pipeline with the mock; `claude_backend.grow()` has never been
+  run and is exercised only at test 5 (Stage 4's `--bare` lesson applies:
+  it is unfrozen for exactly that reason).
+- **No persistence of components in the notebook**; the germline lives
+  broker-side, per machine, gitignored. A 600 s grow deadline in the guest.
+- **A component runs at ring 0 with the whole machine in reach** — the
+  thesis, and the rehearsal is the mitigation the foundation prescribes.
 
 ## Next action
 
-**Wajira decides the `broker/rehearse.py` fix** (the Stage 5 section
-above: `git apply stage5/out/rehearse.fix.patch` by his own hand, or an
-authorised opening of the freeze). Then the next session: commit the fixed
-rehearsal as item 8b with the payload table re-run; run `./stage5/test.sh`
-on the working tree (item 12's code is already applied there) and commit
-item 12 green; item 13 (HANDOVER to green-pending-oracle, the gotchas,
-README's Stage 5 commands); then test 5 — `python3 broker/germline.py`
-and the windowed machine, `! make me a clock`.
+**Test 5 — Wajira, with the real broker.** Two terminals at the repo root.
+The broker (it answers questions and requests, rehearses every candidate
+in the twin, and caches what passes in `germline/`):
 
-**Cowork's Stage 4 review** per `REVIEW.md` still stands as an open item:
-bugs first, and the foundation asks for a disassembly-level read on anything
-touching memory maps or the wire — the places to look hardest are
-`tcp_input`'s state machine and checksums, `net_poll`'s ring handling,
-`vio_attach`'s capability walk on two devices now, and the frozen
-`broker/broker.py`. Cowork's Stage 3 review (`disk_rw`, `map_mmio_2m`,
-`record_valid`, `payloads.py` re-run) also still stands.
+```
+python3 broker/germline.py
+```
+
+and the machine, windowed:
+
+```
+qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
+  -drive format=raw,file=stage5/out/esp.img \
+  -drive format=raw,file=stage5/out/notes.img,if=virtio \
+  -netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9999' \
+  -device virtio-net-pci,netdev=n0 -serial stdio
+```
+
+Type **`! make me a clock`**. The indicator turns while Claude writes and
+the twin rehearses (the broker's terminal narrates each step: the
+generation call, the rehearsal's verdict and time, the germline write);
+a clock with the right time ticks on GermOS's screen; **Esc** returns the
+prompt; `! make me a clock` again comes from `germline/` at once. If a
+candidate fails rehearsal twice, the screen says `rehearsal failed:
+<phrase>` and the broker's terminal says which `ERR:` line the twin
+printed — the brief in `broker/claude_backend.py` (unfrozen) is the thing
+to adjust. `stage5/out/` is gitignored: `./stage5/mkimage.sh` rebuilds
+the boot image and `truncate -s 16M stage5/out/notes.img` makes a blank
+notebook. **His word closes the stage.**
+
+Then **Cowork's review** per `REVIEW.md`: the places to look hardest are
+`run_component` and the four services (a component's view of the
+machine), `tcp_input`'s generalised copy into the region, `parse_marker`,
+the rehearsal's criteria and the germline's provenance in the two frozen
+broker files, and the frozen test component. Stage 4's review items still
+stand.
+
+Then **Stage 6 — growth** (foundation §7): a compositor, more devices,
+the store-of-plans prototype. The subscription policy is re-checked at
+that gate, per the foundation.
 
 To ask GermOS a question again at any time, in two terminals at the repo
 root — the real broker, then the machine windowed:
