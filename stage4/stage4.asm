@@ -1743,6 +1743,440 @@ serial_puthex8:
         ret
 
 ; ---------------------------------------------------------------------------
+; The wire - Ethernet, ARP and IPv4 (plan decisions 6 and 7), the smallest
+; honest stack for a world of one on-link peer: the guest is 10.0.2.15, the
+; broker is 10.0.2.4, and there is no gateway and no route. Frames are built
+; in nic_tx_buf behind the 12-byte virtio-net header and sent one at a time;
+; received frames are dispatched by EtherType from the receive buffers and
+; the buffers re-posted. Checksums are computed on send and verified on
+; receive; a bad one is dropped in silence, exactly as slirp drops ours.
+; Only the BSP calls any of this. Everything here clobbers registers freely
+; unless it says otherwise.
+;
+; Offsets inside a frame (Ethernet header first): ETH_* for the header,
+; ARP_* for an ARP body at 14, IP_* for an IPv4 header at 14; the transmit
+; buffer adds TX_BASE for the virtio header in front.
+; ---------------------------------------------------------------------------
+
+%define TX_BASE             VNET_HDR_LEN        ; the Ethernet frame starts here
+%define TX_IP               (TX_BASE + 14)      ; the IPv4 header
+%define TX_PAYLOAD          (TX_IP + 20)        ; what rides on IPv4 (TCP)
+
+%define ETH_DST             0
+%define ETH_SRC             6
+%define ETH_TYPE            12
+%define ETH_HDR             14
+%define ETHTYPE_ARP         0x0608              ; 08 06 in memory order
+%define ETHTYPE_IP          0x0008              ; 08 00 in memory order
+
+%define ARP_HTYPE           14
+%define ARP_PTYPE           16
+%define ARP_HLEN            18
+%define ARP_PLEN            19
+%define ARP_OPER            20
+%define ARP_SHA             22
+%define ARP_SPA             28
+%define ARP_THA             32
+%define ARP_TPA             38
+%define ARP_LEN             42
+%define ARP_OP_REQUEST      0x0100              ; 00 01 in memory order
+%define ARP_OP_REPLY        0x0200              ; 00 02 in memory order
+
+%define IP_VER              14
+%define IP_TOS              15
+%define IP_TOTLEN           16
+%define IP_IDENT            18
+%define IP_FRAG             20
+%define IP_TTL              22
+%define IP_PROTO            23
+%define IP_CSUM             24
+%define IP_SRC              26
+%define IP_DST              30
+%define IP_HDR              20
+%define IP_PROTO_TCP        6
+
+%define OUR_IP              0x0F02000A          ; 10.0.2.15 in memory order
+%define BROKER_IP           0x0402000A          ; 10.0.2.4 in memory order
+
+%define ARP_TRIES           3
+%define ARP_WAIT_TICKS      5000                ; x 200 us = one second
+
+; net_send - the Ethernet frame is in nic_tx_buf at TX_BASE; ECX = its
+; length. Pads to the 60-byte minimum, zeroes the virtio-net header, hands
+; the one transmit descriptor to the device, rings queue 1, and waits for
+; the completion - bounded, a dead device being an ERR:, not a hang.
+net_send:
+        cmp     ecx, 60
+        jae     .long_enough
+        lea     rdi, [nic_tx_buf + TX_BASE]
+        add     rdi, rcx
+        push    rcx
+        mov     ecx, 60
+        sub     ecx, [rsp]
+        xor     eax, eax
+        rep     stosb                   ; zero the padding
+        pop     rcx
+        mov     ecx, 60
+.long_enough:
+        lea     rdi, [nic_tx_buf]       ; the virtio-net header: all zero -
+        xor     eax, eax                ; no checksum offload, no GSO
+        mov     [rdi], rax
+        mov     [rdi + 8], eax
+        add     ecx, VNET_HDR_LEN
+
+        lea     rbp, [nic_dev]
+        lea     r9, [rbp + VIO_Q + VQ_BLK]      ; queue 1's block
+        mov     rsi, [r9 + Q_DESC]
+        mov     [rsi + 8], ecx          ; descriptor 0: the whole buffer, this long
+        mov     word [rsi + 12], 0      ; device-readable, no chain
+
+        mov     rsi, [r9 + Q_AVAIL]     ; publish: ring[idx & mask] = 0, idx++
+        movzx   ecx, word [rsi + 2]
+        mov     edx, ecx
+        and     edx, [r9 + Q_MASK]
+        mov     word [rsi + 4 + rdx*2], 0
+        mfence
+        inc     ecx
+        mov     [rsi + 2], cx
+        mfence
+        mov     rdx, [r9 + Q_DOORBELL]
+        mov     word [rdx], 1
+
+        mov     rsi, [r9 + Q_USED]      ; reaped before the next send
+        mov     r8d, VQ_POLL_TRIES
+.poll:
+        movzx   eax, word [rsi + 2]
+        cmp     eax, [r9 + Q_LAST_USED]
+        jne     .done
+        mov     ax, PIT_200US
+        call    pit_wait
+        dec     r8d
+        jnz     .poll
+        lea     rsi, [err_nic_tx]
+        call    serial_err
+.done:
+        lfence
+        inc     dword [r9 + Q_LAST_USED]
+        and     dword [r9 + Q_LAST_USED], 0xFFFF
+        ret
+
+; net_poll - every frame the device has delivered since the last look:
+; dispatched by EtherType (ARP or IPv4; anything else dropped), then its
+; buffer re-posted. Returns EAX = the number of frames taken. Called from
+; every wait loop; also safe to call when there is nothing.
+net_poll:
+        push    r12
+        push    r13
+        push    r14
+        xor     r14d, r14d              ; frames taken
+        lea     rbp, [nic_dev]
+        lea     r12, [rbp + VIO_Q]      ; queue 0's block
+.next:
+        mov     rsi, [r12 + Q_USED]
+        movzx   eax, word [rsi + 2]
+        cmp     eax, [r12 + Q_LAST_USED]
+        je      .out
+        lfence
+        mov     edx, [r12 + Q_LAST_USED]
+        and     edx, [r12 + Q_MASK]
+        mov     r13d, [rsi + 4 + rdx*8]         ; the descriptor id = the buffer index
+        mov     ecx, [rsi + 8 + rdx*8]          ; bytes written, header included
+        inc     dword [r12 + Q_LAST_USED]
+        and     dword [r12 + Q_LAST_USED], 0xFFFF
+        inc     r14d
+        cmp     r13d, NIC_RX_BUFS
+        jae     .repost                 ; not ours - never happens, never trusted
+        cmp     ecx, VNET_HDR_LEN + ETH_HDR
+        jb      .repost                 ; too short to carry a type
+        sub     ecx, VNET_HDR_LEN       ; ECX = the Ethernet frame length
+        mov     eax, r13d
+        shl     eax, 11                 ; x NIC_RX_BUF
+        lea     rsi, [nic_rx_bufs + VNET_HDR_LEN]
+        add     rsi, rax                ; RSI = the Ethernet frame
+        cmp     word [rsi + ETH_TYPE], ETHTYPE_ARP
+        jne     .not_arp
+        call    arp_input
+        jmp     .repost
+.not_arp:
+        cmp     word [rsi + ETH_TYPE], ETHTYPE_IP
+        jne     .repost
+        call    ip_input
+.repost:
+        mov     rdi, [r12 + Q_AVAIL]    ; the buffer goes back: ring[idx & mask] = id
+        movzx   ecx, word [rdi + 2]
+        mov     edx, ecx
+        and     edx, [r12 + Q_MASK]
+        mov     [rdi + 4 + rdx*2], r13w
+        mfence
+        inc     ecx
+        mov     [rdi + 2], cx
+        mfence
+        mov     rdx, [r12 + Q_DOORBELL]
+        mov     word [rdx], 0
+        jmp     .next
+.out:
+        mov     eax, r14d
+        pop     r14
+        pop     r13
+        pop     r12
+        ret
+
+; csum_add - RSI = bytes, ECX = how many, EAX = the running sum in. Returns
+; EAX = the running sum out: 16-bit words in memory order added into a
+; 32-bit accumulator, an odd trailing byte as the low byte of a final word.
+; Byte order does not matter to a one's complement sum as long as the
+; result is stored the same way, which csum_fold's caller does. Preserves
+; everything but EAX.
+csum_add:
+        push    rcx
+        push    rdx
+        push    rsi
+.words:
+        cmp     ecx, 2
+        jb      .odd
+        movzx   edx, word [rsi]
+        add     eax, edx
+        add     rsi, 2
+        sub     ecx, 2
+        jmp     .words
+.odd:
+        test    ecx, ecx
+        jz      .done
+        movzx   edx, byte [rsi]
+        add     eax, edx
+.done:
+        pop     rsi
+        pop     rdx
+        pop     rcx
+        ret
+
+; csum_fold - EAX = a running sum. Returns AX = its one's complement, the
+; value to store in a checksum field; a verified header sums to 0xFFFF
+; before the complement, so a verifier checks for AX == 0 after it.
+csum_fold:
+        push    rdx
+        mov     edx, eax
+        shr     edx, 16
+        and     eax, 0xFFFF
+        add     eax, edx
+        mov     edx, eax
+        shr     edx, 16
+        and     eax, 0xFFFF
+        add     eax, edx                ; two folds cover any 32-bit sum
+        not     eax
+        and     eax, 0xFFFF
+        pop     rdx
+        ret
+
+; arp_input - RSI = an Ethernet frame carrying ARP, ECX = its length. A
+; request for our address is answered; a reply from the broker's address
+; caches its MAC. Anything else is dropped.
+arp_input:
+        cmp     ecx, ARP_LEN
+        jb      .drop
+        cmp     word [rsi + ARP_HTYPE], 0x0100  ; Ethernet
+        jne     .drop
+        cmp     word [rsi + ARP_PTYPE], ETHTYPE_IP
+        jne     .drop
+        cmp     byte [rsi + ARP_HLEN], 6
+        jne     .drop
+        cmp     byte [rsi + ARP_PLEN], 4
+        jne     .drop
+        cmp     word [rsi + ARP_OPER], ARP_OP_REPLY
+        je      .reply
+        cmp     word [rsi + ARP_OPER], ARP_OP_REQUEST
+        jne     .drop
+        cmp     dword [rsi + ARP_TPA], OUR_IP
+        jne     .drop
+
+        ; A request for us: the reply, built from the request.
+        lea     rdi, [nic_tx_buf + TX_BASE]
+        push    rsi
+        lea     rsi, [rsi + ETH_SRC]            ; to the asker
+        movsd
+        movsw
+        pop     rsi
+        push    rsi
+        lea     rsi, [nic_mac]                  ; from us
+        movsd
+        movsw
+        pop     rsi
+        mov     word [rdi], ETHTYPE_ARP
+        mov     word [rdi + 2], 0x0100
+        mov     word [rdi + 4], ETHTYPE_IP
+        mov     byte [rdi + 6], 6
+        mov     byte [rdi + 7], 4
+        mov     word [rdi + 8], ARP_OP_REPLY
+        add     rdi, 10                         ; sender: our MAC, our IP
+        push    rsi
+        lea     rsi, [nic_mac]
+        movsd
+        movsw
+        pop     rsi
+        mov     dword [rdi], OUR_IP
+        add     rdi, 4
+        push    rsi
+        lea     rsi, [rsi + ARP_SHA]            ; target: the asker's MAC and IP
+        movsd
+        movsw
+        movsd
+        pop     rsi
+        mov     ecx, ARP_LEN
+        call    net_send
+        ret
+.reply:
+        cmp     dword [rsi + ARP_SPA], BROKER_IP
+        jne     .drop
+        lea     rdi, [broker_mac]
+        add     rsi, ARP_SHA
+        movsd
+        movsw
+        mov     dword [broker_mac_ok], 1
+.drop:
+        ret
+
+; arp_resolve - the broker's MAC into broker_mac, from the cache or by
+; asking: a broadcast request, then up to a second of polling, three tries.
+; Returns EAX = 1 with the MAC known, or 0. Nothing here halts.
+arp_resolve:
+        cmp     dword [broker_mac_ok], 0
+        jne     .known
+        mov     r15d, ARP_TRIES
+.try:
+        lea     rdi, [nic_tx_buf + TX_BASE]
+        mov     eax, -1
+        stosd                                   ; broadcast
+        stosw
+        lea     rsi, [nic_mac]
+        movsd
+        movsw
+        mov     word [rdi], ETHTYPE_ARP
+        mov     word [rdi + 2], 0x0100
+        mov     word [rdi + 4], ETHTYPE_IP
+        mov     byte [rdi + 6], 6
+        mov     byte [rdi + 7], 4
+        mov     word [rdi + 8], ARP_OP_REQUEST
+        add     rdi, 10
+        lea     rsi, [nic_mac]                  ; sender: us
+        movsd
+        movsw
+        mov     dword [rdi], OUR_IP
+        xor     eax, eax                        ; target MAC unknown
+        mov     [rdi + 4], eax
+        mov     [rdi + 8], ax
+        mov     dword [rdi + 10], BROKER_IP
+        mov     ecx, ARP_LEN
+        call    net_send
+
+        mov     r14d, ARP_WAIT_TICKS
+.wait:
+        call    net_poll
+        cmp     dword [broker_mac_ok], 0
+        jne     .known
+        mov     ax, PIT_200US
+        call    pit_wait
+        dec     r14d
+        jnz     .wait
+        dec     r15d
+        jnz     .try
+        xor     eax, eax
+        ret
+.known:
+        mov     eax, 1
+        ret
+
+; ip_input - RSI = an Ethernet frame carrying IPv4, ECX = its length. Plain
+; 20-byte headers only, addressed to us, unfragmented, checksum verified,
+; protocol TCP - anything else is dropped without a word. Hands tcp_input
+; RSI = the frame, ECX = the frame length, EDX = the IPv4 payload length.
+ip_input:
+        cmp     ecx, ETH_HDR + IP_HDR
+        jb      .drop
+        cmp     byte [rsi + IP_VER], 0x45       ; IPv4, no options
+        jne     .drop
+        cmp     dword [rsi + IP_DST], OUR_IP
+        jne     .drop
+        mov     ax, [rsi + IP_FRAG]
+        and     ax, 0xFF3F                      ; MF and the fragment offset (memory order)
+        jnz     .drop
+        cmp     byte [rsi + IP_PROTO], IP_PROTO_TCP
+        jne     .drop
+        movzx   edx, word [rsi + IP_TOTLEN]
+        xchg    dl, dh                          ; total length, host order
+        cmp     edx, IP_HDR
+        jb      .drop
+        lea     eax, [rdx + ETH_HDR]
+        cmp     eax, ecx
+        ja      .drop                           ; claims more than arrived
+        push    rcx
+        push    rdx
+        push    rsi
+        add     rsi, ETH_HDR
+        mov     ecx, IP_HDR
+        xor     eax, eax
+        call    csum_add
+        call    csum_fold
+        pop     rsi
+        pop     rdx
+        pop     rcx
+        test    ax, ax
+        jnz     .drop                           ; a bad header checksum is silence
+        sub     edx, IP_HDR                     ; EDX = the payload length
+        call    tcp_input
+.drop:
+        ret
+
+; ip_send - the payload is already at nic_tx_buf + TX_PAYLOAD; ECX = its
+; length, DL = the protocol. Builds the Ethernet and IPv4 headers to the
+; broker (its MAC must be known), computes the header checksum, sends.
+ip_send:
+        push    rcx
+        push    rdx
+        lea     rdi, [nic_tx_buf + TX_BASE]
+        lea     rsi, [broker_mac]
+        movsd
+        movsw
+        lea     rsi, [nic_mac]
+        movsd
+        movsw
+        mov     word [rdi], ETHTYPE_IP
+        pop     rdx
+        pop     rcx
+        lea     rdi, [nic_tx_buf + TX_IP]
+        mov     byte [rdi + 0], 0x45
+        mov     byte [rdi + 1], 0
+        lea     eax, [rcx + IP_HDR]
+        xchg    al, ah
+        mov     [rdi + 2], ax                   ; total length, big endian
+        mov     ax, [ip_ident]
+        inc     word [ip_ident]
+        xchg    al, ah
+        mov     [rdi + 4], ax
+        mov     word [rdi + 6], 0x0040          ; DF, offset 0 (40 00 in memory)
+        mov     byte [rdi + 8], 64              ; TTL
+        mov     [rdi + 9], dl
+        mov     word [rdi + 10], 0
+        mov     dword [rdi + 12], OUR_IP
+        mov     dword [rdi + 16], BROKER_IP
+        push    rcx
+        mov     rsi, rdi
+        mov     ecx, IP_HDR
+        xor     eax, eax
+        call    csum_add
+        call    csum_fold
+        mov     [rdi + 10], ax
+        pop     rcx
+        add     ecx, ETH_HDR + IP_HDR
+        call    net_send
+        ret
+
+; tcp_input - RSI = the frame, ECX = its length, EDX = the IPv4 payload
+; length. Item 12 gives this a body; until then a segment is dropped. Must
+; preserve R12-R14 (net_poll's loop state).
+tcp_input:
+        ret
+
+; ---------------------------------------------------------------------------
 ; The notebook - stage3/NOTEBOOK.md in code. Sector 0 is the header; the
 ; journal is one note per sector from sector 1; the journal ends at the first
 ; sector that is not a valid record. The reader here and the checker on the
@@ -3057,6 +3491,7 @@ err_vio_v1:     db      'virtio device does not offer VIRTIO_F_VERSION_1 - legac
 err_vio_feat:   db      'virtio device refused our features - FEATURES_OK not set', 0
 err_vio_missing: db     'virtio device does not offer a feature this driver needs', 0
 err_no_vnet:    db      'no virtio-net device on PCI bus 0', 0
+err_nic_tx:     db      'nic transmit timed out', 0
 err_disk_big:   db      'disk has 2^32 sectors or more - beyond this stage', 0
 err_vq_size:    db      'virtqueue size is 0, above VQ_MAX, or not a power of two', 0
 err_disk_beyond: db     'disk request beyond the capacity', 0
@@ -3283,6 +3718,14 @@ nic_tx_used:    resb    6 + VQ_MAX * 8
         alignb  4096
 nic_rx_bufs:    resb    NIC_RX_BUFS * NIC_RX_BUF
 nic_tx_buf:     resb    NIC_RX_BUF
+
+; The wire's state: the broker's MAC once ARP has answered, and the IPv4
+; identification counter.
+        alignb  16
+broker_mac:     resb    6
+        alignb  4
+broker_mac_ok:  resd    1
+ip_ident:       resw    1
 
 ; Page tables. 4 KB alignment is architectural, not a preference.
         alignb  4096
