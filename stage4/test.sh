@@ -358,6 +358,61 @@ else
 fi
 echo
 
+# --------------------------------------------------------- test 4: the cage --
+# Two halves. First this harness inspects its OWN cage string - the one every
+# QEMU line above was given - and the checker inspects its own QEMU argv:
+# slirp user mode, restrict=on, exactly one guestfwd, to tcp:10.0.2.4:9999,
+# delivered by "nc -N 127.0.0.1 9999", no hostfwd. Then the mock-down run:
+# with nothing listening on the broker's port, the guest's question must end
+# in "no answer from the broker" on the console - not a hang, not a crash -
+# and the machine must be taking notes again 6 s later. The work is in
+# stage4/checkumbilical.py --cage.
+
+echo "Test 4 - The cage: restrict=on with the single guestfwd, asserted; and a mock-down run ends in a message, not a hang"
+cage_probs=()
+case "$CAGE_NETDEV" in
+  user,*) : ;;
+  *) cage_probs+=("the netdev is not slirp user mode: $CAGE_NETDEV") ;;
+esac
+case ",$CAGE_NETDEV," in
+  *,restrict=on,*) : ;;
+  *) cage_probs+=("the netdev lacks restrict=on: $CAGE_NETDEV") ;;
+esac
+n_fwd=$(printf '%s' "$CAGE_NETDEV" | grep -o 'guestfwd=' | wc -l)
+[ "$n_fwd" -eq 1 ] || cage_probs+=("expected exactly one guestfwd, found $n_fwd: $CAGE_NETDEV")
+printf '%s' "$CAGE_NETDEV" | grep -qE 'guestfwd=tcp:10\.0\.2\.4:9999-cmd:nc -N 127\.0\.0\.1 9999(,|$)' || \
+  cage_probs+=("the guestfwd is not tcp:10.0.2.4:9999 via 'nc -N 127.0.0.1 9999': $CAGE_NETDEV")
+case "$CAGE_NETDEV" in
+  *hostfwd*) cage_probs+=("the netdev opens a hostfwd: $CAGE_NETDEV") ;;
+esac
+IFS=',' read -ra dev_fields <<<"$CAGE_DEVICE"
+dev_ok=0
+if [ "${dev_fields[0]:-}" = "virtio-net-pci" ]; then
+  has_nd=0; has_mac=0
+  for f in "${dev_fields[@]:1}"; do
+    [ "$f" = "netdev=n0" ] && has_nd=1
+    [ "$f" = "mac=$MAC" ] && has_mac=1
+  done
+  [ "$has_nd" -eq 1 ] && [ "$has_mac" -eq 1 ] && dev_ok=1
+fi
+[ "$dev_ok" -eq 1 ] || \
+  cage_probs+=("the device is not a virtio-net-pci on netdev n0 with the harness's MAC: $CAGE_DEVICE")
+
+if [ "${#cage_probs[@]}" -ne 0 ]; then
+  fail "test 4: this harness's own cage string is not the cage"
+  for p in "${cage_probs[@]}"; do echo "    - $p"; done
+else
+  echo "    the harness's own -netdev carries restrict=on and the single guestfwd to 10.0.2.4:9999 via nc to 127.0.0.1:9999"
+  if [ ! -f "$ESP" ]; then
+    fail "test 4: no image was built"
+  elif python3 "$REPO/stage4/checkumbilical.py" --cage; then
+    pass "test 4: the cage is asserted in both harnesses, and with the broker down the machine says so and carries on"
+  else
+    fail "test 4: the cage is not proven (see above)"
+  fi
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then
