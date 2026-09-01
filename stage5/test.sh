@@ -179,6 +179,190 @@ else
 fi
 echo
 
+# ------------------------------------------------- the serial check ----------
+# Used by test 2 at -smp 8, on a FRESH disk, inside the cage. Boots the image
+# headless and requires the thirteen S5: lines from the spec, in order: Stage
+# 4's twelve - found = woken = the -smp value, the console geometry agreeing
+# with the GOP mode from the same log, the disk's sector count agreeing with
+# the image the harness made, the notebook formatted (the disk was blank),
+# "S5: nic <mac>" carrying the MAC the harness gave the device - plus
+# "S5: component region 0x<16 hex> 1048576 bytes" as line twelve
+# (GERMLINE.md, "The component region, and line twelve"): the address where
+# a component's first instruction will live, non-zero, below 4 GB, and 64
+# mod 4096 because the region is page-aligned and the blob sits at +64; the
+# number is the cap - and "S5: keyboard ready" still last, so the serial
+# contract after it stays exactly Stage 2's.
+#
+# Nothing is listening on either port during this run (the gate checked
+# that first), and nothing should need to be: the guest sends nothing on
+# the network at boot.
+#
+# OVMF chatters heavily on COM1, so every "S5: ..." run is pulled out of the
+# capture in order - a scan, not a line-start match. Requiring EXACTLY
+# thirteen catches a triple-fault reboot loop. The guest waits for
+# keystrokes forever by design, so timeout killing QEMU (exit 124) is the
+# expected outcome.
+
+serial_check() {
+  local smp="$1"
+  local disk="$OUT/serial.$smp.img"
+  local cap="$OUT/serial.$smp.txt"
+  local qerr="$OUT/qemu.$smp.err"
+  local lines_file="$OUT/s5.$smp.txt"
+  local rc
+
+  rm -f "$cap" "$qerr" "$lines_file"
+  fresh_disk "$disk"
+
+  timeout -k 5 60 qemu-system-x86_64 \
+    -machine q35 -m 256M -smp "$smp" \
+    -bios "$OVMF" \
+    -drive format=raw,file="$ESP" \
+    -drive format=raw,file="$disk",if=virtio \
+    -netdev "$CAGE_NETDEV" \
+    -device "$CAGE_DEVICE" \
+    -display none -serial stdio \
+    </dev/null >"$cap" 2>"$qerr"
+  rc=$?
+
+  if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
+    echo "    -smp $smp: qemu exited $rc, expected 124 (killed by the 60s timeout)"
+    sed 's/^/      /' "$qerr"
+    return 1
+  fi
+
+  tr -d '\r' <"$cap" 2>/dev/null | grep -ao 'S5: .*' >"$lines_file" 2>/dev/null
+
+  local -a got=()
+  mapfile -t got <"$lines_file"
+
+  local bad=()
+
+  if [ "${#got[@]}" -ne 13 ]; then
+    bad+=("expected exactly 13 S5: lines, found ${#got[@]}")
+    if [ "${#got[@]}" -gt 13 ]; then
+      bad+=("more than thirteen usually means a reboot loop - and with the IDT up it should have been an ERR: exception line instead")
+    fi
+  fi
+
+  local l w="" h=""
+  l="${got[0]:-}"; [ "$l" = "S5: alive" ] || bad+=("line 1: got '$l', want 'S5: alive'")
+
+  l="${got[1]:-}"
+  if [[ "$l" =~ ^S5:\ gop\ ([0-9]+)x([0-9]+)\ fb\ 0x([0-9a-f]{16})$ ]]; then
+    w="${BASH_REMATCH[1]}"; h="${BASH_REMATCH[2]}"
+    local fb="${BASH_REMATCH[3]}"
+    [ "$w" -gt 0 ] || bad+=("line 2: width is $w")
+    [ "$h" -gt 0 ] || bad+=("line 2: height is $h")
+    [ "$fb" != "0000000000000000" ] || bad+=("line 2: framebuffer address is zero")
+  else
+    bad+=("line 2: got '$l', want 'S5: gop <W>x<H> fb 0x<16 hex digits>'")
+  fi
+
+  l="${got[2]:-}"; [ "$l" = "S5: boot services exited" ] || \
+    bad+=("line 3: got '$l', want 'S5: boot services exited'")
+  l="${got[3]:-}"; [ "$l" = "S5: gdt and paging ours" ] || \
+    bad+=("line 4: got '$l', want 'S5: gdt and paging ours'")
+  l="${got[4]:-}"; [ "$l" = "S5: idt ready" ] || \
+    bad+=("line 5: got '$l', want 'S5: idt ready'")
+
+  local found="" woken=""
+  l="${got[5]:-}"
+  if [[ "$l" =~ ^S5:\ cores\ found\ ([0-9]+)$ ]]; then
+    found="${BASH_REMATCH[1]}"
+  else
+    bad+=("line 6: got '$l', want 'S5: cores found <N>'")
+  fi
+
+  l="${got[6]:-}"
+  if [[ "$l" =~ ^S5:\ cores\ woken\ ([0-9]+)$ ]]; then
+    woken="${BASH_REMATCH[1]}"
+  else
+    bad+=("line 7: got '$l', want 'S5: cores woken <N>'")
+  fi
+
+  l="${got[7]:-}"
+  if [[ "$l" =~ ^S5:\ console\ ([0-9]+)x([0-9]+)$ ]]; then
+    local cols="${BASH_REMATCH[1]}" rows="${BASH_REMATCH[2]}"
+    if [ -n "$w" ] && [ -n "$h" ]; then
+      [ "$cols" -eq $((w / 16)) ] || \
+        bad+=("line 8: $cols columns, but $w pixels / 16 = $((w / 16))")
+      [ "$rows" -eq $((h / 16)) ] || \
+        bad+=("line 8: $rows rows, but $h pixels / 16 = $((h / 16))")
+    fi
+    [ "$cols" -ge 40 ] || bad+=("line 8: only $cols columns - too narrow for the boot log")
+    [ "$rows" -ge 24 ] || bad+=("line 8: only $rows rows - too short for the boot log, a conversation and a component")
+  else
+    bad+=("line 8: got '$l', want 'S5: console <COLS>x<ROWS>'")
+  fi
+
+  l="${got[8]:-}"
+  if [[ "$l" =~ ^S5:\ disk\ ([0-9]+)\ sectors$ ]]; then
+    local sectors="${BASH_REMATCH[1]}"
+    [ "$sectors" -eq $((DISK_BYTES / 512)) ] || \
+      bad+=("line 9: the guest counted $sectors sectors, but the image is $DISK_BYTES bytes = $((DISK_BYTES / 512)) sectors")
+  else
+    bad+=("line 9: got '$l', want 'S5: disk <N> sectors'")
+  fi
+
+  l="${got[9]:-}"; [ "$l" = "S5: notebook formatted" ] || \
+    bad+=("line 10: got '$l', want 'S5: notebook formatted' - the disk was blank")
+
+  l="${got[10]:-}"; [ "$l" = "S5: nic $MAC" ] || \
+    bad+=("line 11: got '$l', want 'S5: nic $MAC' - the MAC the harness gave the device")
+
+  # The component region. The address is where a component's first
+  # instruction will live: sixteen hex digits, not zero, below 4 GB (the
+  # identity map), and 64 mod 4096 (a page-aligned region, the blob at +64).
+  # The number is the cap, a constant by design.
+  l="${got[11]:-}"
+  if [[ "$l" =~ ^S5:\ component\ region\ 0x([0-9a-f]{16})\ 1048576\ bytes$ ]]; then
+    local addr="${BASH_REMATCH[1]}"
+    [ "$addr" != "0000000000000000" ] || bad+=("line 12: the component region address is zero")
+    [ "${addr:0:8}" = "00000000" ] || bad+=("line 12: the component region 0x$addr is above 4 GB, beyond the identity map")
+    [ "${addr:13:3}" = "040" ] || bad+=("line 12: the component region 0x$addr is not 64 mod 4096 - a page-aligned region with the blob at +64 ends in 040")
+  else
+    bad+=("line 12: got '$l', want 'S5: component region 0x<16 hex digits> 1048576 bytes'")
+  fi
+
+  l="${got[12]:-}"; [ "$l" = "S5: keyboard ready" ] || \
+    bad+=("line 13: got '$l', want 'S5: keyboard ready'")
+
+  [ -n "$found" ] && [ "$found" != "$smp" ] && \
+    bad+=("cores found is $found, but the machine was given -smp $smp")
+  [ -n "$woken" ] && [ "$woken" != "$smp" ] && \
+    bad+=("cores woken is $woken, but the machine was given -smp $smp")
+  [ -n "$found" ] && [ -n "$woken" ] && [ "$found" != "$woken" ] && \
+    bad+=("cores found ($found) and cores woken ($woken) disagree - a core did not check in")
+
+  if [ "${#bad[@]}" -eq 0 ]; then
+    echo "    -smp $smp: thirteen S5: lines, in order, found = woken = $smp, geometry and sector count agree, notebook formatted, nic $MAC, component region ${got[11]#S5: component region }"
+    return 0
+  fi
+
+  echo "    -smp $smp: the serial log is not what the spec asks for"
+  for b in "${bad[@]}"; do echo "      - $b"; done
+  echo "      whole capture follows (OVMF chatter included):"
+  if [ -s "$cap" ]; then
+    cat -v "$cap" | sed 's/^/        /'
+  else
+    echo "        (nothing was captured at all)"
+  fi
+  return 1
+}
+
+# ------------------------------------------------- test 2: the serial lines --
+
+echo "Test 2 - Serial, first boot: the thirteen S5: lines on a fresh disk inside the cage, at -smp 8"
+if [ ! -f "$ESP" ]; then
+  fail "test 2: no image was built"
+elif serial_check 8; then
+  pass "test 2: serial log matches the spec at -smp 8"
+else
+  fail "test 2: serial log does not match the spec at -smp 8"
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then
