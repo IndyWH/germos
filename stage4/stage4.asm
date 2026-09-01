@@ -873,6 +873,16 @@ main_loop:
         call    serial_putc
         mov     al, 10
         call    serial_putc
+        ; A line whose first two bytes are "? " is a question, not a note
+        ; (UMBILICAL.md, "What is a question"); everything else takes Stage
+        ; 3's path unchanged. Nothing after this reaches the wire.
+        cmp     dword [line_len], 2
+        jb      .note
+        cmp     word [line_buf], 0x203F ; '?' then ' ', in memory order
+        jne     .note
+        call    ask_question            ; console-only, then the prompt
+        jmp     main_loop
+.note:
         call    notebook_append         ; ...the line goes to disk, and only
         call    console_prompt          ; then a new prompt, console-only
         jmp     main_loop
@@ -2663,9 +2673,109 @@ umbilical_ask:
         xor     eax, eax
         ret
 
-; spinner_tick - the working indicator's clock; item 14 gives it a body.
-; Preserves everything.
+; ask_question - the line buffer holds "? " and the question. Sends it to the
+; broker, shows the working indicator meanwhile, draws the answer or the
+; no-answer line, discards any keys pressed during the wait, and prompts.
+; Console only: nothing here reaches the wire (plan decisions 4 and 11).
+; Clobbers registers freely.
+ask_question:
+        mov     ecx, [line_len]
+        sub     ecx, 2                  ; drop the "? " marker
+        mov     dword [line_len], 0
+        jz      .prompt                 ; "? " alone: nothing is sent
+        lea     rsi, [line_buf + 2]
+        call    spinner_start
+        call    umbilical_ask
+        push    rax
+        call    spinner_stop
+        pop     rax
+        test    eax, eax
+        jz      .no_answer
+
+        mov     ecx, [rx_stream]        ; the response frame: length, then bytes
+        lea     rsi, [rx_stream + 4]
+.draw:
+        test    ecx, ecx
+        jz      .fresh_line
+        lodsb
+        dec     ecx
+        cmp     al, 10
+        je      .draw_byte              ; LF: a new line
+        cmp     al, 0x20
+        jb      .draw                   ; anything outside the wire's alphabet
+        cmp     al, 0x7E                ; is ignored (the broker never sends it)
+        ja      .draw
+.draw_byte:
+        call    console_putc
+        jmp     .draw
+.no_answer:
+        lea     rsi, [msg_no_answer]
+.na:
+        lodsb
+        test    al, al
+        jz      .fresh_line
+        call    console_putc
+        jmp     .na
+.fresh_line:
+        cmp     dword [cur_col], 0      ; the prompt goes on the next line,
+        je      .discard                ; unless we already start one
+        mov     al, 10
+        call    console_putc
+.discard:
+        cli                             ; keys pressed while the indicator
+        mov     eax, [kbd_head]         ; turned are discarded: the screen
+        mov     [kbd_tail], eax         ; owed the user nothing for them, so
+        mov     dword [kbd_e0], 0       ; they do nothing now
+        sti
+.prompt:
+        call    console_prompt
+        ret
+
+; The working indicator: one cell at column 0 of the fresh line, cycling
+; - \ | / every SPIN_TICKS breaths of 200 us (about four times a second),
+; erased when the wait ends. Console only.
+%define SPIN_TICKS          1250
+
+spinner_start:
+        mov     dword [spin_phase], 0
+        mov     dword [spin_count], 0
+        mov     al, '-'
+        call    console_putc
+        ret
+
+; spinner_tick - called once per breath by net_breathe. Preserves everything.
 spinner_tick:
+        push    rax
+        push    rbx
+        push    rdx
+        inc     dword [spin_count]
+        cmp     dword [spin_count], SPIN_TICKS
+        jb      .done
+        mov     dword [spin_count], 0
+        mov     eax, [spin_phase]
+        inc     eax
+        and     eax, 3
+        mov     [spin_phase], eax
+        lea     rbx, [spin_chars]
+        movzx   edx, byte [rbx + rax]
+        mov     al, 8                   ; back to column 0 (this blanks it)...
+        call    console_putc
+        mov     al, dl                  ; ...and draw the next glyph there,
+        call    console_putc            ; leaving the cursor at column 1
+.done:
+        pop     rdx
+        pop     rbx
+        pop     rax
+        ret
+
+; spinner_stop - erase the indicator cell, leaving column 0 blank and the
+; cursor on it, ready for the answer. The cursor sits at column 1 (just past
+; the glyph), so one backspace blanks column 0 and lands there.
+spinner_stop:
+        push    rax
+        mov     al, 8
+        call    console_putc
+        pop     rax
         ret
 
 ; ---------------------------------------------------------------------------
@@ -3947,6 +4057,8 @@ msg_nb:         db      'S4: notebook ', 0
 msg_notes:      db      ' notes', 13, 10, 0
 msg_nb_fmt:     db      'S4: notebook formatted', 13, 10, 0
 msg_nic:        db      'S4: nic ', 0
+msg_no_answer:  db      'no answer from the broker', 0
+spin_chars:     db      '-', '\', '|', '/'
 msg_kbd:        db      'S4: keyboard ready', 13, 10, 0
 hex_digits:     db      '0123456789abcdef'
 
@@ -4173,6 +4285,8 @@ kbd_head:       resd    1
 kbd_tail:       resd    1
 kbd_e0:         resd    1               ; an 0xE0 prefix swallows its successor
 kbd_shift:      resd    1               ; non-zero while a Shift key is held
+spin_phase:     resd    1               ; which of - \ | / is on screen
+spin_count:     resd    1               ; breaths since the last spin
         alignb  16
 kbd_ring:       resb    KBD_RING_SIZE
 
