@@ -17,12 +17,13 @@ The project went live on 31 August 2026 with an empty folder. Every stage is a g
 | **2 — Senses** | Interrupt-driven PS/2 keyboard and a framebuffer text console. First words typed into the OS: *hello world. yay. thank you claude.* | 1 Sep 2026, midnight | [the first words](history/2026-09-01-stage2-first-words.png) |
 | **3 — Memory of its own** | A virtio-blk driver and an append-only notebook filesystem, grown overnight in one unattended run. Typed lines survive a reboot: *"It remembers!"* | 1 Sep 2026 | [it remembers](history/2026-09-01-stage3-it-remembers.png) |
 | **4 — The umbilical** | virtio-net, a minimal TCP/IP stack, and a caged network with one door to a broker that relays to Claude. The booted OS asked Claude its first question and printed the answer. | 1 Sep 2026 | [the first conversation](history/2026-09-01-first-conversation.png) |
+| **5 — The conversation** | The loop closes. A line typed `! ...` goes to Claude and comes back as machine code, **rehearsed in a twin boot before it may run**, then cached in the germline. *"Make me a clock"* produced a running clock — with the date and an exit line nobody asked for. | 1 Sep 2026 | [the first grown clock](history/2026-09-01-first-grown-clock.png) · [the boot log](history/2026-09-01-stage5-boot-log.png) |
 
-The pictures in `history/` are the machine's own screendumps, taken by each stage's acceptance harness (Stage 4's is a window capture from the oracle run).
+The pictures in `history/` are the machine's own screendumps, taken by each stage's acceptance harness (Stage 4's and Stage 5's are window captures from the oracle runs).
 
-![The first conversation — GermOS asks Claude a question over its own TCP stack](history/2026-09-01-first-conversation.png)
+![The first grown component — asked for a clock at the GermOS prompt, Claude wrote one in machine code; it was rehearsed in the twin, then it ran](history/2026-09-01-first-grown-clock.png)
 
-Next: **Stage 5 — the conversation.** English in, machine code back, verified in the twin, then run. Done when "make me a clock" produces a running clock.
+Next: **Stage 6 — growth.** A simple compositor and GUI shaped by the human-factors constitution rather than by existing desktops, more devices, and the store of plans: install an application from a plan file.
 
 ## Running it
 

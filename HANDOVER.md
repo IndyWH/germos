@@ -3,23 +3,24 @@
 Rolling state of the AI OS project. Read this first, then `ai-os-foundation.md`
 (the single source of truth), then the current stage's `spec.md` and `plan.md`.
 
-**Last updated:** 1 September 2026 — **Stage 5 GREEN, pending the
-oracle.** All four automated tests pass: the machine sends a request typed
-`! ...` to the broker as GERMLINE.md's frame, the broker generates (the
-mock, in the gate), **rehearses the candidate in a headless boot of the
-same image**, caches what passes in the germline, and delivers a binary
-component the machine loads into a fixed region and runs against a
-four-entry service table; Esc brings the conversation back; a repeat
-request is served from the germline with no generation call; a faulting
-blob never reaches the screen; a component at exactly the 1 MB cap streams
-and runs. Built on Fable 5 at high effort (the owner's decision), one
-commit per numbered item, the plan gate holding until he approved; the
-automated gate spoke only to the mock and spent no token. One stop on the
-way, recorded in the Stage 5 section: QEMU's image lock in the frozen
-rehearsal, fixed by the owner's own hand as item 8b. **Test 5 is Wajira's:
-`! make me a clock`.** Earlier in the day: Stage 4 closed at its test 5,
-the project was named **GermOS** and **published** (`github.com/IndyWH/germos`,
-MIT), and the history screenshots and README were put in order.
+**Last updated:** 1 September 2026 — **Stage 5 CLOSED.** Wajira ran test 5
+with the real broker: he typed `! make me a clock` at the GermOS prompt;
+Claude wrote NASM for a flat binary against GERMLINE.md's ABI; the broker
+assembled it, **rehearsed it in a headless boot of the same image**, cached
+it in the germline and delivered it — and a clock ticked on the machine's
+own screen, with the date and a `GermOS clock - Esc to exit` line nobody
+asked for. *"Yay!"* — the done-when, in the owner's word. The loop the
+project exists for is closed: English in, machine code back, verified in
+the twin, then run. Both oracle screenshots are in `history/`. Cowork's
+Stage 5 review preceded the run — the full guest diff, the two frozen
+broker files and the unfrozen backend — and found zero defects. Built on
+Fable 5 at high effort, one commit per numbered item, the plan gate
+holding until the owner approved; the automated gate spoke only to the
+mock and spent no token; the one stop on the way (QEMU's image lock in
+the frozen rehearsal) was fixed by the owner's own hand as item 8b.
+Earlier the same day: Stage 4 closed at its test 5, and the project was
+named **GermOS** and **published** (`github.com/IndyWH/germos`, MIT). Six
+stage closures in two days from an empty folder. Next: the Stage 6 spec.
 
 ---
 
@@ -27,8 +28,8 @@ MIT), and the history screenshots and README were put in order.
 
 | | |
 |---|---|
-| Stage | 5 — The conversation — **tests 1–4 GREEN, test 5 pending Wajira** |
-| Status | Items 0–13 committed (8b the owner's fix to the frozen rehearsal). `./stage5/test.sh` green at `-smp 2` and `-smp 8`, against the mock, no token spent. Next: test 5 with the real broker, then Cowork's review. |
+| Stage | 5 — The conversation **CLOSED** |
+| Status | All five tests **PASS** (test 5 confirmed by Wajira, 1 September 2026: a running clock, grown on request). Next: the Stage 6 spec. |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.252 — Stage 5 needs no new packages |
@@ -609,7 +610,19 @@ not be a prefix of another row (`> ?` matched `> ?x`).
 
 ## Next action
 
-**Test 5 — Wajira, with the real broker.** Two terminals at the repo root.
+**Stage 5 is closed** — test 5 confirmed by Wajira on 1 September 2026:
+the clock ran, right time, date and exit line included; the two oracle
+screenshots are `history/2026-09-01-first-grown-clock.png` and
+`history/2026-09-01-stage5-boot-log.png`. Cowork's review preceded the
+run: zero defects.
+
+Next: **Stage 6 — growth** (foundation §7): a simple compositor and GUI
+shaped by the human-factors constitution, more devices, and the
+store-of-plans prototype. The subscription policy is re-checked at that
+gate, per the foundation. Cowork writes the spec; the model for
+implementation is the owner's call at the gate, as ever.
+
+To grow something again at any time — two terminals at the repo root.
 The broker (it answers questions and requests, rehearses every candidate
 in the twin, and caches what passes in `germline/`):
 
@@ -637,18 +650,7 @@ candidate fails rehearsal twice, the screen says `rehearsal failed:
 printed — the brief in `broker/claude_backend.py` (unfrozen) is the thing
 to adjust. `stage5/out/` is gitignored: `./stage5/mkimage.sh` rebuilds
 the boot image and `truncate -s 16M stage5/out/notes.img` makes a blank
-notebook. **His word closes the stage.**
-
-Then **Cowork's review** per `REVIEW.md`: the places to look hardest are
-`run_component` and the four services (a component's view of the
-machine), `tcp_input`'s generalised copy into the region, `parse_marker`,
-the rehearsal's criteria and the germline's provenance in the two frozen
-broker files, and the frozen test component. Stage 4's review items still
-stand.
-
-Then **Stage 6 — growth** (foundation §7): a compositor, more devices,
-the store-of-plans prototype. The subscription policy is re-checked at
-that gate, per the foundation.
+notebook.
 
 To ask GermOS a question again at any time, in two terminals at the repo
 root — the real broker, then the machine windowed:
