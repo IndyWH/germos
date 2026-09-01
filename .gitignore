@@ -24,3 +24,6 @@ __pycache__/
 
 # The history screenshots are content, not build output
 !history/*.png
+
+# The germline - the machine's own cache of proven components, never repo content
+germline/
