@@ -75,6 +75,18 @@ org 0                           ; file offsets == RVAs
 ; regions, and exhaustion is a reported error, not an overrun.
 %define SPARE_PAGES     8
 
+; The virtqueue (see "The disk" below): our static ring capacity, the
+; descriptor and ring flags, the virtio-blk request types, and the bound on
+; the completion poll.
+%define VQ_MAX              256
+%define VQ_DESC_NEXT        1
+%define VQ_DESC_WRITE       2
+%define VQ_AVAIL_NO_INT     1
+%define VBLK_T_IN           0           ; a read
+%define VBLK_T_OUT          1           ; a write
+%define VBLK_S_OK           0
+%define VQ_POLL_TRIES       25000       ; x 200 us = about five seconds
+
 ; More enabled processors than this in the MADT is an error we report, not a
 ; buffer we overrun. mlrig has 32 logical CPUs; the mirror run uses all of them.
 %define MAX_CORES       64
@@ -679,6 +691,8 @@ efi_main:
         lea     rsi, [msg_sectors]
         call    serial_puts
 
+        call    vq_init
+
         ; -------------------------------------------------------------------
         ; The keyboard - the third organ, and the machine's first sense.
         ; PIC remapped with only IRQ1 unmasked, the two gates installed, the
@@ -1270,6 +1284,163 @@ disk_negotiate:
         call    serial_err
 .too_big:
         lea     rsi, [err_disk_big]
+        call    serial_err
+
+; The virtqueue: one queue, one request at a time, polled (plan decision
+; 13). Descriptor table, available ring and used ring live in BSS, 4 KB
+; aligned; the identity map makes their linear addresses the physical ones
+; the device is given. A request is a three-descriptor chain: the 16-byte
+; header, the 512-byte data buffer (device-writable on a read), and a
+; one-byte status the device writes last. The constants live at the top of
+; the file with the other %defines, because efi_main uses them first.
+
+; vq_init - select queue 0, take its size, hand over the three rings as
+; 32-bit halves, enable it, find the doorbell, and set DRIVER_OK. Called
+; once from efi_main after disk_negotiate; clobbers registers freely.
+vq_init:
+        mov     rdi, [vio_common]
+        mov     word [rdi + VC_Q_SELECT], 0
+        movzx   eax, word [rdi + VC_Q_SIZE]
+        test    eax, eax
+        jz      .bad_size
+        cmp     eax, VQ_MAX
+        ja      .bad_size
+        lea     ecx, [rax - 1]
+        test    eax, ecx                ; a power of two shares no bit with itself minus one
+        jnz     .bad_size
+        mov     [vq_size], eax
+        mov     [vq_mask], ecx
+
+        lea     rax, [vq_desc]
+        mov     [rdi + VC_Q_DESC], eax
+        mov     rdx, rax
+        shr     rdx, 32
+        mov     [rdi + VC_Q_DESC + 4], edx
+        lea     rax, [vq_avail]
+        mov     [rdi + VC_Q_DRIVER], eax
+        mov     rdx, rax
+        shr     rdx, 32
+        mov     [rdi + VC_Q_DRIVER + 4], edx
+        lea     rax, [vq_used]
+        mov     [rdi + VC_Q_DEVICE], eax
+        mov     rdx, rax
+        shr     rdx, 32
+        mov     [rdi + VC_Q_DEVICE + 4], edx
+
+        mov     word [rdi + VC_Q_ENABLE], 1
+
+        movzx   eax, word [rdi + VC_Q_NOTIFY_OFF]
+        imul    eax, dword [vio_notify_mult]
+        add     rax, [vio_notify]
+        mov     [vq_doorbell], rax
+
+        mov     word [vq_avail], VQ_AVAIL_NO_INT        ; we poll; never interrupt
+        mov     dword [vq_last_used], 0
+
+        mov     byte [rdi + VC_STATUS], VS_ACKNOWLEDGE | VS_DRIVER | VS_FEATURES_OK | VS_DRIVER_OK
+        ret
+.bad_size:
+        lea     rsi, [err_vq_size]
+        call    serial_err
+
+; disk_rw - EAX = VBLK_T_IN (read) or VBLK_T_OUT (write), EBX = sector,
+; RDI = a 512-byte buffer. Returns only on success; every failure is a
+; named ERR: line and a halt. Preserves everything.
+disk_rw:
+        push    rax
+        push    rbx
+        push    rcx
+        push    rdx
+        push    rsi
+        push    rdi
+        push    r8
+        cmp     ebx, [disk_sectors]
+        jae     .beyond
+
+        mov     [req_hdr], eax          ; type
+        mov     dword [req_hdr + 4], 0  ; reserved
+        mov     [req_hdr + 8], ebx      ; sector, low half
+        mov     dword [req_hdr + 12], 0 ; sector, high half
+        mov     byte [req_status], 0xFF ; a sentinel the device must overwrite
+
+        lea     rsi, [vq_desc]
+        lea     rdx, [req_hdr]          ; descriptor 0: the header, chained on
+        mov     [rsi], rdx
+        mov     dword [rsi + 8], 16
+        mov     word [rsi + 12], VQ_DESC_NEXT
+        mov     word [rsi + 14], 1
+        mov     [rsi + 16], rdi         ; descriptor 1: the data, chained on
+        mov     dword [rsi + 24], 512
+        mov     cx, VQ_DESC_NEXT
+        test    eax, eax
+        jnz     .not_a_read
+        or      cx, VQ_DESC_WRITE       ; a read: the device writes the buffer
+.not_a_read:
+        mov     [rsi + 28], cx
+        mov     word [rsi + 30], 2
+        lea     rdx, [req_status]       ; descriptor 2: the status, end of chain
+        mov     [rsi + 32], rdx
+        mov     dword [rsi + 40], 1
+        mov     word [rsi + 44], VQ_DESC_WRITE
+        mov     word [rsi + 46], 0
+
+        ; Publish: ring[idx & mask] = head 0, fence, idx++, fence.
+        lea     rsi, [vq_avail]
+        movzx   ecx, word [rsi + 2]
+        mov     edx, ecx
+        and     edx, [vq_mask]
+        mov     word [rsi + 4 + rdx*2], 0
+        mfence
+        inc     ecx
+        mov     [rsi + 2], cx
+        mfence
+
+        mov     rdx, [vq_doorbell]      ; ring: a 16-bit write of the queue number
+        mov     word [rdx], 0
+
+        ; Completion is the used index moving on. Polled with a PIT breath
+        ; between looks, bounded, so a dead device is a message in five
+        ; seconds rather than a gate that hangs.
+        lea     rsi, [vq_used]
+        mov     r8d, VQ_POLL_TRIES
+.poll:
+        movzx   eax, word [rsi + 2]
+        cmp     eax, [vq_last_used]
+        jne     .completed
+        mov     ax, PIT_200US
+        call    pit_wait
+        dec     r8d
+        jnz     .poll
+        lea     rsi, [err_disk_timeout]
+        call    serial_err
+.completed:
+        lfence
+        mov     edx, [vq_last_used]     ; the used element this completion fills
+        and     edx, [vq_mask]
+        mov     eax, [rsi + 4 + rdx*8]  ; its id must be our chain head, 0
+        test    eax, eax
+        jnz     .bad_id
+        inc     dword [vq_last_used]
+        and     dword [vq_last_used], 0xFFFF
+        cmp     byte [req_status], VBLK_S_OK
+        jne     .failed
+
+        pop     r8
+        pop     rdi
+        pop     rsi
+        pop     rdx
+        pop     rcx
+        pop     rbx
+        pop     rax
+        ret
+.beyond:
+        lea     rsi, [err_disk_beyond]
+        call    serial_err
+.bad_id:
+        lea     rsi, [err_disk_id]
+        call    serial_err
+.failed:
+        lea     rsi, [err_disk_failed]
         call    serial_err
 
 ; cpu_phys_bits - phys_limit = 1 << (the physical address width from CPUID
@@ -2379,6 +2550,11 @@ err_vio_reset:  db      'virtio device did not complete its reset', 0
 err_vio_v1:     db      'virtio device does not offer VIRTIO_F_VERSION_1 - legacy only', 0
 err_vio_feat:   db      'virtio device refused our features - FEATURES_OK not set', 0
 err_disk_big:   db      'disk has 2^32 sectors or more - beyond this stage', 0
+err_vq_size:    db      'virtqueue size is 0, above VQ_MAX, or not a power of two', 0
+err_disk_beyond: db     'disk request beyond the capacity', 0
+err_disk_timeout: db    'disk request timed out', 0
+err_disk_id:    db      'disk completed a descriptor we did not submit', 0
+err_disk_failed: db     'disk request failed - status not OK', 0
 
 ; The shared font, byte for byte the file the pixel checker renders from.
 ; 128 glyphs, 8 bytes each, row per byte, bit 0 leftmost - stage2/FONT.md.
@@ -2556,6 +2732,25 @@ vio_isr:        resq    1               ; ISR status
 vio_device:     resq    1               ; device-specific configuration (capacity)
 vio_notify_mult: resd   1               ; notify_off_multiplier
 disk_sectors:   resd    1               ; the capacity, in 512-byte sectors
+vq_size:        resd    1               ; queue 0's size, from the device
+vq_mask:        resd    1               ; size - 1
+vq_last_used:   resd    1               ; the next used index we expect
+vq_doorbell:    resq    1               ; where a 16-bit 0 notifies queue 0
+
+        alignb  16
+req_hdr:        resb    16              ; type, reserved, sector
+req_status:     resb    1               ; the device's verdict, written last
+        alignb  512
+sector_buf:     resb    512             ; one sector, for the notebook's reads
+
+; The rings. 4 KB aligned - more than the spec's 16/2/4 - so each sits in
+; its own page and none straddles anything.
+        alignb  4096
+vq_desc:        resb    VQ_MAX * 16
+        alignb  4096
+vq_avail:       resb    6 + VQ_MAX * 2
+        alignb  4096
+vq_used:        resb    6 + VQ_MAX * 8
 
 ; Page tables. 4 KB alignment is architectural, not a preference.
         alignb  4096
