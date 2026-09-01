@@ -19,3 +19,6 @@ serial.txt
 # Python bytecode from importing the checkers
 __pycache__/
 *.pyc
+
+# The history screenshots are content, not build output
+!history/*.png
