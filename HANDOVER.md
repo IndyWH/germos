@@ -3,14 +3,15 @@
 Rolling state of the AI OS project. Read this first, then `ai-os-foundation.md`
 (the single source of truth), then the current stage's `spec.md` and `plan.md`.
 
-**Last updated:** 1 September 2026, early morning — **Stage 3 built overnight;
-tests 1–4 green; test 5 pending Wajira.** The machine has memory of its own: a
-virtio-blk driver on the modern interface and the notebook, an append-only
-journal of notes on the disk. Type a note, reboot, and it greets you with it.
-The overnight scope guard was never invoked: no item needed a second attempt.
-The storage bodyguard went into the hook before any storage code existed and
-denied its first real command within the minute. Everything ran inside QEMU;
-the only disks in existence are raw files under `stage3/out/`.
+**Last updated:** 1 September 2026 — **Stage 3 closed.** Built overnight,
+confirmed by Wajira on the morning of 1 September: *"It remembers!"* The
+machine has memory of its own — a virtio-blk driver on the modern interface
+and the notebook, an append-only journal of notes on the disk. The overnight
+scope guard was never invoked: no item needed a second attempt. The storage
+bodyguard went into the hook before any storage code existed and denied its
+first real command within the minute. Everything ran inside QEMU; the only
+disks in existence are raw files under `stage3/out/`. Next: Cowork's review,
+then Stage 4 — the umbilical.
 
 ---
 
@@ -18,8 +19,8 @@ the only disks in existence are raw files under `stage3/out/`.
 
 | | |
 |---|---|
-| Stage | 3 — Memory of its own |
-| Status | Items 1–13 done. Tests 1–4 **GREEN**. Test 5 (oracle) **pending Wajira**. |
+| Stage | 4 — The umbilical (not yet opened) |
+| Status | Stage 3 **CLOSED**. No Stage 4 spec yet. |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3, OVMF, mtools — Stage 3 needs no new packages |
@@ -130,7 +131,7 @@ by the owner's choice at launch.
 
 ---
 
-## Stage 3 — Memory of its own · built 1 September 2026, pending the oracle
+## Stage 3 — Memory of its own · closed 1 September 2026
 
 **Goal (foundation §7):** block storage (virtio first) and a simple filesystem.
 Proves the OS keeps what it grows. **Hard safety rule:** storage code touches
@@ -180,7 +181,13 @@ contract after it stays exactly Stage 2's.
 | 2 | Serial, first boot — eleven `S3:` lines on a fresh disk, found = woken = 8, sector count = image size / 512, notebook formatted | **PASS** |
 | 3 | Persistence — type `remember me`, quit; image parsed from the host holds exactly that note byte-exact; same image rebooted logs `notebook 1 notes`, nothing on the wire after ready, image unchanged; at `-smp 2` and `-smp 8` | **PASS** |
 | 4 | Pixels — after the second boot, `remember me` pixel-correct from the shared font, `> ` and cursor on the row below, only the two console colours | **PASS** |
-| 5 | **Oracle — Wajira's eyeball** | **PENDING** — see *Next action* |
+| 5 | **Oracle — Wajira's eyeball** | **PASS — confirmed 1 September 2026: "It remembers!"** |
+
+The oracle's own evidence is still on the disk. `stage3/out/notes.img` now
+parses as two notes — `remember me`, typed by the harness overnight, and
+`i am an ai-os.`, typed by Wajira at the prompt on the morning of the 1st.
+The machine wrote a human's sentence to a disk it formatted itself, and gave
+it back after a reboot. That is the stage's done-when, in his own words.
 
 Tests 1–4 were committed **red** before any of `stage3.asm` existed and went
 green exactly where the plan predicted: test 1 at item 8, tests 2–4 at item 12
@@ -269,7 +276,26 @@ the network not at all.
 
 ## Next action
 
-**Test 5 — the oracle.** Wajira runs, from the repo root:
+Stage 3 is closed. **Cowork reviews CC's Stage 3 diffs** per `REVIEW.md`:
+bugs first — and the foundation asks for a disassembly-level read on anything
+touching storage or memory maps, which this stage is almost entirely made of.
+The places to look hardest: `disk_rw`'s descriptor chain and its fences,
+`map_mmio_2m`'s table walk, `record_valid` against `stage3/NOTEBOOK.md`, and
+the storage arm of `.claude/hooks/protect-tests.py` — `python3
+.claude/hooks/payloads.py` re-runs all 300 cases in a second and is meant to
+be re-run by the reviewer, not taken on trust.
+
+Then **Stage 4 — the umbilical** (foundation §7): network driver, minimal
+TCP/IP, the frozen TLS stack, and a broker on mlrig that relays to Claude.
+Done when the booted OS asks Claude a question and prints the answer. Two
+things are explicitly re-checked at this gate and are the owner's to settle:
+the **subscription policy** (the foundation says re-check at Stage 4, not
+before) and the **model question** — the standing rule is Opus at high effort;
+Fable was the experiment for Stages 2 and 3, and Stages 4 and 8 were the ones
+flagged for a decision. At the close of the Stage 3 session Wajira set his
+Claude Code default back to **Opus 5 (1M context)**.
+
+To boot Stage 3 again at any time, from the repo root:
 
 ```
 qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
@@ -277,16 +303,10 @@ qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
   -drive format=raw,file=stage3/out/notes.img,if=virtio -serial stdio
 ```
 
-`stage3/out/notes.img` is the image the pixel test left behind: it holds one
-note, `remember me`, typed by the harness the night before. The boot should
-show it above the prompt with `S3: notebook 1 notes` in the log. He types a
-note of his own and Enter, closes QEMU, runs the same command again, and sees
-both notes above the prompt with `S3: notebook 2 notes`. His word closes the
-stage. (For a completely blank start: `rm stage3/out/notes.img && truncate -s
-16M stage3/out/notes.img`, and the first boot will say `notebook formatted`.)
-
-After closure: Cowork's review per `REVIEW.md` (the storage code is the part
-that gets a disassembly-level read), then Stage 4 — the umbilical — opens with
-a Cowork spec. The foundation says the subscription policy is re-checked
-there, and the model question (Opus by rule; Fable considered for Stages 4 and
-8) is the owner's to decide at that gate.
+`stage3/out/` is gitignored, so the notebook is not in the repository: if the
+image is gone, `./stage3/mkimage.sh` rebuilds the boot image and
+`truncate -s 16M stage3/out/notes.img` makes a blank disk, which the next boot
+formats. Note that `./stage3/test.sh` overwrites `notes.img` — the two notes
+from the oracle run are a keepsake, not a fixture, so a copy of that exact
+image was set aside as `stage3/out/notes.oracle.img` (also gitignored; the
+harness never touches that name).
