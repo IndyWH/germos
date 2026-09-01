@@ -54,7 +54,6 @@ def ask(question, timeout=120.0):
         "--output-format", "text",
         "--tools", "",
         "--no-session-persistence",
-        "--bare",
         "--system-prompt", BRIEF,
         "--", question,
     ]
