@@ -92,6 +92,29 @@ org 0                           ; file offsets == RVAs
 %define VBLK_S_OK           0
 %define VQ_POLL_TRIES       25000       ; x 200 us = about five seconds
 
+; The virtio DEVICE BLOCK (plan decision 9): one per device in BSS, addressed
+; through RBP by every virtio routine. The four capability addresses are
+; consecutive and indexed by cfg_type (1-4) in vio_attach, so their order is
+; load-bearing. Queue blocks follow, one per virtqueue.
+%define VIO_BDF             0           ; u32  bus<<16 | device<<11 | function<<8
+%define VIO_FOUND           4           ; u32  non-zero once the scan placed a BDF here
+%define VIO_COMMON          8           ; u64  common configuration, linear address
+%define VIO_NOTIFY          16          ; u64  notification region base
+%define VIO_ISR             24          ; u64  ISR status (never read - we poll)
+%define VIO_DEVICE          32          ; u64  device-specific configuration
+%define VIO_NMULT           40          ; u32  notify_off_multiplier
+%define VIO_Q               48          ; the queue blocks start here
+%define VQ_BLK              48          ; bytes per queue block
+%define Q_SIZE              0           ; u32  the queue's size, from the device
+%define Q_MASK              4           ; u32  size - 1
+%define Q_LAST_USED         8           ; u32  the next used index we expect
+%define Q_DOORBELL          16          ; u64  where a 16-bit write of the queue number notifies
+%define Q_DESC              24          ; u64  descriptor table
+%define Q_AVAIL             32          ; u64  available ring
+%define Q_USED              40          ; u64  used ring
+%define VIO_QUEUES          2           ; queue blocks per device block
+%define VIO_BLOCK_SIZE      (VIO_Q + VIO_QUEUES * VQ_BLK)
+
 ; The notebook (stage3/NOTEBOOK.md): one note per 512-byte sector, the text
 ; from offset 12, so a note is at most 500 bytes. The line buffer is capped
 ; there: what is on screen is exactly what will be on disk.
@@ -702,7 +725,7 @@ efi_main:
         lea     rsi, [msg_sectors]
         call    serial_puts
 
-        call    vq_init
+        call    disk_queue_init
 
         ; -------------------------------------------------------------------
         ; The notebook - the stage's second new organ. A recognised disk is
@@ -1001,22 +1024,28 @@ irq7_spurious:
         iretq
 
 ; ---------------------------------------------------------------------------
-; The disk - a virtio-blk device found on PCI bus 0 and driven through the
-; modern interface (plan decisions 9-13). Only the BSP ever calls any of
-; this: one owner per device.
+; Virtio on PCI - two devices now (plan decision 9): the disk from Stage 3
+; and the NIC that arrives at item 10. Each has a DEVICE BLOCK in BSS (the
+; VIO_* offsets at the top of the file) holding its BDF, its four modern
+; capability regions, the notify multiplier, and one queue block per
+; virtqueue; every routine below takes the block in RBP. Only the BSP ever
+; calls any of this: one owner per device.
 ;
 ; PCI configuration space is read the plain way, mechanism #1 through ports
 ; 0xCF8/0xCFC: OVMF leaves ECAM unprogrammed here, and the legacy ports are
-; always there for bus 0. The modern capability region sits wherever the
-; firmware put the BAR - on this machine at 0xC000000000, above the 4 GB
-; identity map and above the first PML4 entry - so it is mapped at runtime,
-; uncached, by map_mmio_2m. Nothing is assumed about the address: it is read
-; from the BAR the capability names.
+; always there for bus 0. The modern capability regions sit wherever the
+; firmware put the BARs - on this machine both at 768 GB, the NIC's at
+; 0xC000000000 and the disk's at 0xC000004000, above the 4 GB identity map
+; and above the first PML4 entry - so they are mapped at runtime, uncached,
+; by map_mmio_2m. Nothing is assumed about an address: it is read from the
+; BAR the capability names, per device.
 ; ---------------------------------------------------------------------------
 
 %define PCI_VENDOR_VIRTIO   0x1AF4
 %define PCI_DEV_BLK_TRANS   0x1001      ; transitional virtio-blk
 %define PCI_DEV_BLK_MODERN  0x1042      ; modern-only virtio-blk
+%define PCI_DEV_NET_TRANS   0x1000      ; transitional virtio-net
+%define PCI_DEV_NET_MODERN  0x1041      ; modern-only virtio-net
 %define PCI_CMD_MEMORY      (1 << 1)
 %define PCI_CMD_MASTER      (1 << 2)    ; no DMA without it
 %define PCI_CMD_INTX_OFF    (1 << 10)   ; we poll; the PIC has only IRQ1 open
@@ -1059,18 +1088,22 @@ pci_cfg_write32:
         pop     rax
         ret
 
-; pci_find_virtio_blk - scan bus 0, devices 0-31, every function of a
-; multi-function device, for vendor 1AF4 with device 1001 or 1042. Returns
-; EAX = 1 with EBX = the BDF, or EAX = 0. First match wins.
-pci_find_virtio_blk:
+; pci_scan - one pass over bus 0, devices 0-31, every function of a
+; multi-function device, recording the first virtio-blk (1001 or 1042) into
+; disk_dev and the first virtio-net (1000 or 1041) into nic_dev: the BDF and
+; the found flag. Called once. Preserves everything.
+pci_scan:
+        push    rax
+        push    rbx
         push    rcx
         push    rdx
         push    rsi
         push    r8
+        push    rbp
         xor     esi, esi                ; device number
 .dev:
         cmp     esi, 32
-        jae     .none
+        jae     .done
         mov     ebx, esi
         shl     ebx, 11                 ; bus 0, function 0
         xor     ecx, ecx
@@ -1096,10 +1129,21 @@ pci_find_virtio_blk:
         cmp     ax, PCI_VENDOR_VIRTIO
         jne     .next_fn
         shr     eax, 16
+        lea     rbp, [disk_dev]
         cmp     ax, PCI_DEV_BLK_TRANS
-        je      .found
+        je      .match
         cmp     ax, PCI_DEV_BLK_MODERN
-        je      .found
+        je      .match
+        lea     rbp, [nic_dev]
+        cmp     ax, PCI_DEV_NET_TRANS
+        je      .match
+        cmp     ax, PCI_DEV_NET_MODERN
+        jne     .next_fn
+.match:
+        cmp     dword [rbp + VIO_FOUND], 0
+        jne     .next_fn                ; first of each kind wins
+        mov     [rbp + VIO_BDF], ebx
+        mov     dword [rbp + VIO_FOUND], 1
 .next_fn:
         inc     r8d
         cmp     r8d, edx
@@ -1107,31 +1151,23 @@ pci_find_virtio_blk:
 .next_dev:
         inc     esi
         jmp     .dev
-.found:
-        mov     eax, 1
-        jmp     .out
-.none:
-        xor     eax, eax
-.out:
+.done:
+        pop     rbp
         pop     r8
         pop     rsi
         pop     rdx
         pop     rcx
+        pop     rbx
+        pop     rax
         ret
 
-; disk_find - locate the device, own it, map and record its four modern
-; capability regions. Every failure is a named ERR: line. Called once from
-; efi_main with interrupts off; clobbers registers freely. Leaves EBX = BDF.
-disk_find:
-        call    cpu_phys_bits
-
-        call    pci_find_virtio_blk
-        test    eax, eax
-        jnz     .have
-        lea     rsi, [err_no_vblk]
-        call    serial_err
-.have:
-        mov     [pci_bdf], ebx
+; vio_attach - RBP = a device block the scan filled. Owns the device (command
+; register), walks its capabilities, maps each modern region wherever the
+; firmware put it and records the four addresses and the notify multiplier
+; in the block. Every failure is a named ERR: line. Called once per device
+; with interrupts off; clobbers registers freely.
+vio_attach:
+        mov     ebx, [rbp + VIO_BDF]
 
         ; Command register: memory space on, bus mastering on (the device
         ; cannot DMA our rings without it), INTx off (we poll, and the line
@@ -1174,9 +1210,9 @@ disk_find:
         ja      .cap_next               ; type 5 (PCI cfg access) and unknown types
         mov     r8d, eax
 
-        ; First of each type wins: a slot already filled is left alone.
-        lea     rdi, [vio_common]
-        cmp     qword [rdi + r8*8 - 8], 0
+        ; First of each type wins: a slot already filled is left alone. The
+        ; four slots are consecutive in the block, indexed by cfg_type.
+        cmp     qword [rbp + VIO_COMMON - 8 + r8*8], 0
         jne     .cap_next
 
         lea     ecx, [r12 + 4]
@@ -1216,22 +1252,21 @@ disk_find:
         lea     rax, [rdi + r11 - 1]
         call    map_mmio_2m
 
-        lea     rax, [vio_common]
-        mov     [rax + r8*8 - 8], rdi   ; vio_common, vio_notify, vio_isr, vio_device
+        mov     [rbp + VIO_COMMON - 8 + r8*8], rdi     ; common, notify, isr, device
         cmp     r8d, VCAP_NOTIFY
         jne     .cap_next
         lea     ecx, [r12 + 16]
         call    pci_cfg_read32
-        mov     [vio_notify_mult], eax
+        mov     [rbp + VIO_NMULT], eax
 .cap_next:
         mov     r12d, r15d
         jmp     .cap
 .caps_done:
-        cmp     qword [vio_common], 0
+        cmp     qword [rbp + VIO_COMMON], 0
         je      .no_caps
-        cmp     qword [vio_notify], 0
+        cmp     qword [rbp + VIO_NOTIFY], 0
         je      .no_caps
-        cmp     qword [vio_device], 0
+        cmp     qword [rbp + VIO_DEVICE], 0
         je      .no_caps
         ret
 .no_caps:
@@ -1244,7 +1279,7 @@ disk_find:
 
 ; The common configuration structure (virtio 1.1, 4.1.4.3). Every field is
 ; accessed at exactly its own width, and the 64-bit ones as two 32-bit
-; halves: the spec says so, and QEMU enforces it (plan decision 12).
+; halves: the spec says so, and QEMU enforces it (Stage 3 plan decision 12).
 %define VC_DEV_FEAT_SEL     0x00        ; u32
 %define VC_DEV_FEAT         0x04        ; u32
 %define VC_DRV_FEAT_SEL     0x08        ; u32
@@ -1265,21 +1300,23 @@ disk_find:
 %define VS_FEATURES_OK      8
 %define VF_VERSION_1_HI     1           ; feature bit 32 = bit 0 of the high word
 
-; disk_negotiate - reset, ACKNOWLEDGE, DRIVER, features (VERSION_1 required
-; and alone accepted), FEATURES_OK confirmed, capacity read. Only the modern
-; interface is spoken: a device without VERSION_1 is a message, not a
-; fallback (plan decision 9). Called once from efi_main after disk_find;
-; clobbers registers freely. DRIVER_OK is set by vq_init once a queue exists.
-disk_negotiate:
-        mov     rdi, [vio_common]
+; vio_negotiate - RBP = block, ECX = the feature bits 0-31 this driver wants,
+; EDX = bits 32-63 (VERSION_1 among them, always). Reset, ACKNOWLEDGE,
+; DRIVER; the device must offer VERSION_1 and every wanted bit, nothing else
+; is accepted; FEATURES_OK written and read back. Only the modern interface
+; is spoken: a device without VERSION_1 is a message, not a fallback.
+; DRIVER_OK is set by vio_driver_ok once the queues exist. Clobbers
+; registers freely.
+vio_negotiate:
+        mov     rdi, [rbp + VIO_COMMON]
 
         mov     byte [rdi + VC_STATUS], 0       ; reset
-        mov     ecx, 100000
+        mov     r8d, 100000
 .reset_wait:
         cmp     byte [rdi + VC_STATUS], 0       ; the device says so by reading 0
         je      .reset_done
         pause
-        dec     ecx
+        dec     r8d
         jnz     .reset_wait
         lea     rsi, [err_vio_reset]
         call    serial_err
@@ -1291,91 +1328,154 @@ disk_negotiate:
         mov     eax, [rdi + VC_DEV_FEAT]        ; feature bits 32-63
         test    eax, VF_VERSION_1_HI
         jz      .no_v1
+        and     eax, edx
+        cmp     eax, edx                ; every wanted high bit offered?
+        jne     .missing
+        mov     dword [rdi + VC_DEV_FEAT_SEL], 0
+        mov     eax, [rdi + VC_DEV_FEAT]        ; feature bits 0-31
+        and     eax, ecx
+        cmp     eax, ecx                ; every wanted low bit offered?
+        jne     .missing
+
         mov     dword [rdi + VC_DRV_FEAT_SEL], 0
-        mov     dword [rdi + VC_DRV_FEAT], 0    ; nothing from the low word
+        mov     [rdi + VC_DRV_FEAT], ecx
         mov     dword [rdi + VC_DRV_FEAT_SEL], 1
-        mov     dword [rdi + VC_DRV_FEAT], VF_VERSION_1_HI
+        mov     [rdi + VC_DRV_FEAT], edx
         mov     byte [rdi + VC_STATUS], VS_ACKNOWLEDGE | VS_DRIVER | VS_FEATURES_OK
         movzx   eax, byte [rdi + VC_STATUS]
         test    eax, VS_FEATURES_OK             ; the device must leave it set
         jz      .not_ok
+        ret
+.no_v1:
+        lea     rsi, [err_vio_v1]
+        call    serial_err
+.missing:
+        lea     rsi, [err_vio_missing]
+        call    serial_err
+.not_ok:
+        lea     rsi, [err_vio_feat]
+        call    serial_err
+
+; vq_init - RBP = block, ECX = the queue number, RSI = its descriptor table,
+; RDI = its available ring, R8 = its used ring (all 4 KB aligned in BSS; the
+; identity map makes their linear addresses the physical ones the device is
+; given). Takes the queue's size from the device, hands the three rings over
+; as 32-bit halves, enables the queue, finds its doorbell, and sets
+; NO_INTERRUPT - we poll, always. The queue block in the device block is
+; filled. Clobbers registers freely.
+vq_init:
+        mov     eax, ecx
+        imul    eax, VQ_BLK
+        lea     r9, [rbp + VIO_Q]
+        add     r9, rax                 ; R9 = this queue's block
+        mov     r10, [rbp + VIO_COMMON]
+
+        mov     [r10 + VC_Q_SELECT], cx
+        movzx   eax, word [r10 + VC_Q_SIZE]
+        test    eax, eax
+        jz      .bad_size
+        cmp     eax, VQ_MAX
+        ja      .bad_size
+        lea     edx, [rax - 1]
+        test    eax, edx                ; a power of two shares no bit with itself minus one
+        jnz     .bad_size
+        mov     [r9 + Q_SIZE], eax
+        mov     [r9 + Q_MASK], edx
+        mov     [r9 + Q_DESC], rsi
+        mov     [r9 + Q_AVAIL], rdi
+        mov     [r9 + Q_USED], r8
+
+        mov     rax, rsi
+        mov     [r10 + VC_Q_DESC], eax
+        shr     rax, 32
+        mov     [r10 + VC_Q_DESC + 4], eax
+        mov     rax, rdi
+        mov     [r10 + VC_Q_DRIVER], eax
+        shr     rax, 32
+        mov     [r10 + VC_Q_DRIVER + 4], eax
+        mov     rax, r8
+        mov     [r10 + VC_Q_DEVICE], eax
+        shr     rax, 32
+        mov     [r10 + VC_Q_DEVICE + 4], eax
+
+        mov     word [r10 + VC_Q_ENABLE], 1
+
+        movzx   eax, word [r10 + VC_Q_NOTIFY_OFF]
+        imul    eax, dword [rbp + VIO_NMULT]
+        add     rax, [rbp + VIO_NOTIFY]
+        mov     [r9 + Q_DOORBELL], rax
+
+        mov     word [rdi], VQ_AVAIL_NO_INT     ; we poll; never interrupt
+        mov     dword [r9 + Q_LAST_USED], 0
+        ret
+.bad_size:
+        lea     rsi, [err_vq_size]
+        call    serial_err
+
+; vio_driver_ok - RBP = block. The queues exist; tell the device so.
+; Preserves everything.
+vio_driver_ok:
+        push    rdi
+        mov     rdi, [rbp + VIO_COMMON]
+        mov     byte [rdi + VC_STATUS], VS_ACKNOWLEDGE | VS_DRIVER | VS_FEATURES_OK | VS_DRIVER_OK
+        pop     rdi
+        ret
+
+; ---------------------------------------------------------------------------
+; The disk - Stage 3's virtio-blk driver on the device block. Behaviour is
+; unchanged byte for byte: one queue, one request at a time, polled, a
+; three-descriptor chain per request.
+; ---------------------------------------------------------------------------
+
+; disk_find - the physical address width, the one-pass PCI scan, then the
+; disk's block attached. Called once from efi_main with interrupts off;
+; clobbers registers freely.
+disk_find:
+        call    cpu_phys_bits
+        call    pci_scan
+        lea     rbp, [disk_dev]
+        cmp     dword [rbp + VIO_FOUND], 0
+        jne     .have
+        lea     rsi, [err_no_vblk]
+        call    serial_err
+.have:
+        call    vio_attach
+        ret
+
+; disk_negotiate - VERSION_1 required and alone accepted; the capacity read
+; as two 32-bit halves from the device configuration. Called once from
+; efi_main after disk_find; clobbers registers freely.
+disk_negotiate:
+        lea     rbp, [disk_dev]
+        xor     ecx, ecx                ; nothing from the low word
+        mov     edx, VF_VERSION_1_HI
+        call    vio_negotiate
 
         ; The capacity, in 512-byte sectors: a u64 at device config offset 0,
         ; read as two halves. The high half must be zero - a disk of 2^32
         ; sectors or more is beyond this stage's 32-bit sector arithmetic.
-        mov     rsi, [vio_device]
+        mov     rsi, [rbp + VIO_DEVICE]
         mov     eax, [rsi + 4]
         test    eax, eax
         jnz     .too_big
         mov     eax, [rsi]
         mov     [disk_sectors], eax
         ret
-.no_v1:
-        lea     rsi, [err_vio_v1]
-        call    serial_err
-.not_ok:
-        lea     rsi, [err_vio_feat]
-        call    serial_err
 .too_big:
         lea     rsi, [err_disk_big]
         call    serial_err
 
-; The virtqueue: one queue, one request at a time, polled (plan decision
-; 13). Descriptor table, available ring and used ring live in BSS, 4 KB
-; aligned; the identity map makes their linear addresses the physical ones
-; the device is given. A request is a three-descriptor chain: the 16-byte
-; header, the 512-byte data buffer (device-writable on a read), and a
-; one-byte status the device writes last. The constants live at the top of
-; the file with the other %defines, because efi_main uses them first.
-
-; vq_init - select queue 0, take its size, hand over the three rings as
-; 32-bit halves, enable it, find the doorbell, and set DRIVER_OK. Called
-; once from efi_main after disk_negotiate; clobbers registers freely.
-vq_init:
-        mov     rdi, [vio_common]
-        mov     word [rdi + VC_Q_SELECT], 0
-        movzx   eax, word [rdi + VC_Q_SIZE]
-        test    eax, eax
-        jz      .bad_size
-        cmp     eax, VQ_MAX
-        ja      .bad_size
-        lea     ecx, [rax - 1]
-        test    eax, ecx                ; a power of two shares no bit with itself minus one
-        jnz     .bad_size
-        mov     [vq_size], eax
-        mov     [vq_mask], ecx
-
-        lea     rax, [vq_desc]
-        mov     [rdi + VC_Q_DESC], eax
-        mov     rdx, rax
-        shr     rdx, 32
-        mov     [rdi + VC_Q_DESC + 4], edx
-        lea     rax, [vq_avail]
-        mov     [rdi + VC_Q_DRIVER], eax
-        mov     rdx, rax
-        shr     rdx, 32
-        mov     [rdi + VC_Q_DRIVER + 4], edx
-        lea     rax, [vq_used]
-        mov     [rdi + VC_Q_DEVICE], eax
-        mov     rdx, rax
-        shr     rdx, 32
-        mov     [rdi + VC_Q_DEVICE + 4], edx
-
-        mov     word [rdi + VC_Q_ENABLE], 1
-
-        movzx   eax, word [rdi + VC_Q_NOTIFY_OFF]
-        imul    eax, dword [vio_notify_mult]
-        add     rax, [vio_notify]
-        mov     [vq_doorbell], rax
-
-        mov     word [vq_avail], VQ_AVAIL_NO_INT        ; we poll; never interrupt
-        mov     dword [vq_last_used], 0
-
-        mov     byte [rdi + VC_STATUS], VS_ACKNOWLEDGE | VS_DRIVER | VS_FEATURES_OK | VS_DRIVER_OK
+; disk_queue_init - queue 0 on the disk's rings, then DRIVER_OK. Called once
+; from efi_main after disk_negotiate; clobbers registers freely.
+disk_queue_init:
+        lea     rbp, [disk_dev]
+        xor     ecx, ecx
+        lea     rsi, [disk_vq_desc]
+        lea     rdi, [disk_vq_avail]
+        lea     r8, [disk_vq_used]
+        call    vq_init
+        call    vio_driver_ok
         ret
-.bad_size:
-        lea     rsi, [err_vq_size]
-        call    serial_err
 
 ; disk_rw - EAX = VBLK_T_IN (read) or VBLK_T_OUT (write), EBX = sector,
 ; RDI = a 512-byte buffer. Returns only on success; every failure is a
@@ -1387,9 +1487,13 @@ disk_rw:
         push    rdx
         push    rsi
         push    rdi
+        push    rbp
         push    r8
+        push    r9
         cmp     ebx, [disk_sectors]
         jae     .beyond
+        lea     rbp, [disk_dev]
+        lea     r9, [rbp + VIO_Q]       ; queue 0's block
 
         mov     [req_hdr], eax          ; type
         mov     dword [req_hdr + 4], 0  ; reserved
@@ -1397,7 +1501,7 @@ disk_rw:
         mov     dword [req_hdr + 12], 0 ; sector, high half
         mov     byte [req_status], 0xFF ; a sentinel the device must overwrite
 
-        lea     rsi, [vq_desc]
+        mov     rsi, [r9 + Q_DESC]
         lea     rdx, [req_hdr]          ; descriptor 0: the header, chained on
         mov     [rsi], rdx
         mov     dword [rsi + 8], 16
@@ -1419,27 +1523,27 @@ disk_rw:
         mov     word [rsi + 46], 0
 
         ; Publish: ring[idx & mask] = head 0, fence, idx++, fence.
-        lea     rsi, [vq_avail]
+        mov     rsi, [r9 + Q_AVAIL]
         movzx   ecx, word [rsi + 2]
         mov     edx, ecx
-        and     edx, [vq_mask]
+        and     edx, [r9 + Q_MASK]
         mov     word [rsi + 4 + rdx*2], 0
         mfence
         inc     ecx
         mov     [rsi + 2], cx
         mfence
 
-        mov     rdx, [vq_doorbell]      ; ring: a 16-bit write of the queue number
+        mov     rdx, [r9 + Q_DOORBELL]  ; ring: a 16-bit write of the queue number
         mov     word [rdx], 0
 
         ; Completion is the used index moving on. Polled with a PIT breath
         ; between looks, bounded, so a dead device is a message in five
         ; seconds rather than a gate that hangs.
-        lea     rsi, [vq_used]
+        mov     rsi, [r9 + Q_USED]
         mov     r8d, VQ_POLL_TRIES
 .poll:
         movzx   eax, word [rsi + 2]
-        cmp     eax, [vq_last_used]
+        cmp     eax, [r9 + Q_LAST_USED]
         jne     .completed
         mov     ax, PIT_200US
         call    pit_wait
@@ -1449,17 +1553,19 @@ disk_rw:
         call    serial_err
 .completed:
         lfence
-        mov     edx, [vq_last_used]     ; the used element this completion fills
-        and     edx, [vq_mask]
+        mov     edx, [r9 + Q_LAST_USED] ; the used element this completion fills
+        and     edx, [r9 + Q_MASK]
         mov     eax, [rsi + 4 + rdx*8]  ; its id must be our chain head, 0
         test    eax, eax
         jnz     .bad_id
-        inc     dword [vq_last_used]
-        and     dword [vq_last_used], 0xFFFF
+        inc     dword [r9 + Q_LAST_USED]
+        and     dword [r9 + Q_LAST_USED], 0xFFFF
         cmp     byte [req_status], VBLK_S_OK
         jne     .failed
 
+        pop     r9
         pop     r8
+        pop     rbp
         pop     rdi
         pop     rsi
         pop     rdx
@@ -2788,6 +2894,7 @@ err_spare:      db      'page-table pool exhausted - raise SPARE_PAGES', 0
 err_vio_reset:  db      'virtio device did not complete its reset', 0
 err_vio_v1:     db      'virtio device does not offer VIRTIO_F_VERSION_1 - legacy only', 0
 err_vio_feat:   db      'virtio device refused our features - FEATURES_OK not set', 0
+err_vio_missing: db     'virtio device does not offer a feature this driver needs', 0
 err_disk_big:   db      'disk has 2^32 sectors or more - beyond this stage', 0
 err_vq_size:    db      'virtqueue size is 0, above VQ_MAX, or not a power of two', 0
 err_disk_beyond: db     'disk request beyond the capacity', 0
@@ -2958,23 +3065,18 @@ kbd_e0:         resd    1               ; an 0xE0 prefix swallows its successor
         alignb  16
 kbd_ring:       resb    KBD_RING_SIZE
 
-; The disk. One owner - the BSP - so none of this needs a lock. The four
-; capability addresses are consecutive and indexed by cfg_type (1-4) in
-; disk_find, so their order here is load-bearing.
+; The virtio devices. One owner - the BSP - so none of this needs a lock. A
+; device block per device (the VIO_* layout at the top of the file): the
+; disk's, with its one queue, and the NIC's, with its receive and transmit
+; queues.
         alignb  16
-pci_bdf:        resd    1               ; bus<<16 | device<<11 | function<<8
 spare_next:     resd    1               ; pages handed out of the spare pool
 phys_limit:     resq    1               ; 1 << physical address width
-vio_common:     resq    1               ; common configuration, linear address
-vio_notify:     resq    1               ; notification region base
-vio_isr:        resq    1               ; ISR status
-vio_device:     resq    1               ; device-specific configuration (capacity)
-vio_notify_mult: resd   1               ; notify_off_multiplier
+        alignb  16
+disk_dev:       resb    VIO_BLOCK_SIZE
+        alignb  16
+nic_dev:        resb    VIO_BLOCK_SIZE
 disk_sectors:   resd    1               ; the capacity, in 512-byte sectors
-vq_size:        resd    1               ; queue 0's size, from the device
-vq_mask:        resd    1               ; size - 1
-vq_last_used:   resd    1               ; the next used index we expect
-vq_doorbell:    resq    1               ; where a 16-bit 0 notifies queue 0
 
         alignb  16
 req_hdr:        resb    16              ; type, reserved, sector
@@ -2991,14 +3093,14 @@ line_len:       resd    1               ; bytes typed since the prompt
         alignb  16
 line_buf:       resb    512             ; NOTE_MAX of them used at most
 
-; The rings. 4 KB aligned - more than the spec's 16/2/4 - so each sits in
-; its own page and none straddles anything.
+; The disk's rings. 4 KB aligned - more than the spec's 16/2/4 - so each
+; sits in its own page and none straddles anything.
         alignb  4096
-vq_desc:        resb    VQ_MAX * 16
+disk_vq_desc:   resb    VQ_MAX * 16
         alignb  4096
-vq_avail:       resb    6 + VQ_MAX * 2
+disk_vq_avail:  resb    6 + VQ_MAX * 2
         alignb  4096
-vq_used:        resb    6 + VQ_MAX * 8
+disk_vq_used:   resb    6 + VQ_MAX * 8
 
 ; Page tables. 4 KB alignment is architectural, not a preference.
         alignb  4096
