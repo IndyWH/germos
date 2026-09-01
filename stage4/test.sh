@@ -332,6 +332,32 @@ else
 fi
 echo
 
+# ------------------------------------------ test 3: the question round trip --
+# The soul of the stage. The checker starts the MOCK broker with a record
+# file, boots inside the cage, types "? ping", a note, and "? hello" via the
+# monitor, and screendumps. It demands the twelve boot lines; the echo exactly
+# the three typed lines; the broker's record holding exactly two connections
+# whose raw bytes ARE the frames for "ping" and "hello" by UMBILICAL.md's own
+# rule; the notebook holding exactly the note and nothing for the questions;
+# and both answers on the screen, pixel-correct from the shared font, with
+# the prompt below. At -smp 2 and -smp 8. The work is in
+# stage4/checkumbilical.py, which prints its own diagnosis.
+
+echo "Test 3 - The question: '? ping' and '? hello' round-trip through the mock broker, a note between them, at -smp 2 and -smp 8"
+if [ ! -f "$ESP" ]; then
+  fail "test 3: no image was built"
+else
+  asked=0
+  python3 "$REPO/stage4/checkumbilical.py" --question 2 || asked=1
+  python3 "$REPO/stage4/checkumbilical.py" --question 8 || asked=1
+  if [ "$asked" -eq 0 ]; then
+    pass "test 3: the machine asked and was answered, on screen and in the broker's record, at both -smp 2 and -smp 8"
+  else
+    fail "test 3: the question did not round-trip (see above)"
+  fi
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then
