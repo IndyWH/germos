@@ -87,6 +87,12 @@ org 0                           ; file offsets == RVAs
 %define VBLK_S_OK           0
 %define VQ_POLL_TRIES       25000       ; x 200 us = about five seconds
 
+; The notebook (stage3/NOTEBOOK.md): one note per 512-byte sector, the text
+; from offset 12, so a note is at most 500 bytes. The line buffer is capped
+; there: what is on screen is exactly what will be on disk.
+%define NOTE_MAX            500
+%define NB_TEXT_OFF         12
+
 ; More enabled processors than this in the MADT is an error we report, not a
 ; buffer we overrun. mlrig has 32 logical CPUs; the mirror run uses all of them.
 %define MAX_CORES       64
@@ -694,6 +700,12 @@ efi_main:
         call    vq_init
 
         ; -------------------------------------------------------------------
+        ; The notebook - the stage's second new organ. A recognised disk is
+        ; scanned and counted; a blank one is formatted. Line ten either way.
+        ; -------------------------------------------------------------------
+        call    notebook_init
+
+        ; -------------------------------------------------------------------
         ; The keyboard - the third organ, and the machine's first sense.
         ; PIC remapped with only IRQ1 unmasked, the two gates installed, the
         ; i8042 drained, and only then the ready line, the prompt, and sti.
@@ -715,8 +727,12 @@ efi_main:
         jmp     .drain
 .drained:
 
-        lea     rsi, [msg_kbd]          ; line nine; after this the channel
+        lea     rsi, [msg_kbd]          ; line eleven; after this the channel
         call    serial_puts             ; carries only the raw echo
+
+        ; The machine's memory, drawn on the console - and only the console -
+        ; immediately above the first prompt (plan decisions 2 and 3).
+        call    notebook_replay
         call    console_prompt
 
         ; -------------------------------------------------------------------
@@ -770,8 +786,16 @@ main_loop:
         cmp     bl, 8
         je      .backspace
 
-        ; A printable: one byte to the wire, and the tee draws the glyph over
-        ; the cursor cell; the cursor moves on behind it.
+        ; A printable: into the line buffer if there is room (a key beyond
+        ; the cap is ignored - not echoed, not drawn - so the screen and the
+        ; disk always agree), one byte to the wire, and the tee draws the
+        ; glyph over the cursor cell; the cursor moves on behind it.
+        mov     eax, [line_len]
+        cmp     eax, NOTE_MAX
+        jae     main_loop
+        lea     rdx, [line_buf]
+        mov     [rdx + rax], bl
+        inc     dword [line_len]
         mov     al, bl
         call    serial_putc
         call    draw_cursor
@@ -782,12 +806,17 @@ main_loop:
         call    serial_putc
         mov     al, 10
         call    serial_putc
-        call    console_prompt          ; ...and a new prompt, console-only
+        call    notebook_append         ; ...the line goes to disk, and only
+        call    console_prompt          ; then a new prompt, console-only
         jmp     main_loop
 .backspace:
         mov     eax, [cur_col]          ; only within this line's typed text -
         cmp     eax, [prompt_min]       ; at the prompt there is nothing to
         jbe     main_loop               ; erase, so the key is not accepted
+        cmp     dword [line_len], 0     ; the buffer follows the screen
+        je      .bs_draw
+        dec     dword [line_len]
+.bs_draw:
         call    erase_cursor
         mov     al, 8
         call    serial_putc             ; the tee steps back and erases
@@ -1442,6 +1471,208 @@ disk_rw:
 .failed:
         lea     rsi, [err_disk_failed]
         call    serial_err
+
+; ---------------------------------------------------------------------------
+; The notebook - stage3/NOTEBOOK.md in code. Sector 0 is the header; the
+; journal is one note per sector from sector 1; the journal ends at the first
+; sector that is not a valid record. The reader here and the checker on the
+; host apply the same rule, byte for byte. Only the BSP calls any of this.
+; ---------------------------------------------------------------------------
+
+; notebook_init - read sector 0; on the magic and version, count the valid
+; records and log "S3: notebook <N> notes"; otherwise write the header and a
+; zeroed sector 1 and log "S3: notebook formatted". Called once from
+; efi_main after vq_init; clobbers registers freely.
+notebook_init:
+        mov     eax, VBLK_T_IN
+        xor     ebx, ebx
+        lea     rdi, [sector_buf]
+        call    disk_rw
+        mov     rax, 'NOTEBOOK'
+        cmp     [sector_buf], rax
+        jne     .format
+        cmp     dword [sector_buf + 8], 1
+        jne     .format
+
+        mov     dword [nb_count], 0
+        mov     ebx, 1
+.scan:
+        cmp     ebx, [disk_sectors]
+        jae     .scanned
+        mov     eax, VBLK_T_IN
+        lea     rdi, [sector_buf]
+        call    disk_rw
+        call    record_valid
+        test    eax, eax
+        jz      .scanned
+        inc     dword [nb_count]
+        inc     ebx
+        jmp     .scan
+.scanned:
+        mov     [nb_next], ebx          ; the first sector that is not a record
+        lea     rsi, [msg_nb]
+        call    serial_puts
+        mov     eax, [nb_count]
+        call    serial_putdec
+        lea     rsi, [msg_notes]
+        call    serial_puts
+        ret
+
+.format:
+        lea     rdi, [sector_buf]       ; the header, from a clean sector
+        mov     ecx, 64
+        xor     eax, eax
+        rep     stosq
+        mov     rax, 'NOTEBOOK'
+        mov     [sector_buf], rax
+        mov     dword [sector_buf + 8], 1       ; version
+        mov     dword [sector_buf + 12], 512    ; sector size
+        mov     qword [sector_buf + 16], 1      ; first journal sector
+        mov     eax, [disk_sectors]
+        dec     eax
+        mov     [sector_buf + 24], rax          ; journal length (RAX high half is zero)
+        mov     eax, VBLK_T_OUT
+        xor     ebx, ebx
+        lea     rdi, [sector_buf]
+        call    disk_rw
+
+        lea     rdi, [sector_buf]       ; sector 1 zeroed: no stale note can
+        mov     ecx, 64                 ; survive the format
+        xor     eax, eax
+        rep     stosq
+        mov     eax, VBLK_T_OUT
+        mov     ebx, 1
+        lea     rdi, [sector_buf]
+        call    disk_rw
+
+        mov     dword [nb_count], 0
+        mov     dword [nb_next], 1
+        lea     rsi, [msg_nb_fmt]
+        call    serial_puts
+        ret
+
+; record_valid - EBX = the sector index; sector_buf holds the sector. EAX = 1
+; if it is a valid record by NOTEBOOK.md's rule - magic, sequence equal to
+; the index, length 1-500, reserved zero, printable text, zero padding - or
+; 0. Preserves everything else.
+record_valid:
+        push    rcx
+        push    rdx
+        push    rsi
+        cmp     dword [sector_buf], 'NOTE'
+        jne     .no
+        cmp     [sector_buf + 4], ebx
+        jne     .no
+        movzx   ecx, word [sector_buf + 8]
+        test    ecx, ecx
+        jz      .no
+        cmp     ecx, NOTE_MAX
+        ja      .no
+        cmp     word [sector_buf + 10], 0
+        jne     .no
+        lea     rsi, [sector_buf + NB_TEXT_OFF]
+        mov     edx, ecx
+.text:
+        lodsb
+        cmp     al, 0x20
+        jb      .no
+        cmp     al, 0x7E
+        ja      .no
+        dec     edx
+        jnz     .text
+        mov     edx, 512 - NB_TEXT_OFF
+        sub     edx, ecx                ; padding bytes after the text
+.pad:
+        test    edx, edx
+        jz      .yes
+        lodsb
+        test    al, al
+        jnz     .no
+        dec     edx
+        jmp     .pad
+.yes:
+        mov     eax, 1
+        jmp     .out
+.no:
+        xor     eax, eax
+.out:
+        pop     rsi
+        pop     rdx
+        pop     rcx
+        ret
+
+; notebook_replay - draw every note on the console, in order, one per line
+; from column 0, text only. Console only: nothing here touches the wire.
+; Called once from efi_main after "S3: keyboard ready"; clobbers registers.
+notebook_replay:
+        mov     ebx, 1
+.note:
+        cmp     ebx, [nb_count]
+        ja      .done
+        mov     eax, VBLK_T_IN
+        lea     rdi, [sector_buf]
+        call    disk_rw
+        movzx   ecx, word [sector_buf + 8]
+        lea     rsi, [sector_buf + NB_TEXT_OFF]
+.char:
+        lodsb
+        call    console_putc
+        dec     ecx
+        jnz     .char
+        mov     al, 10
+        call    console_putc
+        inc     ebx
+        jmp     .note
+.done:
+        ret
+
+; notebook_append - the line buffer becomes the next record on disk, written
+; through before this returns; the buffer is emptied. An empty line is not a
+; note, and a full journal drops the line and carries on (plan decisions 6
+; and 8). Called from the main loop on Enter. Preserves everything.
+notebook_append:
+        push    rax
+        push    rbx
+        push    rcx
+        push    rsi
+        push    rdi
+        mov     ecx, [line_len]
+        test    ecx, ecx
+        jz      .out
+        mov     ebx, [nb_next]
+        cmp     ebx, [disk_sectors]
+        jae     .full
+
+        lea     rdi, [rec_buf]          ; a clean record
+        push    rcx
+        mov     ecx, 64
+        xor     eax, eax
+        rep     stosq
+        pop     rcx
+        mov     dword [rec_buf], 'NOTE'
+        mov     eax, [nb_count]
+        inc     eax
+        mov     [rec_buf + 4], eax      ; sequence
+        mov     [rec_buf + 8], cx       ; length
+        lea     rsi, [line_buf]
+        lea     rdi, [rec_buf + NB_TEXT_OFF]
+        rep     movsb
+
+        mov     eax, VBLK_T_OUT
+        lea     rdi, [rec_buf]
+        call    disk_rw                 ; returns only once the device says OK
+
+        inc     dword [nb_count]
+        inc     dword [nb_next]
+.full:
+        mov     dword [line_len], 0
+.out:
+        pop     rdi
+        pop     rsi
+        pop     rcx
+        pop     rbx
+        pop     rax
+        ret
 
 ; cpu_phys_bits - phys_limit = 1 << (the physical address width from CPUID
 ; 0x80000008, or 36 if the leaf is absent). Preserves everything.
@@ -2516,6 +2747,9 @@ msg_woken:      db      'S3: cores woken ', 0
 msg_console:    db      'S3: console ', 0
 msg_disk:       db      'S3: disk ', 0
 msg_sectors:    db      ' sectors', 13, 10, 0
+msg_nb:         db      'S3: notebook ', 0
+msg_notes:      db      ' notes', 13, 10, 0
+msg_nb_fmt:     db      'S3: notebook formatted', 13, 10, 0
 msg_kbd:        db      'S3: keyboard ready', 13, 10, 0
 
 msg_err:        db      'ERR: ', 0
@@ -2742,6 +2976,15 @@ req_hdr:        resb    16              ; type, reserved, sector
 req_status:     resb    1               ; the device's verdict, written last
         alignb  512
 sector_buf:     resb    512             ; one sector, for the notebook's reads
+rec_buf:        resb    512             ; the record being written
+
+; The notebook's state and the line being typed. One owner - the BSP.
+        alignb  16
+nb_count:       resd    1               ; valid records found or written
+nb_next:        resd    1               ; the sector the next note goes to
+line_len:       resd    1               ; bytes typed since the prompt
+        alignb  16
+line_buf:       resb    512             ; NOTE_MAX of them used at most
 
 ; The rings. 4 KB aligned - more than the spec's 16/2/4 - so each sits in
 ; its own page and none straddles anything.
