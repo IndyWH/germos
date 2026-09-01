@@ -3,15 +3,18 @@
 Rolling state of the AI OS project. Read this first, then `ai-os-foundation.md`
 (the single source of truth), then the current stage's `spec.md` and `plan.md`.
 
-**Last updated:** 1 September 2026 — **Stage 3 closed.** Built overnight,
-confirmed by Wajira on the morning of 1 September: *"It remembers!"* The
-machine has memory of its own — a virtio-blk driver on the modern interface
-and the notebook, an append-only journal of notes on the disk. The overnight
-scope guard was never invoked: no item needed a second attempt. The storage
-bodyguard went into the hook before any storage code existed and denied its
-first real command within the minute. Everything ran inside QEMU; the only
-disks in existence are raw files under `stage3/out/`. Next: Cowork's review,
-then Stage 4 — the umbilical.
+**Last updated:** 1 September 2026 — **Stage 4 opens.** Stage 3 closed on
+the morning of 1 September: Wajira booted the machine windowed and it
+remembered his note — *"It remembers!"* `stage4/spec.md` — The umbilical — is
+approved, with the foundation's Stage 4 policy gate already cleared and
+recorded in it. Two owner decisions taken at the opening: **Fable 5 at high
+effort implements this stage**, and the **subscription policy re-check
+passed** (`claude -p` still draws from the Max subscription; the June 2026
+credit-pool change is paused; re-check again at Stage 5). Next is
+`stage4/plan.md`, drafted in plan mode and committed for his approval before
+any code — and this is the first stage where the plan gate is a hook, not a
+convention: exiting plan mode is blocked until he writes the approval marker
+from his own terminal.
 
 ---
 
@@ -19,11 +22,12 @@ then Stage 4 — the umbilical.
 
 | | |
 |---|---|
-| Stage | 4 — The umbilical (not yet opened) |
-| Status | Stage 3 **CLOSED**. No Stage 4 spec yet. |
+| Stage | 4 — The umbilical |
+| Status | Spec **APPROVED** (1 September 2026). Plan pending approval at the plan gate. |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
-| Toolchain | NASM 3.01, QEMU 10.2.1, Python 3, OVMF, mtools — Stage 3 needs no new packages |
+| Toolchain | NASM 3.01, QEMU 10.2.1, Python 3, OVMF, mtools — Stage 4 needs no new packages (the broker is standard-library Python and shells out to `claude`) |
+| Model | **Fable 5, high effort** — the owner's decision for Stage 4 (see below) |
 
 ## The project in three lines
 
@@ -274,26 +278,62 @@ Stage 2's single network touch was the one-time fetch of the public-domain font,
 verified against the sha256 pins recorded in `stage2/plan.md`; Stage 3 touched
 the network not at all.
 
+## Stage 4 — The umbilical · opened 1 September 2026
+
+**Goal (foundation §7):** network driver, minimal TCP/IP, and a broker on
+mlrig that relays to Claude. Done when the booted OS asks Claude a question
+and prints the answer. Proves the OS has a brain. `stage4/spec.md` is
+approved (Cowork, 1 September 2026).
+
+**The two gate questions, settled by the owner at the opening:**
+
+- **The model.** The foundation's standing rule is Opus at high effort for
+  implementation; Fable was the experiment for Stages 2 and 3 (zero defects
+  in Cowork's review both times), and Stages 4 and 8 were flagged for a
+  decision. Wajira's decision: **Fable 5 at high effort implements Stage 4.**
+  This session runs on it.
+- **The subscription policy.** Re-checked here as the foundation requires,
+  and recorded in the spec: Anthropic announced, then paused, a June 2026
+  change moving Agent SDK and `claude -p` usage to a separate credit pool.
+  The current official position is that nothing changed — **`claude -p`
+  still draws from Max subscription limits.** So the broker shells out to
+  `claude -p`, no API keys anywhere, and its Claude backend is one small
+  swappable function. **Re-check again at Stage 5.**
+
+**The shape, from the spec:** the twin's network is a cage with one door —
+QEMU's user-mode NIC with `restrict=on`, so the guest can reach nothing at all
+except one `guestfwd` socket landing on the broker at `127.0.0.1:9999` on
+mlrig. Inside the cage the guest↔broker link is plaintext this ring (owner
+decision 1: TLS lives in the broker, and the pre-built TLS blob joins the
+guest at the ring where its traffic first touches a real wire); `? ` is the
+question marker (decision 2); DHCP, DNS, UDP, IPv6 and congestion control are
+out, each a recorded omission (decision 3). The acceptance tests use only a
+`--mock` broker, so the automated gate never spends a token or needs the
+internet; the real backend is exercised by Wajira at test 5.
+
+**The plan gate is live for the first time.** `.claude/hooks/
+require-plan-approval.py` (Cowork-authored, owner-installed, commit
+`770c941`) blocks ExitPlanMode until Wajira writes the approval marker from
+his own terminal; the other hook denies this session every route to that
+file. The correct behaviour on drafting the plan is: commit it, say it is
+ready, and wait.
+
 ## Next action
 
-Stage 3 is closed. **Cowork reviews CC's Stage 3 diffs** per `REVIEW.md`:
-bugs first — and the foundation asks for a disassembly-level read on anything
-touching storage or memory maps, which this stage is almost entirely made of.
-The places to look hardest: `disk_rw`'s descriptor chain and its fences,
-`map_mmio_2m`'s table walk, `record_valid` against `stage3/NOTEBOOK.md`, and
-the storage arm of `.claude/hooks/protect-tests.py` — `python3
-.claude/hooks/payloads.py` re-runs all 300 cases in a second and is meant to
-be re-run by the reviewer, not taken on trust.
+`stage4/plan.md`, drafted in plan mode and committed for Wajira's approval,
+evaluation-first: `stage4/UMBILICAL.md` (the wire protocol, byte-exact — the
+NOTEBOOK.md precedent), `broker/broker.py` with its `--mock` mode,
+`stage4/test.sh` and its checker for acceptance tests 1–4 committed red, then
+the implementation grown on `stage3/stage3.asm`: the PCI scan generalised to
+two virtio devices, modern virtio-net with receive and transmit queues, ARP,
+IPv4, client-only TCP, and the `? ` question path drawn console-only. After
+the gate opens: one commit per numbered item, `./stage4/test.sh` green before
+each commit that should pass it, Stages 0–3 green throughout.
 
-Then **Stage 4 — the umbilical** (foundation §7): network driver, minimal
-TCP/IP, the frozen TLS stack, and a broker on mlrig that relays to Claude.
-Done when the booted OS asks Claude a question and prints the answer. Two
-things are explicitly re-checked at this gate and are the owner's to settle:
-the **subscription policy** (the foundation says re-check at Stage 4, not
-before) and the **model question** — the standing rule is Opus at high effort;
-Fable was the experiment for Stages 2 and 3, and Stages 4 and 8 were the ones
-flagged for a decision. At the close of the Stage 3 session Wajira set his
-Claude Code default back to **Opus 5 (1M context)**.
+Cowork's review of Stage 3 (per `REVIEW.md`: bugs first, a disassembly-level
+read of `disk_rw`, `map_mmio_2m` and `record_valid`; `python3
+.claude/hooks/payloads.py` re-run rather than trusted) still stands as the
+reviewer's task and does not block Stage 4's plan.
 
 To boot Stage 3 again at any time, from the repo root:
 
