@@ -111,6 +111,21 @@ PLAN_MARKER = "PLAN_APPROVED"
 # NOT frozen: stage5/mkimage.sh (the recipe), stage5/stage5.asm (the thing
 # under test) and broker/claude_backend.py (the one file the gate never
 # runs, whose brief must stay fixable at test 5).
+#
+# Stage 6 ring 6a (plan decision 18) freezes stage6/GLASS.md for the
+# GERMLINE.md reason - the assembler, the fixtures, the broker, the twin
+# and the checker all implement or parse by it, the obs page's layout and
+# the strip's text included; the three fixtures' sources AND binaries
+# (stage6/app.asm and app.bin - test 3's known picture; hog and escapee,
+# the two bad apps whose refusal test 4 demands, and a bent hog or escapee
+# would be a passing one); broker/glass.py because its mock table, its
+# record, its cache and its dispatch are what tests 3 and 4 judge by; and
+# broker/twin.py because its nine verdicts are criteria - a bent twin could
+# pass a hog. broker/germline.py and broker/rehearse.py stand untouched and
+# still frozen: glass.py and twin.py import from them. Deliberately NOT
+# frozen: stage6/mkimage.sh (the recipe), stage6/stage6.asm (the thing
+# under test), broker/claude_backend.py (never run by the gate) and
+# stage6/plan-6a.md (paperwork).
 PROTECTED = (
     "stage0/test.sh",
     "stage0/checkpixels.py",
@@ -133,6 +148,17 @@ PROTECTED = (
     "stage5/component.bin",
     "broker/germline.py",
     "broker/rehearse.py",
+    "stage6/test.sh",
+    "stage6/checkglass.py",
+    "stage6/GLASS.md",
+    "stage6/app.asm",
+    "stage6/app.bin",
+    "stage6/hog.asm",
+    "stage6/hog.bin",
+    "stage6/escapee.asm",
+    "stage6/escapee.bin",
+    "broker/glass.py",
+    "broker/twin.py",
 )
 
 BASENAMES = sorted({os.path.basename(p) for p in PROTECTED})

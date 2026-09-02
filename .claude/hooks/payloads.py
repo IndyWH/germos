@@ -34,6 +34,9 @@ FROZEN_3 = ["stage3/test.sh", "stage3/checknotes.py", "stage3/NOTEBOOK.md"]
 FROZEN_4 = ["stage4/test.sh", "stage4/checkumbilical.py", "stage4/UMBILICAL.md", "broker/broker.py"]
 FROZEN_5 = ["stage5/test.sh", "stage5/checkgermline.py", "stage5/GERMLINE.md",
             "stage5/component.asm", "stage5/component.bin", "broker/germline.py", "broker/rehearse.py"]
+FROZEN_6 = ["stage6/test.sh", "stage6/checkglass.py", "stage6/GLASS.md",
+            "stage6/app.asm", "stage6/app.bin", "stage6/hog.asm", "stage6/hog.bin",
+            "stage6/escapee.asm", "stage6/escapee.bin", "broker/glass.py", "broker/twin.py"]
 FROZEN = FROZEN_0 + FROZEN_1 + FROZEN_2
 
 
@@ -220,8 +223,9 @@ CASES += [
     (write("stage3/stage3.asm"), ALLOW, "stage3 freeze allows: Write the implementation"),
     (write("stage3/plan.md"), ALLOW, "stage3 freeze allows: the plan is paperwork"),
     # Was stage4/test.sh until Stage 4 froze it, then stage5/test.sh until
-    # Stage 5 did - the case moves on a stage each time.
-    (write("stage6/test.sh"), ALLOW, "stage3 freeze allows: creating a later stage's test file"),
+    # Stage 5 did, then stage6/test.sh until ring 6a did - the case moves on
+    # a stage each time.
+    (write("stage7/test.sh"), ALLOW, "stage3 freeze allows: creating a later stage's test file"),
     (write("stage4/NOTEBOOK.md"), ALLOW, "stage3 freeze allows: a later stage's format document"),
     (bash("nasm -f bin stage3/stage3.asm -o stage3/out/BOOTX64.EFI"), ALLOW, "stage3 freeze allows: assembling"),
 ]
@@ -250,7 +254,7 @@ CASES += [
     (bash("sed -i 's/--bare//' broker/claude_backend.py"), ALLOW, "stage4 freeze allows: fixing the backend's flags"),
     (write("stage4/stage4.asm"), ALLOW, "stage4 freeze allows: Write the implementation"),
     (write("stage4/plan.md"), ALLOW, "stage4 freeze allows: the plan is paperwork"),
-    (write("stage6/test.sh"), ALLOW, "stage4 freeze allows: creating a later stage's test file"),
+    (write("stage7/test.sh"), ALLOW, "stage4 freeze allows: creating a later stage's test file"),
     (write("stage5/UMBILICAL.md"), ALLOW, "stage4 freeze allows: a later stage's document"),
     (bash("nasm -f bin stage4/stage4.asm -o stage4/out/BOOTX64.EFI"), ALLOW, "stage4 freeze allows: assembling"),
     (bash(QEMU + "-drive format=raw,file=stage4/out/esp.img -drive format=raw,file=stage4/out/notes.img,if=virtio "
@@ -303,7 +307,7 @@ CASES += [
     (write("broker/claude_backend.py"), ALLOW, "stage5 freeze allows: the Claude backend is not frozen"),
     (bash("sed -i 's/ASSEMBLY_ROUNDS = 3/ASSEMBLY_ROUNDS = 4/' broker/claude_backend.py"), ALLOW, "stage5 freeze allows: fixing the backend"),
     (write("stage5/plan.md"), ALLOW, "stage5 freeze allows: the plan is paperwork"),
-    (write("stage6/test.sh"), ALLOW, "stage5 freeze allows: creating the next stage's test file"),
+    (write("stage7/test.sh"), ALLOW, "stage5 freeze allows: creating the next stage's test file"),
     (write("stage6/GERMLINE.md"), ALLOW, "stage5 freeze allows: a later stage's document"),
     (write("stage6/component.bin"), ALLOW, "stage5 freeze allows: a later stage's component"),
     (bash("ls germline/"), ALLOW, "stage5 freeze allows: the germline directory is not the broker file"),
@@ -328,6 +332,75 @@ CASES += [
     (bash(QEMU + "-drive format=raw,file=stage5/out/esp.img -drive format=raw,file=germline/notes.img,if=virtio " + REHEARSAL_CAGE),
      DENY, "bodyguard: a drive under germline/ is not under an out/"),
     (bash("echo 'the germline caches a component after rehearsal'"), ALLOW, "bodyguard allows: the stage's words in prose"),
+]
+
+# --- Stage 6 ring 6a: the freeze (plan item 8), the display, the twin ------
+CAGE6 = ("-netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9999' "
+         "-device virtio-net-pci,netdev=n0,mac=52:54:00:a1:06:01 ")
+TWIN_CAGE = ("-netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9998' "
+             "-device virtio-net-pci,netdev=n0 ")
+DISPLAY6 = "-vga none -device VGA,edid=on,xres=1440,yres=1440 "
+CASES += [(c, v, "stage6 freeze: " + w) for c, v, w in freeze_cases(FROZEN_6)]
+CASES += [
+    (write("stage6/GLASS.md"), DENY, "stage6 freeze: the glass document is a criterion"),
+    (write("stage6/app.asm"), DENY, "stage6 freeze: the test app's source"),
+    (write("stage6/app.bin"), DENY, "stage6 freeze: the test app's binary"),
+    (write("stage6/hog.bin"), DENY, "stage6 freeze: the hog's binary"),
+    (write("stage6/escapee.bin"), DENY, "stage6 freeze: the escapee's binary"),
+    (write("broker/glass.py"), DENY, "stage6 freeze: the mock table, record and cache are criteria"),
+    (write("broker/twin.py"), DENY, "stage6 freeze: the twin's verdicts are criteria"),
+    (bash("nasm -f bin stage6/app.asm -o stage6/app.bin"), DENY, "stage6 freeze: -o over the frozen test app"),
+    (bash("nasm -f bin stage6/hog.asm -o stage6/hog.bin"), DENY, "stage6 freeze: -o over the frozen hog"),
+    (bash("nasm -f bin stage6/escapee.asm -o stage6/escapee.bin"), DENY, "stage6 freeze: -o over the frozen escapee"),
+    (bash("cd stage6 && nasm -f bin app.asm -o app.bin"), DENY, "stage6 freeze: -o over the bare basename"),
+    (bash("python3 - <<'EOF'\nopen('broker/twin.py','w').write('x')\nEOF"), DENY, "stage6 freeze: python writing the twin"),
+    (bash("nasm -f bin stage6/app.asm -o stage6/out/app.check.bin"), ALLOW, "stage6 freeze allows: the checker's self-check assembles to out/"),
+    (bash("nasm -f bin stage6/hog.asm -o stage6/out/hog.check.bin"), ALLOW, "stage6 freeze allows: the hog's self-check to out/"),
+    (bash("nasm -f bin stage6/stage6.asm -o stage6/out/BOOTX64.EFI"), ALLOW, "stage6 freeze allows: assembling the implementation"),
+    (bash("./stage6/test.sh"), ALLOW, "stage6 freeze allows: running the gate"),
+    (bash("./stage6/test.sh > stage6/out/gate.log 2>&1"), ALLOW, "stage6 freeze allows: gate output redirected"),
+    (bash("python3 stage6/checkglass.py --glass 2"), ALLOW, "stage6 freeze allows: the checker"),
+    (bash("python3 stage6/checkglass.py --truth"), ALLOW, "stage6 freeze allows: the checker"),
+    (bash("python3 stage6/checkglass.py --one-core"), ALLOW, "stage6 freeze allows: the checker"),
+    (bash("python3 broker/glass.py --mock --port 9999 --germline stage6/out/germline --image stage6/out/esp.img "
+          "--workdir stage6/out/rehearsal --record stage6/out/broker.truth.jsonl"),
+     ALLOW, "stage6 freeze allows: the mock with the gate's germline"),
+    (bash("python3 broker/glass.py"), ALLOW, "stage6 freeze allows: the real broker"),
+    (bash("python3 broker/twin.py stage6/app.bin"), ALLOW, "stage6 freeze allows: a hand rehearsal in the twin"),
+    (bash("cat stage6/GLASS.md"), ALLOW, "stage6 freeze allows: reading the glass document"),
+    (bash("grep -n obs stage6/GLASS.md broker/glass.py broker/twin.py"), ALLOW, "stage6 freeze allows: grepping"),
+    (bash("sha256sum stage6/app.bin stage6/hog.bin stage6/escapee.bin"), ALLOW, "stage6 freeze allows: hashing the fixtures"),
+    (bash("objdump -D -b binary -m i386:x86-64 stage6/escapee.bin"), ALLOW, "stage6 freeze allows: disassembling a fixture"),
+    (bash("sed -i 's/48/64/' stage6/mkimage.sh"), ALLOW, "stage6 freeze allows: the builder is not frozen"),
+    (write("stage6/mkimage.sh"), ALLOW, "stage6 freeze allows: Write the builder"),
+    (write("stage6/stage6.asm"), ALLOW, "stage6 freeze allows: Write the implementation"),
+    (write("broker/claude_backend.py"), ALLOW, "stage6 freeze allows: the Claude backend is not frozen"),
+    (write("stage6/plan-6a.md"), ALLOW, "stage6 freeze allows: the plan is paperwork"),
+    (write("stage6/plan-6b.md"), ALLOW, "stage6 freeze allows: the next ring's plan"),
+    (write("stage7/test.sh"), ALLOW, "stage6 freeze allows: creating the next stage's test file"),
+    (write("stage6/PLANS.md"), ALLOW, "stage6 freeze allows: a later ring's document"),
+    (write("stage6/HOME.md"), ALLOW, "stage6 freeze allows: a later ring's document"),
+    (bash("rm -rf stage6/out/germline stage6/out/rehearsal"), ALLOW, "stage6 freeze allows: clearing the gate's scratch"),
+    (bash("git add stage6/GLASS.md broker/glass.py broker/twin.py"), ALLOW, "stage6 freeze allows: git add"),
+    (bash("git commit -F msg.txt"), ALLOW, "stage6 freeze allows: commit from a file"),
+    (bash(QEMU + DISPLAY6 + "-drive format=raw,file=stage6/out/esp.img -drive format=raw,file=stage6/out/notes.img,if=virtio "
+          + CAGE6 + "-serial stdio"), ALLOW, "bodyguard allows: the oracle's Stage 6 command with the display"),
+    (bash(QEMU + DISPLAY6 + "-drive format=raw,file=stage6/out/esp.img -drive format=raw,file=stage6/out/notes.img,if=virtio "
+          + CAGE6 + "-display none -serial file:stage6/out/serial.truth.txt -monitor stdio"),
+     ALLOW, "bodyguard allows: the checker's Stage 6 command"),
+    (bash(QEMU + "-vga none -device VGA,edid=off -drive format=raw,file=stage6/out/esp.img "
+          "-drive format=raw,file=stage6/out/serial.noedid.img,if=virtio " + CAGE6 + "-display none -serial stdio"),
+     ALLOW, "bodyguard allows: the no-EDID run"),
+    (bash("qemu-system-x86_64 -machine q35 -m 256M -smp 2 -bios /usr/share/ovmf/OVMF.fd " + DISPLAY6
+          + "-drive format=raw,file=stage6/out/rehearsal/esp.img -drive format=raw,file=stage6/out/rehearsal/notes.img,if=virtio "
+          + TWIN_CAGE + "-display none -serial file:stage6/out/rehearsal/serial.txt -monitor stdio"),
+     ALLOW, "bodyguard allows: the twin's command with its private copy of the image"),
+    (bash("cp stage6/out/esp.img stage6/out/rehearsal/esp.img"), ALLOW, "bodyguard allows: copying the image for the twin, out/ to out/"),
+    (bash("printf 'info pci\\nxp /128xb 0x81082000\\nquit\\n' | " + QEMU + DISPLAY6
+          + "-drive format=raw,file=stage6/out/esp.img -display none -monitor stdio"),
+     ALLOW, "bodyguard allows: reading the EDID BAR through the monitor"),
+    (bash(QEMU + DISPLAY6 + "-drive format=raw,file=/tmp/esp.img " + CAGE6), DENY, "bodyguard: the display does not excuse a bad drive"),
+    (bash("echo 'the glass core composites the surfaces from the obs page'"), ALLOW, "bodyguard allows: the ring's words in prose"),
 ]
 
 
