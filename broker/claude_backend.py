@@ -6,8 +6,13 @@ and LF, at most 4096 bytes). grow(request, failure, timeout, model) - Stage
 5 - asks for NASM source for a flat binary against stage5/GERMLINE.md's
 entry contract and service table, assembles it on the host, feeds an
 assembly error back for up to three rounds, and returns the blob or a
-refusal. No API key is involved anywhere: the CLI holds its own login. If
-the subscription policy ever unpauses, this is the one file to swap.
+refusal. grow(..., abi=2) - Stage 6 ring 6a - asks instead for an ABI 2
+app against stage6/GLASS.md's callback contract (four offsets first, the
+four services, a panel of its own), names it after the request, reads any
+`; choice <key> <label>` lines the source declares, and returns ("app",
+blob, name, choices) or ("refusal", text). No API key is involved anywhere:
+the CLI holds its own login. If the subscription policy ever unpauses,
+this is the one file to swap.
 
 Deliberately NOT frozen (Stage 4 plan decision 13, Stage 5 decision 15):
 the automated gate never runs this file - the tests use the mock - and it
@@ -18,6 +23,7 @@ CLI's own login, so it stays off.
 
 import os
 import re
+import struct
 import subprocess
 import tempfile
 import unicodedata
@@ -152,9 +158,101 @@ def extract_source(text):
     return src.strip() + "\n"
 
 
-def grow(request, failure=None, timeout=120.0, model=None):
-    """The request in, a blob out - or a refusal string. Never an exception."""
-    brief = GROW_BRIEF + abi_sections()
+# ------------------------------------------------------------- Stage 6 ----
+
+GLASS_DOC = os.path.join(REPO, "stage6", "GLASS.md")
+NAME_MAX = 32
+CHOICE_LINE = re.compile(r"^\s*;\s*choice\s+(\S)\s+(.{1,12}?)\s*$", re.M)
+
+
+def glass_sections():
+    """The callback contract and what the screen does around an app,
+    verbatim from GLASS.md, so the brief and the frozen document can never
+    disagree."""
+    try:
+        doc = open(GLASS_DOC).read()
+    except OSError:
+        return ""
+    out = []
+    for heading in ("## An app is four callbacks", "## Running an app"):
+        i = doc.find(heading)
+        if i < 0:
+            continue
+        j = doc.find("\n## ", i + 1)
+        out.append(doc[i:j if j > 0 else None].strip())
+    return "\n\n".join(out)
+
+
+APP_BRIEF = (
+    "You are writing an app for GermOS, a tiny operating system being grown "
+    "on this machine. The user typed one line at its prompt asking for something; "
+    "you answer with the machine code, as NASM source for a FLAT BINARY that the "
+    "OS will load into a panel of its screen and drive through four callbacks. "
+    "Rules, all of them hard:\n"
+    "- Output ONLY NASM source, nothing else: no prose, no markdown, no code fences. "
+    "The first line is `bits 64`, the second `default rel`. It is assembled with "
+    "`nasm -f bin`. No `org`, no sections, no `global`, no `extern`, no `%include`.\n"
+    "- The first 16 bytes of the output are four u32 offsets from the start of the "
+    "blob - init, step, key, exit - written as `dd init, step, key, exit` with those "
+    "labels; the code follows. Every memory reference must be RIP-relative (default "
+    "rel does this for labels) - no absolute addresses. Keep your data after the code; "
+    "keep the service table pointer init receives in a data qword for the others.\n"
+    "- Draw ONLY through the services, into your own panel: draw_text and fill with "
+    "rows and columns relative to the panel, panel_size for its size, ticks_ms for "
+    "time. Do not touch any port, memory or device except port I/O the request "
+    "itself needs (the CMOS real-time clock at ports 0x70/0x71 is fine, for example). "
+    "No serial port, no keyboard ports, no framebuffer, no interrupts, no page tables.\n"
+    "- step is called about every 10 ms and must return within a few milliseconds - "
+    "never spin, never wait inside it; redraw only when something changed. key is "
+    "called with the key in RDI. Each callback returns with ret, stack balanced.\n"
+    "- Stay under 64 KB of code and data. No SSE/AVX. Ring 0, interrupts enabled; "
+    "use under 4 KB of stack.\n"
+    "- Preserve RBX, RBP, R12-R15 across your own service calls: the services "
+    "preserve them, but clobber RAX, RCX, RDX, RSI, RDI, R8-R11.\n"
+    "- You may declare up to four keyboard choices the screen will show, one per "
+    "comment line at the top: `; choice <key> <label>` with a one-character key and a "
+    "label of at most 12 characters. Handle those keys in key.\n\n"
+)
+
+
+def app_name(request):
+    name = "".join(ch for ch in request if 0x20 <= ord(ch) <= 0x7E).strip()[:NAME_MAX]
+    return (name or "app").encode("ascii")
+
+
+def app_choices(src):
+    out = []
+    for m in CHOICE_LINE.finditer(src):
+        key, label = m.group(1), m.group(2).strip()
+        if 0x20 <= ord(key) <= 0x7E and label and all(0x20 <= ord(c) <= 0x7E for c in label):
+            out.append((ord(key), label.encode("ascii")))
+        if len(out) == 4:
+            break
+    return out
+
+
+def grow(request, failure=None, timeout=120.0, model=None, abi=1):
+    """The request in, a blob out - or a refusal. Never an exception.
+    abi=1 (Stage 5): a blob (bytes) or a refusal string. abi=2 (Stage 6):
+    ("app", blob, name, choices) or ("refusal", text)."""
+    if abi == 2:
+        result = _grow(request, failure, timeout, model, APP_BRIEF + glass_sections(), True)
+        if isinstance(result, tuple):
+            blob, src = result
+            try:
+                offs = struct.unpack_from("<IIII", blob, 0) if len(blob) >= 16 else None
+            except struct.error:
+                offs = None
+            if offs is None or any(o >= len(blob) for o in offs):
+                return ("refusal", "broker: the assembled app does not begin with four offsets inside it")
+            return ("app", blob, app_name(request), app_choices(src))
+        return ("refusal", result)
+    return _grow(request, failure, timeout, model, GROW_BRIEF + abi_sections(), False)
+
+
+def _grow(request, failure, timeout, model, brief, want_source):
+    """The claude -p rounds. Returns the blob (bytes), or (blob, source)
+    when want_source, or a refusal string."""
     prompt = "The user asked: %s" % request
     if failure:
         prompt += ("\n\nA previous attempt at this was rejected by the rehearsal in the "
@@ -191,7 +289,7 @@ def grow(request, failure=None, timeout=120.0, model=None):
             if nasm.returncode == 0 and os.path.isfile(blob):
                 data = open(blob, "rb").read()
                 if 1 <= len(data) <= BLOB_MAX:
-                    return data
+                    return (data, src) if want_source else data
                 last_error = "the assembled binary is %d bytes, outside 1..%d" % (len(data), BLOB_MAX)
             else:
                 last_error = normalise(nasm.stderr).strip().splitlines()[:6]
