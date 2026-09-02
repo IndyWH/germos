@@ -218,6 +218,41 @@ org 0                           ; file offsets == RVAs
 %define MODE_GROWING        2
 %define MODE_RUNNING        3
 
+; The surfaces (GLASS.md, "Surfaces and the glass core"): cell buffers and
+; a dirty byte per row. Capacities are for any mode we can run; the sizes
+; used are measured from the mode at boot.
+%define SURF_ROWS_MAX       256
+%define STRIP_CELLS         0x400       ; 2 rows of up to 512 columns
+%define PANEL_CELLS         0x10000     ; the conversation's SHADOW_SIZE, and the app's
+%define STRIP_LEN           87          ; each strip row's text
+%define CELL_BLOCK          0x01        ; a solid foreground block
+%define FRAME_HZ            60
+
+; The strip's field offsets, computed from GLASS.md's format strings.
+%define STRIP0_UP     3
+%define STRIP0_CORE   15
+%define STRIP0_FR     21
+%define STRIP0_FL     28
+%define STRIP0_FW     33
+%define STRIP0_PL     41
+%define STRIP0_PW     46
+%define STRIP0_K      53
+%define STRIP0_HW     61
+%define STRIP0_ERR    69
+%define STRIP0_SL     78
+%define STRIP0_SW     83
+%define STRIP1_MODE   0
+%define STRIP1_Q      21
+%define STRIP1_N      27
+%define STRIP1_GG     33
+%define STRIP1_GS     37
+%define STRIP1_DR     46
+%define STRIP1_DW     51
+%define STRIP1_WC     60
+%define STRIP1_WW     64
+%define STRIP1_IN     74
+%define STRIP1_OUT    81
+
 ; More enabled processors than this in the MADT is an error we report, not a
 ; buffer we overrun. mlrig has 32 logical CPUs; the mirror run uses all of them.
 %define MAX_CORES       64
@@ -823,6 +858,12 @@ efi_main:
         mov     [obs_page + OBS_TSC_PER_MS], rax
         mov     rax, [tsc_boot]
         mov     [obs_page + OBS_TSC_BOOT], rax
+        mov     rax, [tsc_per_ms]
+        imul    rax, rax, 1000
+        xor     edx, edx
+        mov     ecx, FRAME_HZ
+        div     rcx
+        mov     [frame_ticks], rax      ; one sixtieth of a second, in ticks
 
         ; The service table a component is born into (GERMLINE.md, "The
         ; service table"): four addresses, filled here with RIP-relative
@@ -842,18 +883,19 @@ efi_main:
         ; mirrored boot log, and from here every serial byte is drawn live by
         ; the tee - this very line included.
         ; -------------------------------------------------------------------
-        call    console_init
-        mov     eax, [con_cols]
+        call    glass_init              ; the four regions from the mode
+        call    console_init            ; the conversation panel, a surface now
+        mov     eax, [scr_cols]
         mov     [obs_page + OBS_COLS], rax
-        mov     eax, [con_rows]
+        mov     eax, [scr_rows]
         mov     [obs_page + OBS_ROWS], rax
         lea     rsi, [msg_console]
         call    serial_puts
-        mov     eax, [con_cols]
+        mov     eax, [scr_cols]
         call    serial_putdec
         mov     al, 'x'
         call    serial_putc
-        mov     eax, [con_rows]
+        mov     eax, [scr_rows]
         call    serial_putdec
         lea     rsi, [msg_crlf]
         call    serial_puts
@@ -917,6 +959,33 @@ efi_main:
         call    serial_puts
         lea     rax, [obs_page]
         call    serial_puthex64
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+
+        ; -------------------------------------------------------------------
+        ; The glass core (GLASS.md, "Surfaces and the glass core"): the
+        ; first application processor has been waiting since it checked in.
+        ; Start it, and from this instruction the boot processor never
+        ; writes a pixel again. No second core is a named error - shown on
+        ; the screen too, by the one render the boot processor is allowed
+        ; on that path, and then a halt.
+        ; -------------------------------------------------------------------
+        mov     r12d, 40
+.wait_glass:
+        cmp     dword [glass_ready], 0
+        jne     .glass_there
+        mov     ax, PIT_25MS
+        call    pit_wait
+        dec     r12d
+        jnz     .wait_glass
+        lea     rsi, [err_one_core]
+        call    glass_err
+.glass_there:
+        mov     dword [glass_go], 1
+        lea     rsi, [msg_glass]        ; line fifteen
+        call    serial_puts
+        mov     rax, [obs_page + OBS_GLASS_APIC]
+        call    serial_putdec
         lea     rsi, [msg_crlf]
         call    serial_puts
 
@@ -996,6 +1065,7 @@ main_loop:
         mov     al, bl
         call    serial_putc
         call    draw_cursor
+        call    photon_mark
         jmp     main_loop
 .enter:
         call    erase_cursor            ; the block would linger at line end
@@ -1016,12 +1086,15 @@ main_loop:
         je      .request
         call    notebook_append         ; ...the line goes to disk, and only
         call    console_prompt          ; then a new prompt, console-only
+        call    photon_mark
         jmp     main_loop
 .question:
         call    ask_question            ; console-only, then the prompt
+        call    photon_mark
         jmp     main_loop
 .request:
         call    grow_request            ; console-only, then the prompt
+        call    photon_mark
         jmp     main_loop
 .backspace:
         mov     eax, [cur_col]          ; only within this line's typed text -
@@ -1035,7 +1108,22 @@ main_loop:
         mov     al, 8
         call    serial_putc             ; the tee steps back and erases
         call    draw_cursor
+        call    photon_mark
         jmp     main_loop
+
+; photon_mark - a key has been acted on (GLASS.md, "Input-to-photon"): its
+; stamp becomes the pending echo unless one is already pending, so the
+; glass core credits the frame that paints it. Preserves everything.
+photon_mark:
+        push    rax
+        cmp     qword [obs_page + OBS_ECHO_PENDING], 0
+        jne     .pending
+        mov     rax, [key_stamp]
+        mov     [obs_page + OBS_ECHO_STAMP], rax
+        mov     qword [obs_page + OBS_ECHO_PENDING], 1
+.pending:
+        pop     rax
+        ret
 
 ; kbd_next - the keyboard's consumer, factored out of the main loop (plan
 ; decision 8) so a running component's poll_key sees exactly what the prompt
@@ -3340,7 +3428,7 @@ finish_line:
 ; re-rendered from the shadow. The component may clobber every register but
 ; RSP, so RSP is kept in memory, not a register. Clobbers registers freely.
 run_component:
-        call    fb_clear
+        call    app_clear
         lea     rdi, [svc_table]
         lea     rax, [comp_region + COMP_BLOB_OFF]
         mov     [saved_rsp], rsp
@@ -3367,13 +3455,13 @@ svc_draw_text:
         mov     r13, rsi                ; column
         mov     r14, rdx                ; the bytes
         mov     r15, rcx                ; how many
-        mov     eax, [con_rows]
+        mov     eax, [app_rows]
         cmp     r12, rax
         jae     .done
 .next:
         test    r15, r15
         jz      .done
-        mov     eax, [con_cols]
+        mov     eax, [app_cols]
         cmp     r13, rax
         jae     .done                   ; the right edge
         movzx   eax, byte [r14]
@@ -3386,7 +3474,7 @@ svc_draw_text:
 .draw:
         mov     ebx, r12d
         mov     ecx, r13d
-        call    draw_cell
+        call    app_put
         inc     r14
         inc     r13
         dec     r15
@@ -3798,15 +3886,241 @@ map_mmio_2m:
 
 ; console_init - measure the cells, clear the screen, replay the boot log.
 ; Called exactly once, from efi_main; clobbers registers freely.
-console_init:
+; glass_init - the four regions from the mode (GLASS.md, "The screen"),
+; their surfaces cleared and every row dirty, the descriptors in the obs
+; page, the choices row for the prompt. A mode too small is a named error,
+; shown once by the boot processor before the halt. Called before
+; console_init; clobbers registers freely.
+glass_init:
         mov     eax, [fb_width]
         shr     eax, 4                  ; /16: cells across
-        mov     [con_cols], eax
+        mov     [scr_cols], eax
         mov     ecx, [fb_height]
         shr     ecx, 4
+        mov     [scr_rows], ecx
+        cmp     eax, 8
+        jb      .too_small
+        cmp     ecx, 8
+        jb      .too_small
+        cmp     eax, STRIP_CELLS / 2
+        ja      .too_small
+        mov     edx, eax
+        shr     edx, 1                  ; the conversation's columns
+        mov     [con_cols], edx
+        sub     eax, edx                ; the app panel's
+        mov     [app_cols], eax
+        sub     ecx, 4                  ; the panels' rows
         mov     [con_rows], ecx
+        mov     [app_rows], ecx
+        mov     eax, ecx
+        mul     dword [con_cols]
+        test    edx, edx
+        jnz     .too_small
+        cmp     eax, PANEL_CELLS
+        ja      .too_small
+        mov     eax, ecx
+        mul     dword [app_cols]
+        test    edx, edx
+        jnz     .too_small
+        cmp     eax, PANEL_CELLS
+        ja      .too_small
+        cmp     ecx, SURF_ROWS_MAX
+        ja      .too_small
 
-        mul     ecx                     ; EDX:EAX = cols * rows
+        ; The descriptors: strip, choices, conversation, app.
+        lea     rbp, [obs_page + OBS_SURF_STRIP]
+        lea     rax, [strip_cells]
+        lea     rdx, [strip_dirty]
+        xor     ecx, ecx                ; row0 0, col0 0
+        xor     r8d, r8d
+        mov     r9d, 2
+        mov     r10d, [scr_cols]
+        call    surf_describe
+        lea     rbp, [obs_page + OBS_SURF_CHOICES]
+        lea     rax, [choices_cells]
+        lea     rdx, [choices_dirty]
+        mov     ecx, [scr_rows]
+        sub     ecx, 2
+        xor     r8d, r8d
+        mov     r9d, 2
+        mov     r10d, [scr_cols]
+        call    surf_describe
+        lea     rbp, [obs_page + OBS_SURF_CONV]
+        lea     rax, [shadow]
+        lea     rdx, [conv_dirty]
+        mov     ecx, 2
+        xor     r8d, r8d
+        mov     r9d, [con_rows]
+        mov     r10d, [con_cols]
+        call    surf_describe
+        lea     rbp, [obs_page + OBS_SURF_APP]
+        lea     rax, [app_cells]
+        lea     rdx, [app_dirty]
+        mov     ecx, 2
+        mov     r8d, [con_cols]
+        mov     r9d, [app_rows]
+        mov     r10d, [app_cols]
+        call    surf_describe
+
+        lea     rsi, [msg_choices_prompt]
+        mov     ecx, msg_choices_prompt_len
+        call    choices_set
+        ret
+.too_small:
+        lea     rsi, [err_too_small]
+        call    glass_err
+
+; surf_describe - RBP = the descriptor, RAX = cells, RDX = dirty bytes,
+; ECX = row0, R8D = col0, R9D = rows, R10D = cols. Fills the descriptor,
+; clears the cells to spaces and marks every row dirty.
+surf_describe:
+        mov     r11, rdx                ; mul below clobbers RDX
+        mov     [rbp + SURF_CELLS], rax
+        mov     [rbp + SURF_DIRTY], rdx
+        mov     [rbp + SURF_ROW0], rcx
+        mov     [rbp + SURF_COL0], r8
+        mov     [rbp + SURF_ROWS], r9
+        mov     [rbp + SURF_COLS], r10
+        mov     qword [rbp + SURF_CURSOR], 0
+        mov     rdi, rax
+        mov     eax, r9d
+        mul     r10d
+        mov     ecx, eax
+        mov     al, ' '
+        rep     stosb
+        mov     rdi, r11
+        mov     ecx, r9d
+        mov     al, 1
+        rep     stosb
+        ret
+
+; surf_dirty_all - RBP = a descriptor: every row dirty. Preserves everything.
+surf_dirty_all:
+        push    rax
+        push    rcx
+        push    rdi
+        mov     rdi, [rbp + SURF_DIRTY]
+        mov     rcx, [rbp + SURF_ROWS]
+        mov     al, 1
+        rep     stosb
+        pop     rdi
+        pop     rcx
+        pop     rax
+        ret
+
+; choices_set - RSI = text, ECX = length: row 0 of the choices surface,
+; the rest of the row and row 1 blank, both rows dirty. Preserves
+; everything.
+choices_set:
+        push    rax
+        push    rcx
+        push    rdx
+        push    rsi
+        push    rdi
+        lea     rdi, [choices_cells]
+        mov     edx, [scr_cols]
+.cell:
+        test    edx, edx
+        jz      .filled
+        mov     al, ' '
+        test    ecx, ecx
+        jz      .put
+        lodsb
+        dec     ecx
+.put:
+        stosb
+        dec     edx
+        jmp     .cell
+.filled:
+        mov     ecx, [scr_cols]
+        mov     al, ' '
+        rep     stosb                   ; row 1
+        mov     word [choices_dirty], 0x0101
+        pop     rdi
+        pop     rsi
+        pop     rdx
+        pop     rcx
+        pop     rax
+        ret
+
+; app_put - EBX = row, ECX = column (panel-relative), EAX = the cell: into
+; the app surface, its row dirty; outside the panel, nothing. Preserves
+; everything.
+app_put:
+        push    rax
+        push    rdx
+        cmp     ebx, [app_rows]
+        jae     .out
+        cmp     ecx, [app_cols]
+        jae     .out
+        push    rax
+        mov     eax, ebx
+        imul    eax, [app_cols]
+        add     eax, ecx
+        lea     rdx, [app_cells]
+        pop     rax
+        mov     [rdx + rax], al
+        lea     rdx, [app_dirty]
+        mov     byte [rdx + rbx], 1
+.out:
+        pop     rdx
+        pop     rax
+        ret
+
+; app_clear - the app surface blank, every row dirty. Preserves everything.
+app_clear:
+        push    rax
+        push    rcx
+        push    rdx                     ; mul clobbers it
+        push    rdi
+        push    rbp
+        lea     rdi, [app_cells]
+        mov     eax, [app_rows]
+        mul     dword [app_cols]
+        mov     ecx, eax
+        mov     al, ' '
+        rep     stosb
+        lea     rbp, [obs_page + OBS_SURF_APP]
+        call    surf_dirty_all
+        pop     rbp
+        pop     rdi
+        pop     rdx
+        pop     rcx
+        pop     rax
+        ret
+
+; conv_dirty_row - EBX = a conversation row: dirty. Preserves everything.
+conv_dirty_row:
+        push    rax
+        lea     rax, [conv_dirty]
+        mov     byte [rax + rbx], 1
+        pop     rax
+        ret
+
+; glass_err - RSI = message. Prints "ERR: <msg>", renders the conversation
+; surface to the framebuffer once - the one paint the boot processor is
+; allowed, on a path where no glass core will ever run - and halts.
+glass_err:
+        push    rsi
+        lea     rsi, [msg_err]
+        call    serial_puts
+        pop     rsi
+        call    serial_puts
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+        call    fb_clear
+        lea     rbp, [obs_page + OBS_SURF_CONV]
+        cmp     qword [rbp + SURF_CELLS], 0
+        je      halt_forever            ; too small to have a surface at all
+        call    surf_render
+        jmp     halt_forever
+
+; console_init - the conversation panel's shadow and the boot log replay.
+; The geometry is glass_init's; nothing is painted - the glass core will.
+; Called exactly once, from efi_main; clobbers registers freely.
+console_init:
+        mov     eax, [con_rows]
+        mul     dword [con_cols]        ; EDX:EAX = cols * rows
         test    edx, edx
         jnz     .too_big
         cmp     eax, SHADOW_SIZE
@@ -3824,14 +4138,10 @@ console_init:
         mov     [bg_pix], eax
         mov     dword [fg_pix], 0x00E0E0E0      ; rgb(224,224,224)
 
-        lea     rdi, [shadow]           ; a screen full of spaces
+        lea     rdi, [shadow]           ; a panel full of spaces
         mov     ecx, SHADOW_SIZE / 4
         mov     eax, CHAR_SPACE * 0x01010101
         rep     stosd
-
-        ; Clear the whole framebuffer - stride padding and any part-cell edge
-        ; included - so everything on screen is one of our two colours.
-        call    fb_clear
 
         mov     dword [cur_row], 0
         mov     dword [cur_col], 0
@@ -3878,30 +4188,10 @@ fb_clear:
 ; console_redraw - re-render the whole screen from the shadow, row by row,
 ; cell by cell. The framebuffer is never read. Preserves everything.
 console_redraw:
-        push    rax
-        push    rbx
-        push    rcx
-        push    rdx
-        xor     ebx, ebx
-.row:
-        xor     ecx, ecx
-.col:
-        mov     eax, ebx
-        imul    eax, [con_cols]
-        add     eax, ecx
-        lea     rdx, [shadow]
-        movzx   eax, byte [rdx + rax]
-        call    draw_cell
-        inc     ecx
-        cmp     ecx, [con_cols]
-        jb      .col
-        inc     ebx
-        cmp     ebx, [con_rows]
-        jb      .row
-        pop     rdx
-        pop     rcx
-        pop     rbx
-        pop     rax
+        push    rbp
+        lea     rbp, [obs_page + OBS_SURF_CONV]
+        call    surf_dirty_all
+        pop     rbp
         ret
 
 ; console_putc - AL = the byte, drawn at the cursor. Preserves everything.
@@ -3937,8 +4227,7 @@ console_putc:
         mov     [rdx + rcx], al
 
         mov     ebx, [cur_row]
-        mov     ecx, [cur_col]
-        call    draw_cell
+        call    conv_dirty_row
 
         inc     dword [cur_col]
         mov     eax, [con_cols]
@@ -3969,10 +4258,8 @@ console_putc:
         add     ecx, [cur_col]
         lea     rdx, [shadow]
         mov     byte [rdx + rcx], CHAR_SPACE
-        mov     eax, CHAR_SPACE
         mov     ebx, [cur_row]
-        mov     ecx, [cur_col]
-        call    draw_cell
+        call    conv_dirty_row
         jmp     .out
 
 ; draw_cell - EAX = character, EBX = cell row, ECX = cell column. Preserves
@@ -3989,9 +4276,27 @@ draw_cell:
         push    r9
         push    r10
 
+        cmp     al, 0x20
+        jb      .special
+        cmp     al, 0x7E
+        jbe     .glyph
+        mov     eax, 0x20               ; not printable: background
+        jmp     .glyph
+.special:
+        cmp     al, CELL_BLOCK
+        jne     .blank
+        mov     eax, 0x7F               ; a glyph made of foreground below
+        jmp     .glyph
+.blank:
+        mov     eax, 0x20
+.glyph:
         and     eax, 0x7F
         lea     rsi, [font8x8]
         lea     rsi, [rsi + rax*8]      ; the glyph's 8 row bytes
+        cmp     eax, 0x7F
+        jne     .from_font
+        lea     rsi, [block_glyph]      ; CELL_BLOCK: every bit set
+.from_font:
 
         mov     r8d, [fb_pps]
         shl     r8d, 2                  ; R8 = stride in bytes
@@ -4051,37 +4356,21 @@ draw_cell:
 draw_cursor:
         push    rax
         push    rbx
-        push    rcx
-        push    rdx
-        push    rdi
-        push    r8
-
-        mov     r8d, [fb_pps]
-        shl     r8d, 2
+        mov     rax, [obs_page + OBS_SURF_CONV + SURF_CURSOR]
+        test    eax, 1 << 31
+        jz      .was_off
+        mov     ebx, eax                ; the row the cursor was on: dirty
+        shr     ebx, 16
+        and     ebx, 0x7FFF
+        call    conv_dirty_row
+.was_off:
         mov     eax, [cur_row]
-        shl     eax, 4
-        imul    rax, r8
-        mov     rdi, [fb_base]
-        add     rdi, rax
-        mov     eax, [cur_col]
-        shl     eax, 6
-        add     rdi, rax
-
-        mov     eax, [fg_pix]
-        mov     ebx, 16                 ; 16 scanlines
-.line:
-        mov     rdx, rdi
-        mov     ecx, 16                 ; of 16 pixels
-        rep     stosd
-        mov     rdi, rdx
-        add     rdi, r8
-        dec     ebx
-        jnz     .line
-
-        pop     r8
-        pop     rdi
-        pop     rdx
-        pop     rcx
+        shl     eax, 16
+        or      eax, [cur_col]
+        or      eax, 1 << 31
+        mov     [obs_page + OBS_SURF_CONV + SURF_CURSOR], rax       ; one store
+        mov     ebx, [cur_row]
+        call    conv_dirty_row
         pop     rbx
         pop     rax
         ret
@@ -4090,18 +4379,16 @@ draw_cursor:
 erase_cursor:
         push    rax
         push    rbx
-        push    rcx
-        push    rdx
-        mov     ecx, [cur_row]
-        imul    ecx, [con_cols]
-        add     ecx, [cur_col]
-        lea     rdx, [shadow]
-        movzx   eax, byte [rdx + rcx]
-        mov     ebx, [cur_row]
-        mov     ecx, [cur_col]
-        call    draw_cell
-        pop     rdx
-        pop     rcx
+        mov     rax, [obs_page + OBS_SURF_CONV + SURF_CURSOR]
+        test    eax, 1 << 31
+        jz      .done
+        mov     ebx, eax
+        shr     ebx, 16
+        and     ebx, 0x7FFF
+        and     eax, ~(1 << 31)
+        mov     [obs_page + OBS_SURF_CONV + SURF_CURSOR], rax
+        call    conv_dirty_row
+.done:
         pop     rbx
         pop     rax
         ret
@@ -4525,10 +4812,354 @@ ap_entry:
         sub     rsp, rcx
 
         lock inc dword [checkin]
+        cmp     eax, 1                  ; the first application processor
+        je      glass_main              ; owns the screen (GLASS.md)
 .park:
         cli
 .hang:  hlt
         jmp     .hang
+
+; ---------------------------------------------------------------------------
+; The glass core (GLASS.md, "Surfaces and the glass core"). Runs on the
+; first application processor, interrupts off, on its own stack, for ever:
+; records its APIC id, signals ready, waits to be started, then paints
+; every dirty row of every surface into the framebuffer, draws the strip
+; from the obs page, times itself, and paces at sixty frames a second. The
+; only code that writes pixels after boot.
+; ---------------------------------------------------------------------------
+glass_main:
+        cmp     dword [apic_x2], 0
+        jne     .x2
+        mov     rax, [apic_mmio]
+        mov     eax, [rax + 0x20]
+        shr     eax, 24
+        jmp     .have_id
+.x2:
+        mov     ecx, 0x802              ; IA32_X2APIC_APICID
+        rdmsr
+.have_id:
+        mov     [obs_page + OBS_GLASS_APIC], rax
+        mov     dword [glass_ready], 1
+.wait_go:
+        pause
+        cmp     dword [glass_go], 0
+        je      .wait_go
+        call    fb_clear                ; the first and only whole-screen paint
+.frame:
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        mov     r15, rax                ; t0
+        mov     [obs_page + OBS_NOW], rax
+        mov     r14, [obs_page + OBS_ECHO_PENDING]      ; snapshot, before the copy
+        lea     rbp, [obs_page + OBS_SURF_CHOICES]
+        call    surf_render
+        lea     rbp, [obs_page + OBS_SURF_CONV]
+        call    surf_render
+        lea     rbp, [obs_page + OBS_SURF_APP]
+        call    surf_render
+        call    strip_format            ; the strip, from the page, every frame
+        lea     rbp, [obs_page + OBS_SURF_STRIP]
+        call    surf_render
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        mov     rbx, rax                ; the frame's end
+        sub     rax, r15
+        mov     [obs_page + OBS_FRAME_LAST], rax
+        cmp     rax, [obs_page + OBS_FRAME_WORST]
+        jbe     .no_worst
+        mov     [obs_page + OBS_FRAME_WORST], rax
+.no_worst:
+        inc     qword [obs_page + OBS_FRAMES]
+        test    r14, r14
+        jz      .pace
+        mov     rax, rbx                ; input-to-photon: the key's stamp to
+        sub     rax, [obs_page + OBS_ECHO_STAMP]        ; the end of this copy
+        mov     [obs_page + OBS_PHOTON_LAST], rax
+        cmp     rax, [obs_page + OBS_PHOTON_WORST]
+        jbe     .photon_done
+        mov     [obs_page + OBS_PHOTON_WORST], rax
+.photon_done:
+        mov     qword [obs_page + OBS_ECHO_PENDING], 0
+.pace:
+        pause
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        sub     rax, r15
+        cmp     rax, [frame_ticks]
+        jb      .pace
+        jmp     .frame
+
+; surf_render - RBP = a surface descriptor in the obs page. Every dirty row:
+; the flag exchanged to zero, then its cells painted at the region's place,
+; the cursor's block overlaid on its cell. Clobbers registers freely
+; (the glass core owns them all).
+surf_render:
+        xor     r12d, r12d              ; row
+.row:
+        cmp     r12, [rbp + SURF_ROWS]
+        jae     .done
+        mov     rdx, [rbp + SURF_DIRTY]
+        xor     eax, eax
+        xchg    al, [rdx + r12]         ; take the flag; a later store sets it again
+        test    al, al
+        jz      .next_row
+        mov     r8, [rbp + SURF_CURSOR]
+        xor     r13d, r13d              ; column
+.col:
+        cmp     r13, [rbp + SURF_COLS]
+        jae     .next_row
+        mov     rax, r12
+        imul    rax, [rbp + SURF_COLS]
+        add     rax, r13
+        mov     rdx, [rbp + SURF_CELLS]
+        movzx   eax, byte [rdx + rax]
+        test    r8d, 1 << 31            ; the cursor, on and on this cell?
+        jz      .plain
+        mov     edx, r8d
+        shr     edx, 16
+        and     edx, 0x7FFF
+        cmp     rdx, r12
+        jne     .plain
+        movzx   edx, r8w
+        cmp     rdx, r13
+        jne     .plain
+        mov     eax, CELL_BLOCK
+.plain:
+        mov     rbx, [rbp + SURF_ROW0]
+        add     rbx, r12
+        mov     rcx, [rbp + SURF_COL0]
+        add     rcx, r13
+        call    draw_cell
+        inc     r13
+        jmp     .col
+.next_row:
+        inc     r12
+        jmp     .row
+.done:
+        ret
+
+; strip_format - the two strip rows from the obs page into the strip
+; surface (GLASS.md, "The obs strip"), both rows dirty. Every number is
+; counted or stamped by the guest; grows served is the one taken from the
+; broker's source byte.
+strip_format:
+        ; Row 0.
+        lea     rdi, [strip_line]
+        lea     rsi, [strip_tmpl0]
+        mov     ecx, STRIP_LEN
+        rep     movsb
+        mov     rax, [obs_page + OBS_NOW]
+        sub     rax, [obs_page + OBS_TSC_BOOT]
+        xor     edx, edx
+        div     qword [tsc_per_ms]
+        xor     edx, edx
+        mov     ecx, 1000
+        div     rcx                     ; seconds since boot
+        lea     rdi, [strip_line + STRIP0_UP]
+        mov     ecx, 6
+        call    put_num
+        mov     rax, [obs_page + OBS_GLASS_APIC]
+        lea     rdi, [strip_line + STRIP0_CORE]
+        mov     ecx, 2
+        call    put_num
+        mov     rax, [obs_page + OBS_FRAMES]
+        lea     rdi, [strip_line + STRIP0_FR]
+        mov     ecx, 6
+        call    put_num
+        mov     rax, [obs_page + OBS_FRAME_LAST]
+        lea     rdi, [strip_line + STRIP0_FL]
+        call    put_ms
+        mov     rax, [obs_page + OBS_FRAME_WORST]
+        lea     rdi, [strip_line + STRIP0_FW]
+        call    put_ms
+        mov     rax, [obs_page + OBS_PHOTON_LAST]
+        lea     rdi, [strip_line + STRIP0_PL]
+        call    put_ms
+        mov     rax, [obs_page + OBS_PHOTON_WORST]
+        lea     rdi, [strip_line + STRIP0_PW]
+        call    put_ms
+        mov     rax, [obs_page + OBS_KEYS]
+        lea     rdi, [strip_line + STRIP0_K]
+        mov     ecx, 4
+        call    put_num
+        mov     rax, [obs_page + OBS_KEYS_HW]
+        lea     rdi, [strip_line + STRIP0_HW]
+        mov     ecx, 3
+        call    put_num
+        mov     rax, [obs_page + OBS_ERRORS]
+        lea     rdi, [strip_line + STRIP0_ERR]
+        mov     ecx, 3
+        call    put_num
+        mov     rax, [obs_page + OBS_STEP_LAST]
+        lea     rdi, [strip_line + STRIP0_SL]
+        call    put_ms
+        mov     rax, [obs_page + OBS_STEP_WORST]
+        lea     rdi, [strip_line + STRIP0_SW]
+        call    put_ms
+        xor     ebx, ebx
+        call    strip_put_row
+
+        ; Row 1.
+        lea     rdi, [strip_line]
+        lea     rsi, [strip_tmpl1]
+        mov     ecx, STRIP_LEN
+        rep     movsb
+        ; The mode word, in its 18-column field.
+        lea     rdi, [strip_line + STRIP1_MODE]
+        mov     rax, [obs_page + OBS_MODE]
+        cmp     rax, 4
+        ja      .mode_unknown
+        lea     rsi, [mode_words]
+        imul    eax, eax, 11
+        add     rsi, rax                ; each word padded to 11 bytes
+        mov     ecx, 11
+        rep     movsb
+        cmp     qword [obs_page + OBS_MODE], MODE_RUNNING
+        jne     .mode_done
+        lea     rdi, [strip_line + STRIP1_MODE + 8]     ; after "running "
+        lea     rsi, [obs_page + OBS_NAME]
+        mov     ecx, 10                 ; the name cut to ten characters
+.name:
+        lodsb
+        test    al, al
+        jz      .mode_done
+        stosb
+        dec     ecx
+        jnz     .name
+        jmp     .mode_done
+.mode_unknown:
+        mov     byte [rdi], '?'
+.mode_done:
+        mov     rax, [obs_page + OBS_QUESTIONS]
+        lea     rdi, [strip_line + STRIP1_Q]
+        mov     ecx, 3
+        call    put_num
+        mov     rax, [obs_page + OBS_NOTES]
+        lea     rdi, [strip_line + STRIP1_N]
+        mov     ecx, 3
+        call    put_num
+        mov     rax, [obs_page + OBS_GROWS_GEN]
+        lea     rdi, [strip_line + STRIP1_GG]
+        mov     ecx, 3
+        call    put_num
+        mov     rax, [obs_page + OBS_GROWS_SERVED]
+        lea     rdi, [strip_line + STRIP1_GS]
+        mov     ecx, 3
+        call    put_num
+        mov     rax, [obs_page + OBS_DISK_REQS]
+        lea     rdi, [strip_line + STRIP1_DR]
+        mov     ecx, 4
+        call    put_num
+        mov     rax, [obs_page + OBS_DISK_WAIT]
+        xor     edx, edx
+        div     qword [tsc_per_ms]
+        lea     rdi, [strip_line + STRIP1_DW]
+        mov     ecx, 6
+        call    put_num
+        mov     rax, [obs_page + OBS_WIRE_CONNS]
+        lea     rdi, [strip_line + STRIP1_WC]
+        mov     ecx, 3
+        call    put_num
+        mov     rax, [obs_page + OBS_WIRE_WAIT]
+        xor     edx, edx
+        div     qword [tsc_per_ms]
+        lea     rdi, [strip_line + STRIP1_WW]
+        mov     ecx, 6
+        call    put_num
+        mov     rax, [obs_page + OBS_BYTES_IN]
+        lea     rdi, [strip_line + STRIP1_IN]
+        mov     ecx, 6
+        call    put_num
+        mov     rax, [obs_page + OBS_BYTES_OUT]
+        lea     rdi, [strip_line + STRIP1_OUT]
+        mov     ecx, 6
+        call    put_num
+        mov     ebx, 1
+        call    strip_put_row
+        ret
+
+; strip_put_row - EBX = 0 or 1: strip_line into that row of the strip
+; surface, cut at the screen's width, padded with spaces, the row dirty.
+strip_put_row:
+        lea     rdi, [strip_cells]
+        mov     eax, ebx
+        imul    eax, [scr_cols]
+        add     rdi, rax
+        lea     rsi, [strip_line]
+        mov     ecx, [scr_cols]
+        mov     edx, STRIP_LEN
+.cell:
+        test    ecx, ecx
+        jz      .filled
+        mov     al, ' '
+        test    edx, edx
+        jz      .put
+        lodsb
+        dec     edx
+.put:
+        stosb
+        dec     ecx
+        jmp     .cell
+.filled:
+        lea     rax, [strip_dirty]      ; lea first: [label + reg] cannot be
+        mov     byte [rax + rbx], 1     ; RIP-relative, and an absolute is the RVA
+        ret
+
+; put_num - RDI = destination, RAX = value, ECX = width. The value as
+; exactly width decimal digits, zero padded, all nines if it does not fit.
+; Clobbers RAX, RCX, RDX, R8, R9.
+put_num:
+        mov     r8d, ecx
+        mov     r9, 1                   ; 10^width
+.pow:
+        imul    r9, r9, 10
+        dec     ecx
+        jnz     .pow
+        cmp     rax, r9
+        jb      .fits
+        mov     ecx, r8d
+.nines:
+        mov     byte [rdi + rcx - 1], '9'
+        dec     ecx
+        jnz     .nines
+        ret
+.fits:
+        mov     ecx, r8d
+        mov     r9d, 10
+.digit:
+        xor     edx, edx
+        div     r9
+        add     dl, '0'
+        mov     [rdi + rcx - 1], dl
+        dec     ecx
+        jnz     .digit
+        ret
+
+; put_ms - RDI = destination, RAX = ticks: milliseconds to one decimal,
+; "%02d.%d", capped at 99.9. Clobbers RAX, RCX, RDX, R8, R9.
+put_ms:
+        imul    rax, rax, 10
+        xor     edx, edx
+        div     qword [tsc_per_ms]      ; tenths of a millisecond
+        cmp     rax, 999
+        jbe     .capped
+        mov     eax, 999
+.capped:
+        xor     edx, edx
+        mov     ecx, 10
+        div     rcx                     ; RAX = whole ms, RDX = the tenth
+        push    rdx
+        mov     ecx, 2
+        call    put_num
+        mov     byte [rdi + 2], '.'
+        pop     rax
+        add     rdi, 3
+        mov     ecx, 1
+        call    put_num
+        ret
 
 ; ---------------------------------------------------------------------------
 ; ACPI and the local APIC.
@@ -4798,6 +5429,13 @@ msg_nic:        db      'S6: nic ', 0
 msg_region:     db      'S6: component region 0x', 0
 msg_region_cap: db      ' 1048576 bytes', 13, 10, 0     ; COMP_BLOB_MAX, spelled
 msg_obs:        db      'S6: obs page 0x', 0
+msg_glass:      db      'S6: glass core ', 0
+msg_choices_prompt: db  '? ask   ! grow'
+msg_choices_prompt_len equ $ - msg_choices_prompt
+strip_tmpl0:    db      'up 000000 core 00 fr 000000 00.0/00.0 ph 00.0/00.0 k 0000 hw 000 err 000 step 00.0/00.0'
+strip_tmpl1:    db      'prompt             q 000 n 000 g 000/000 disk 0000 000000 w 000 000000 io 000000/000000'
+mode_words:     db      'prompt     ', 'asking     ', 'growing    ', 'running    ', 'installing '
+block_glyph:    db      0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
 msg_no_answer:  db      'no answer from the broker', 0
 msg_nothing_ask: db     'nothing to ask', 0
 msg_nothing_grow: db    'nothing to grow', 0
@@ -4829,6 +5467,8 @@ err_too_many:   db      'more enabled processors than MAX_CORES - raise it', 0
 err_no_cores:   db      'MADT lists no enabled processors at all', 0
 err_ap_high:    db      'ap_entry sits above 4GB - the trampoline cannot reach it', 0
 err_shadow:     db      'console shadow too small for this mode - raise SHADOW_SIZE', 0
+err_one_core:   db      'the glass needs a second core - boot with -smp 2 or more', 0
+err_too_small:  db      'mode too small for the glass', 0
 err_no_vblk:    db      'no virtio-blk device on PCI bus 0', 0
 err_vio_cap:    db      'virtio device lacks a modern capability (common, notify or device)', 0
 err_bar_io:     db      'virtio capability names an I/O BAR or a BAR beyond 5 - not a modern device', 0
@@ -5019,10 +5659,15 @@ ap_stacks_top:
         alignb  16
 idt:            resb    256*16
 
-; The console. One owner - the BSP - so none of this needs a lock.
+; The screen's cells, and the conversation panel's (GLASS.md, "The
+; screen"). The console's shadow is the conversation surface's cells.
         alignb  16
-con_cols:       resd    1               ; cells across = width / 16
-con_rows:       resd    1               ; cells down   = height / 16
+scr_cols:       resd    1               ; the screen's cells across = width / 16
+scr_rows:       resd    1               ; cells down = height / 16
+app_cols:       resd    1               ; the app panel's
+app_rows:       resd    1
+con_cols:       resd    1               ; the conversation panel's
+con_rows:       resd    1
 cur_row:        resd    1
 cur_col:        resd    1
 con_ready:      resd    1               ; non-zero once the tee may draw
@@ -5031,6 +5676,25 @@ bg_pix:         resd    1               ; background, encoded for the mode
 fg_pix:         resd    1               ; foreground, encoded for the mode
         alignb  16
 shadow:         resb    SHADOW_SIZE     ; one byte per cell - what is on screen
+
+; The other surfaces and every dirty-row array; the glass core's
+; handshake, its frame slot, and its line buffer.
+        alignb  64
+strip_cells:    resb    STRIP_CELLS
+choices_cells:  resb    STRIP_CELLS
+        alignb  64
+app_cells:      resb    PANEL_CELLS
+        alignb  64
+strip_dirty:    resb    SURF_ROWS_MAX
+choices_dirty:  resb    SURF_ROWS_MAX
+conv_dirty:     resb    SURF_ROWS_MAX
+app_dirty:      resb    SURF_ROWS_MAX
+        alignb  64
+glass_ready:    resd    1               ; the glass core has checked in
+glass_go:       resd    1               ; the boot processor has started it
+        alignb  8
+frame_ticks:    resq    1               ; TSC ticks per frame slot
+strip_line:     resb    128             ; the glass core's formatting scratch
 
 ; The keyboard ring. The interrupt writes head, the main loop writes tail,
 ; and neither touches the other's index - single producer, single consumer.
