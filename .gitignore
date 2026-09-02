@@ -5,6 +5,10 @@
 !stage2/font8x8.bin
 # ...and so is the committed, frozen test component of Stage 5
 !stage5/component.bin
+# ...and the three committed, frozen ABI 2 fixtures of Stage 6 ring 6a
+!stage6/app.bin
+!stage6/hog.bin
+!stage6/escapee.bin
 *.o
 *.elf
 *.lst
