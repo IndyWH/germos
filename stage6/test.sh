@@ -189,6 +189,250 @@ else
 fi
 echo
 
+# ------------------------------------------------- the serial check ----------
+# Used by test 2 at -smp 8, on a FRESH disk, inside the cage, with the
+# display given. Boots the image headless and requires the sixteen S6: lines
+# from GLASS.md, in order: "S6: edid <W>x<H>" or "S6: edid none" second; the
+# gop line equal to the EDID's mode when one was stated; found = woken = the
+# -smp value; the console geometry agreeing with the mode from the same log;
+# the disk's sector count agreeing with the image the harness made; the
+# notebook formatted (the disk was blank); "S6: nic <mac>" carrying the MAC
+# the harness gave the device; "S6: component region 0x<16 hex> 1048576
+# bytes" with the address 128 mod 4096 (a page-aligned region, the ABI 2
+# blob at +128); "S6: obs page 0x<16 hex>" page-aligned; "S6: glass core
+# <id>"; and "S6: keyboard ready" still last, so the serial contract after
+# it stays exactly Stage 2's. The mode's pixel area is left in LAST_AREA so
+# the edid=off run can be checked against the EDID run: the highest mode is
+# never smaller than the preferred one.
+#
+# Nothing is listening on either port during this run (the gate checked
+# that first), and nothing should need to be: the guest sends nothing on
+# the network at boot.
+#
+# OVMF chatters heavily on COM1, so every "S6: ..." run is pulled out of the
+# capture in order - a scan, not a line-start match. Requiring EXACTLY
+# sixteen catches a triple-fault reboot loop. The guest waits for
+# keystrokes forever by design, so timeout killing QEMU (exit 124) is the
+# expected outcome.
+
+LAST_AREA=0
+
+serial_check() {
+  local smp="$1"
+  local display="$2"
+  local label="$3"
+  local disk="$OUT/serial.$label.img"
+  local cap="$OUT/serial.$label.txt"
+  local qerr="$OUT/qemu.$label.err"
+  local lines_file="$OUT/s6.$label.txt"
+  local rc
+
+  rm -f "$cap" "$qerr" "$lines_file"
+  fresh_disk "$disk"
+
+  # shellcheck disable=SC2086
+  timeout -k 5 60 qemu-system-x86_64 \
+    -machine q35 -m 256M -smp "$smp" \
+    -bios "$OVMF" \
+    $display \
+    -drive format=raw,file="$ESP" \
+    -drive format=raw,file="$disk",if=virtio \
+    -netdev "$CAGE_NETDEV" \
+    -device "$CAGE_DEVICE" \
+    -display none -serial stdio \
+    </dev/null >"$cap" 2>"$qerr"
+  rc=$?
+
+  if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
+    echo "    $label: qemu exited $rc, expected 124 (killed by the 60s timeout)"
+    sed 's/^/      /' "$qerr"
+    return 1
+  fi
+
+  tr -d '\r' <"$cap" 2>/dev/null | grep -ao 'S6: .*' >"$lines_file" 2>/dev/null
+
+  local -a got=()
+  mapfile -t got <"$lines_file"
+
+  local bad=()
+
+  if [ "${#got[@]}" -ne 16 ]; then
+    bad+=("expected exactly 16 S6: lines, found ${#got[@]}")
+    if [ "${#got[@]}" -gt 16 ]; then
+      bad+=("more than sixteen usually means a reboot loop - and with the IDT up it should have been an ERR: exception line instead")
+    fi
+  fi
+  if grep -aq 'ERR: ' "$cap"; then
+    bad+=("the guest reported: $(tr -d '\r' <"$cap" | grep -ao 'ERR: .*' | head -1)")
+  fi
+
+  local l w="" h="" ew="" eh=""
+  l="${got[0]:-}"; [ "$l" = "S6: alive" ] || bad+=("line 1: got '$l', want 'S6: alive'")
+
+  l="${got[1]:-}"
+  if [[ "$l" =~ ^S6:\ edid\ ([0-9]+)x([0-9]+)$ ]]; then
+    ew="${BASH_REMATCH[1]}"; eh="${BASH_REMATCH[2]}"
+    [ "$ew" -gt 0 ] && [ "$eh" -gt 0 ] || bad+=("line 2: degenerate EDID mode ${ew}x${eh}")
+  elif [ "$l" != "S6: edid none" ]; then
+    bad+=("line 2: got '$l', want 'S6: edid <W>x<H>' or 'S6: edid none'")
+  fi
+
+  l="${got[2]:-}"
+  if [[ "$l" =~ ^S6:\ gop\ ([0-9]+)x([0-9]+)\ fb\ 0x([0-9a-f]{16})$ ]]; then
+    w="${BASH_REMATCH[1]}"; h="${BASH_REMATCH[2]}"
+    local fb="${BASH_REMATCH[3]}"
+    [ "$w" -gt 0 ] || bad+=("line 3: width is $w")
+    [ "$h" -gt 0 ] || bad+=("line 3: height is $h")
+    [ "$fb" != "0000000000000000" ] || bad+=("line 3: framebuffer address is zero")
+    if [ -n "$ew" ]; then
+      [ "$w" = "$ew" ] && [ "$h" = "$eh" ] || \
+        bad+=("line 3: the mode is ${w}x${h}, but the display's EDID prefers ${ew}x${eh} - the preferred mode must win when it is stated")
+    fi
+    LAST_AREA=$((w * h))
+  else
+    bad+=("line 3: got '$l', want 'S6: gop <W>x<H> fb 0x<16 hex digits>'")
+  fi
+
+  l="${got[3]:-}"; [ "$l" = "S6: boot services exited" ] || \
+    bad+=("line 4: got '$l', want 'S6: boot services exited'")
+  l="${got[4]:-}"; [ "$l" = "S6: gdt and paging ours" ] || \
+    bad+=("line 5: got '$l', want 'S6: gdt and paging ours'")
+  l="${got[5]:-}"; [ "$l" = "S6: idt ready" ] || \
+    bad+=("line 6: got '$l', want 'S6: idt ready'")
+
+  local found="" woken=""
+  l="${got[6]:-}"
+  if [[ "$l" =~ ^S6:\ cores\ found\ ([0-9]+)$ ]]; then
+    found="${BASH_REMATCH[1]}"
+  else
+    bad+=("line 7: got '$l', want 'S6: cores found <N>'")
+  fi
+
+  l="${got[7]:-}"
+  if [[ "$l" =~ ^S6:\ cores\ woken\ ([0-9]+)$ ]]; then
+    woken="${BASH_REMATCH[1]}"
+  else
+    bad+=("line 8: got '$l', want 'S6: cores woken <N>'")
+  fi
+
+  l="${got[8]:-}"
+  if [[ "$l" =~ ^S6:\ console\ ([0-9]+)x([0-9]+)$ ]]; then
+    local cols="${BASH_REMATCH[1]}" rows="${BASH_REMATCH[2]}"
+    if [ -n "$w" ] && [ -n "$h" ]; then
+      [ "$cols" -eq $((w / 16)) ] || \
+        bad+=("line 9: $cols columns, but $w pixels / 16 = $((w / 16))")
+      [ "$rows" -eq $((h / 16)) ] || \
+        bad+=("line 9: $rows rows, but $h pixels / 16 = $((h / 16))")
+    fi
+    [ "$cols" -ge 40 ] || bad+=("line 9: only $cols columns - too narrow for the glass")
+    [ "$rows" -ge 24 ] || bad+=("line 9: only $rows rows - too short for the glass")
+  else
+    bad+=("line 9: got '$l', want 'S6: console <COLS>x<ROWS>'")
+  fi
+
+  l="${got[9]:-}"
+  if [[ "$l" =~ ^S6:\ disk\ ([0-9]+)\ sectors$ ]]; then
+    local sectors="${BASH_REMATCH[1]}"
+    [ "$sectors" -eq $((DISK_BYTES / 512)) ] || \
+      bad+=("line 10: the guest counted $sectors sectors, but the image is $DISK_BYTES bytes = $((DISK_BYTES / 512)) sectors")
+  else
+    bad+=("line 10: got '$l', want 'S6: disk <N> sectors'")
+  fi
+
+  l="${got[10]:-}"; [ "$l" = "S6: notebook formatted" ] || \
+    bad+=("line 11: got '$l', want 'S6: notebook formatted' - the disk was blank")
+
+  l="${got[11]:-}"; [ "$l" = "S6: nic $MAC" ] || \
+    bad+=("line 12: got '$l', want 'S6: nic $MAC' - the MAC the harness gave the device")
+
+  # The component region: sixteen hex digits, not zero, below 4 GB, and
+  # 128 mod 4096 (a page-aligned region, the ABI 2 blob at +128). The
+  # number is the cap, a constant by design.
+  l="${got[12]:-}"
+  if [[ "$l" =~ ^S6:\ component\ region\ 0x([0-9a-f]{16})\ 1048576\ bytes$ ]]; then
+    local addr="${BASH_REMATCH[1]}"
+    [ "$addr" != "0000000000000000" ] || bad+=("line 13: the component region address is zero")
+    [ "${addr:0:8}" = "00000000" ] || bad+=("line 13: the component region 0x$addr is above 4 GB, beyond the identity map")
+    [ "${addr:13:3}" = "080" ] || bad+=("line 13: the component region 0x$addr is not 128 mod 4096 - a page-aligned region with the blob at +128 ends in 080")
+  else
+    bad+=("line 13: got '$l', want 'S6: component region 0x<16 hex digits> 1048576 bytes'")
+  fi
+
+  # The obs page: page-aligned, not zero, below 4 GB.
+  l="${got[13]:-}"
+  if [[ "$l" =~ ^S6:\ obs\ page\ 0x([0-9a-f]{16})$ ]]; then
+    local obs="${BASH_REMATCH[1]}"
+    [ "$obs" != "0000000000000000" ] || bad+=("line 14: the obs page address is zero")
+    [ "${obs:0:8}" = "00000000" ] || bad+=("line 14: the obs page 0x$obs is above 4 GB")
+    [ "${obs:13:3}" = "000" ] || bad+=("line 14: the obs page 0x$obs is not page-aligned")
+  else
+    bad+=("line 14: got '$l', want 'S6: obs page 0x<16 hex digits>'")
+  fi
+
+  l="${got[14]:-}"
+  if ! [[ "$l" =~ ^S6:\ glass\ core\ [0-9]+$ ]]; then
+    bad+=("line 15: got '$l', want 'S6: glass core <id>'")
+  fi
+
+  l="${got[15]:-}"; [ "$l" = "S6: keyboard ready" ] || \
+    bad+=("line 16: got '$l', want 'S6: keyboard ready'")
+
+  [ -n "$found" ] && [ "$found" != "$smp" ] && \
+    bad+=("cores found is $found, but the machine was given -smp $smp")
+  [ -n "$woken" ] && [ "$woken" != "$smp" ] && \
+    bad+=("cores woken is $woken, but the machine was given -smp $smp")
+  [ -n "$found" ] && [ -n "$woken" ] && [ "$found" != "$woken" ] && \
+    bad+=("cores found ($found) and cores woken ($woken) disagree - a core did not check in")
+
+  if [ "${#bad[@]}" -eq 0 ]; then
+    echo "    $label: sixteen S6: lines, in order, ${got[1]#S6: }, mode ${w}x${h}, found = woken = $smp, geometry and sector count agree, notebook formatted, nic $MAC, region ${got[12]#S6: component region }, obs page ${got[13]#S6: obs page }, ${got[14]#S6: }"
+    return 0
+  fi
+
+  echo "    $label: the serial log is not what the spec asks for"
+  for b in "${bad[@]}"; do echo "      - $b"; done
+  echo "      whole capture follows (OVMF chatter included):"
+  if [ -s "$cap" ]; then
+    cat -v "$cap" | sed 's/^/        /'
+  else
+    echo "        (nothing was captured at all)"
+  fi
+  return 1
+}
+
+# ------------------------------------------------- test 2: the serial lines --
+# Three boots. With the EDID at -smp 8: the sixteen lines, the preferred
+# mode taken. With the EDID off at -smp 8: "S6: edid none" and the highest
+# mode, whose area is never below the preferred one's. At -smp 1, under the
+# checker (it needs a monitor to screendump with): the named ERR: line, no
+# glass, no keyboard - and the line on the screen, rendered from the shared
+# font (plan amendment A3).
+
+echo "Test 2 - Serial, first boot: sixteen S6: lines with the EDID and without, at -smp 8; the named error at -smp 1"
+if [ ! -f "$ESP" ]; then
+  fail "test 2: no image was built"
+else
+  t2=0
+  serial_check 8 "$DISPLAY_EDID" "edid" || t2=1
+  area_edid=$LAST_AREA
+  serial_check 8 "$DISPLAY_NONE" "noedid" || t2=1
+  if [ "$t2" -eq 0 ]; then
+    if [ "$LAST_AREA" -lt "$area_edid" ]; then
+      echo "    noedid: the highest mode has area $LAST_AREA, below the EDID run's $area_edid - the fallback is not the highest mode"
+      t2=1
+    else
+      echo "    noedid: the mode's area $LAST_AREA is not below the EDID run's $area_edid"
+    fi
+  fi
+  python3 "$REPO/stage6/checkglass.py" --one-core || t2=1
+  if [ "$t2" -eq 0 ]; then
+    pass "test 2: serial log matches the spec with the EDID, without it, and at one core"
+  else
+    fail "test 2: serial log does not match the spec"
+  fi
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then
