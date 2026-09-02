@@ -433,6 +433,41 @@ else
 fi
 echo
 
+# ------------------------------------------------- test 3: the glass --------
+# The soul of the ring, mocked. The checker starts the MOCK broker with a
+# wiped germline and a record file, boots inside the cage with the display,
+# types a note and "! test app" via the monitor; the mock serves the canned
+# test app - after REHEARSING it in a real headless boot of a copy of this
+# same image - and the guest runs it in its panel; the checker types a key
+# to the app, screendumps, Tabs to the prompt, types a note beside the
+# running app, Tabs back, types another key, screendumps, sends Esc, asks
+# "? ping", types a note, screendumps again. It demands the sixteen boot
+# lines; the echo exactly the five typed lines (the keys to the app, the
+# Tabs and the Esc never reach serial); the record holding one grow whose
+# raw bytes ARE the request frame, generated once, rehearsed once, answered
+# with the app frame the checker rebuilds from stage6/app.bin, then the
+# question; the germline holding exactly that abi2 entry with its
+# provenance; the notebook holding exactly the three notes; the app's known
+# picture in its panel with the keys it was given, the app's choices on the
+# choices row, "running test app" on the strip, the conversation intact and
+# then restored with "pong" and the prompt below. At -smp 2 and -smp 8. The
+# work is in stage6/checkglass.py, which prints its own diagnosis.
+
+echo "Test 3 - The glass: '! test app' rehearsed, run in its panel, a note typed beside it, Esc, at -smp 2 and -smp 8"
+if [ ! -f "$ESP" ]; then
+  fail "test 3: no image was built"
+else
+  glassed=0
+  python3 "$REPO/stage6/checkglass.py" --glass 2 || glassed=1
+  python3 "$REPO/stage6/checkglass.py" --glass 8 || glassed=1
+  if [ "$glassed" -eq 0 ]; then
+    pass "test 3: the app ran in its panel while the conversation stayed alive, at both -smp 2 and -smp 8"
+  else
+    fail "test 3: the glass did not hold (see above)"
+  fi
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then

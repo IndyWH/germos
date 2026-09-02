@@ -522,6 +522,386 @@ def check_region_rows(shot, geometry, region, expected):
     return problems
 
 
+# ---------------------------------------------------------------- the wire --
+# UMBILICAL.md's request rule and GERMLINE.md's grow rule, applied to the
+# broker's recorded bytes.
+
+REQUEST_MAX = 498
+
+
+def judge_request_bytes(raw):
+    """The recorded bytes of one connection, judged by the frame rule alone.
+    Returns ("question", text) or ("grow", body); raises ValueError."""
+    if len(raw) < 4:
+        raise ValueError("only %d byte(s) arrived, not even a length" % len(raw))
+    n, = struct.unpack("<I", raw[:4])
+    if n > REQUEST_MAX:
+        raise ValueError("frame of %d bytes exceeds %d" % (n, REQUEST_MAX))
+    if len(raw) != 4 + n:
+        raise ValueError("length says %d bytes but %d followed" % (n, len(raw) - 4))
+    text = raw[4:]
+    if raw == grow_request(text[1:]) and 2 <= len(text) and all(0x20 <= b <= 0x7E for b in text[1:]):
+        return "grow", text[1:].decode("ascii")
+    if 1 <= len(text) <= REQUEST_MAX and all(0x20 <= b <= 0x7E for b in text):
+        return "question", text.decode("ascii")
+    raise ValueError("request text is neither a question nor a grow request: %r" % text[:32])
+
+
+def read_record(path):
+    try:
+        lines = [l for l in open(path).read().splitlines() if l.strip()]
+    except OSError as exc:
+        return None, ["no broker record: %s" % exc]
+    entries = []
+    problems = []
+    for i, line in enumerate(lines):
+        try:
+            entries.append(json.loads(line))
+        except ValueError as exc:
+            problems.append("record line %d is unreadable: %s" % (i + 1, exc))
+    return entries, problems
+
+
+def check_question_entry(i, entry, want):
+    problems = []
+    try:
+        kind, got = judge_request_bytes(bytes.fromhex(entry["request"]))
+    except (ValueError, KeyError) as exc:
+        return ["connection %d: bytes are not a valid request frame: %s" % (i, exc)]
+    if (kind, got) != ("question", want):
+        problems.append("connection %d: the guest sent %s %r, want the question %r" % (i, kind, got, want))
+    if entry.get("error") is not None:
+        problems.append("connection %d: the broker reports an error: %s" % (i, entry["error"]))
+    if entry.get("answer") != CANNED.get(want, "mock: no canned answer for: " + want):
+        problems.append("connection %d: the mock answered %r" % (i, entry.get("answer")))
+    return problems
+
+
+def check_grow_entry(i, entry, want, source, calls, rehearsals, answer_kind, answer_frame=None,
+                     answer=None, name=None):
+    """One grow connection judged: the raw bytes by GERMLINE.md, then every
+    record field the test states, GLASS.md's abi and name included."""
+    problems = []
+    try:
+        kind, got = judge_request_bytes(bytes.fromhex(entry["request"]))
+    except (ValueError, KeyError) as exc:
+        return ["connection %d: bytes are not a valid request frame: %s" % (i, exc)]
+    if (kind, got) != ("grow", want):
+        problems.append("connection %d: the guest sent %s %r, want the grow request %r" % (i, kind, got, want))
+    if bytes.fromhex(entry["request"]) != grow_request(want.encode()):
+        problems.append("connection %d: raw bytes %s are not GERMLINE.md's frame for %r" % (i, entry["request"], want))
+    fields = {"kind": "grow", "error": None, "text": want, "key": germline_key(want), "source": source,
+              "generation_calls": calls, "rehearsals": rehearsals, "answer_kind": answer_kind,
+              "abi": ABI, "name": name}
+    for k, v in fields.items():
+        if entry.get(k) != v:
+            problems.append("connection %d: %s is %r, want %r" % (i, k, entry.get(k), v))
+    if answer_frame is not None:
+        want_sha = hashlib.sha256(answer_frame).hexdigest()
+        if entry.get("answer_sha256") != want_sha:
+            problems.append("connection %d: answer_sha256 is %r, but the frame GLASS.md gives for it hashes to %s (%d bytes)"
+                            % (i, entry.get("answer_sha256"), want_sha, len(answer_frame)))
+    if answer is not None and entry.get("answer") != answer:
+        problems.append("connection %d: answer is %r, want %r" % (i, entry.get("answer"), answer))
+    return problems
+
+
+# ------------------------------------------------------------ the germline --
+
+def check_germline_entry(root, want, blob, name, choices, model="mock"):
+    """The directory for `want` holds the blob and a provenance record that
+    tells the truth about it (GERMLINE.md and GLASS.md, "The germline")."""
+    problems = []
+    key = germline_key(want)
+    d = os.path.join(root, key)
+    if not os.path.isdir(d):
+        return ["no germline entry %s for %r" % (key, want)]
+    try:
+        got = open(os.path.join(d, "component.bin"), "rb").read()
+    except OSError as exc:
+        return ["entry %s: %s" % (key, exc)]
+    if got != blob:
+        problems.append("entry %s: component.bin is %d bytes, not the %d-byte blob the mock serves" % (key, len(got), len(blob)))
+    try:
+        prov = json.load(open(os.path.join(d, "provenance.json")))
+    except (OSError, ValueError) as exc:
+        return problems + ["entry %s: provenance.json: %s" % (key, exc)]
+    want_fields = {"request": want, "normalised": want, "key": key, "abi": ABI, "machine": MACHINE,
+                   "model": model, "sha256": hashlib.sha256(blob).hexdigest(), "size": len(blob),
+                   "name": name, "choices": [[chr(k), l.decode()] for k, l in choices]}
+    for k, v in want_fields.items():
+        if prov.get(k) != v:
+            problems.append("entry %s: provenance %s is %r, want %r" % (key, k, prov.get(k), v))
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", str(prov.get("date", ""))):
+        problems.append("entry %s: provenance date %r is not ISO-8601 UTC" % (key, prov.get("date")))
+    if not isinstance(prov.get("tries"), int) or prov["tries"] < 1:
+        problems.append("entry %s: provenance tries is %r" % (key, prov.get("tries")))
+    reh = prov.get("rehearsal") or {}
+    if reh.get("passed") is not True or reh.get("phrases") != [] or not isinstance(reh.get("seconds"), (int, float)):
+        problems.append("entry %s: provenance rehearsal is %r, want passed with no phrases and a time" % (key, reh))
+    try:
+        rlog = open(os.path.join(d, "rehearsal.log")).read()
+    except OSError as exc:
+        return problems + ["entry %s: rehearsal.log: %s" % (key, exc)]
+    if len(re.findall(r"^S6: ", rlog, re.M)) != LINES:
+        problems.append("entry %s: rehearsal.log does not hold the twin's sixteen S6: lines" % key)
+    if "ERR:" in rlog:
+        problems.append("entry %s: rehearsal.log carries an ERR: line" % key)
+    return problems
+
+
+def germline_entries(root):
+    try:
+        return sorted(d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d)))
+    except OSError:
+        return []
+
+
+def fixture_self_check(name):
+    """The frozen source reproduces the frozen binary, byte for byte -
+    assembled to stage6/out/, never over the committed file."""
+    src = os.path.join(FIXTURES, name + ".asm")
+    binary = os.path.join(FIXTURES, name + ".bin")
+    check = os.path.join(OUT, name + ".check.bin")
+    try:
+        r = subprocess.run(["nasm", "-f", "bin", src, "-o", check], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, ["could not assemble %s: %s" % (name, exc)]
+    if r.returncode != 0:
+        return None, ["%s does not assemble: %s" % (name, r.stderr.strip()[:200])]
+    blob = open(binary, "rb").read()
+    if open(check, "rb").read() != blob:
+        return None, ["stage6/%s.asm does not reproduce stage6/%s.bin byte for byte" % (name, name)]
+    if not 16 <= len(blob) <= BLOB_MAX:
+        return None, ["%s is %d bytes" % (name, len(blob))]
+    try:
+        parse_response(app_frame(blob, name.encode())[4:])
+    except ValueError as exc:
+        return None, ["%s is not a legal app: %s" % (name, exc)]
+    return blob, []
+
+
+# ------------------------------------------------------------ the notebook --
+
+def parse_notebook(data):
+    if data[0:8] != b"NOTEBOOK":
+        raise ValueError("sector 0 bytes 0-7 are %r, not the NOTEBOOK magic" % data[0:8])
+    version, sector, first, length = struct.unpack_from("<IIQQ", data, 8)
+    if version != 1 or sector != SECTOR or first != 1:
+        raise ValueError("bad header (version %d, sector %d, first %d)" % (version, sector, first))
+    if length != len(data) // SECTOR - 1:
+        raise ValueError("header journal length is %d, want %d" % (length, len(data) // SECTOR - 1))
+    if any(data[0x20:SECTOR]):
+        raise ValueError("header padding is not all zero")
+    notes = []
+    for n in range(1, len(data) // SECTOR):
+        rec = data[n * SECTOR:(n + 1) * SECTOR]
+        if rec[0:4] != b"NOTE":
+            break
+        seq, ln, res = struct.unpack_from("<IHH", rec, 4)
+        if seq != n or not 1 <= ln <= 500 or res != 0:
+            break
+        text = rec[12:12 + ln]
+        if any(b < 0x20 or b > 0x7E for b in text) or any(rec[12 + ln:]):
+            break
+        notes.append(text.decode("ascii"))
+    return notes
+
+
+def check_image(path, want):
+    try:
+        data = open(path, "rb").read()
+    except OSError as exc:
+        return ["cannot read the notebook image: %s" % exc]
+    if len(data) != DISK_BYTES:
+        return ["the image is %d bytes, but the harness made it %d" % (len(data), DISK_BYTES)]
+    try:
+        notes = parse_notebook(data)
+    except ValueError as exc:
+        return ["the image is not a notebook: %s" % exc]
+    problems = []
+    if notes != want:
+        problems.append("the notebook holds %r, want %r" % (notes, want))
+    nxt = (len(want) + 1) * SECTOR
+    if data[nxt:nxt + 4] == b"NOTE":
+        problems.append("sector %d begins a record - something beyond %r was journaled" % (len(want) + 1, want))
+    return problems
+
+
+# ---------------------------------------------------------------- the mock --
+
+def port_state(port):
+    s = socket.socket()
+    s.settimeout(1.0)
+    try:
+        return "open" if s.connect_ex(("127.0.0.1", port)) == 0 else "closed"
+    finally:
+        s.close()
+
+
+def start_mock(record_path):
+    """Start glass.py --mock with a wiped germline, the gate's image as
+    the twin's, its record file; wait for its listening line."""
+    for port in (BROKER_PORT, REHEARSAL_PORT):
+        if port_state(port) == "open":
+            return None, ("something is already listening on 127.0.0.1:%d - the gate talks only "
+                          "to its own mock and its own twin; stop it first" % port)
+    for path in (GERMLINE, REHEARSAL):
+        if os.path.isdir(path):
+            shutil.rmtree(path)
+    if os.path.exists(record_path):
+        os.remove(record_path)
+    log = open(os.path.join(OUT, "mock.stderr.txt"), "ab")
+    proc = subprocess.Popen(
+        [sys.executable, BROKER, "--mock", "--port", str(BROKER_PORT), "--record", record_path,
+         "--germline", GERMLINE, "--image", ESP, "--workdir", REHEARSAL,
+         "--rehearsal-port", str(REHEARSAL_PORT)],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=log)
+    deadline = time.time() + 10.0
+    line = b""
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            return proc, "the mock broker exited %d before listening" % proc.returncode
+        r, _, _ = select.select([proc.stdout], [], [], 0.2)
+        if r:
+            line = proc.stdout.readline()
+            break
+    if line.strip() != ("listening on 127.0.0.1:%d" % BROKER_PORT).encode():
+        stop_mock(proc)
+        return None, "the mock broker did not say it was listening (got %r)" % line
+    return proc, None
+
+
+def stop_mock(proc):
+    if proc is None:
+        return
+    if proc.poll() is None:
+        proc.send_signal(2)
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+
+
+# ------------------------------------------------------- the glass's picture -
+# The test app's known picture (stage6/app.asm), panel-relative: row,
+# column, text - or a run of foreground blocks. The panel line is filled in
+# from the geometry of the run; the key from what was typed.
+
+APP_STRIPS = [
+    (1, 2, "glass test app"),
+    (3, 2, None),                       # "panel <cols>x<rows>"
+    (5, 2, "ticks ok"),
+    (7, 2, "key: -"),
+    (9, 2, "esc exits  tab prompt"),
+    (11, 2, bytes([CELL_BLOCK]) * 5),   # five foreground blocks, from fill
+]
+
+
+def app_strips(panel, key):
+    _, _, rows, cols = panel
+    out = []
+    for r, c, text in APP_STRIPS:
+        if text is None:
+            text = "panel %dx%d" % (cols, rows)
+        elif text == "key: -":
+            text = "key: " + key
+        out.append((r, c, text))
+    return out
+
+
+def expect_cell(font, ch):
+    if isinstance(ch, int):
+        return cell_pixels(font, ch)
+    return render_cell(font, ch)
+
+
+def check_app_panel(shot, geometry, key):
+    """The app panel while the test app runs: its strips at their exact
+    cells, and every other cell of the panel blank. Two colours only."""
+    try:
+        width, height, pixels, cols, rows, font = open_shot(shot, geometry)
+    except (OSError, ValueError) as exc:
+        return [str(exc)]
+    panel = regions(cols, rows)["app"]
+    row0, col0, prows, pcols = panel
+    strips = app_strips(panel, key)
+    problems = font_self_check(font, "".join(t for _, _, t in strips if isinstance(t, str)))
+    if problems:
+        return problems
+    covered = set()
+    for r, c, text in strips:
+        for i, ch in enumerate(text):
+            sr, sc = row0 + r, col0 + c + i
+            if not cell_matches(pixels, width, sr, sc, expect_cell(font, ch)):
+                problems.append("app panel row %d, column %d is not %r - %s"
+                                % (r, c + i, ch, cell_census(pixels, width, sr, sc)))
+                break
+            covered.add((r, c + i))
+    strays = []
+    for r in range(prows):
+        for c in range(pcols):
+            if (r, c) in covered:
+                continue
+            if not cell_matches(pixels, width, row0 + r, col0 + c, blank_cell()):
+                strays.append((r, c))
+    if strays:
+        problems.append("%d cell(s) of the app panel outside the app's strips are not blank, the first at panel row %d column %d: %s"
+                        % (len(strays), strays[0][0], strays[0][1], cell_census(pixels, width, row0 + strays[0][0], col0 + strays[0][1])))
+    stray = check_colour_discipline(pixels, width, height)
+    if stray:
+        problems.append(stray)
+    return problems
+
+
+def check_app_panel_blank(shot, geometry):
+    try:
+        width, height, pixels, cols, rows, font = open_shot(shot, geometry)
+    except (OSError, ValueError) as exc:
+        return [str(exc)]
+    panel = regions(cols, rows)["app"]
+    if not region_background(shot, panel):
+        return ["the app panel is not pure background with no app running"]
+    return []
+
+
+def check_row_text(shot, geometry, region, r, text, label):
+    """Row r of a region holds exactly `text` from column 0, blank after."""
+    try:
+        width, height, pixels, cols, rows, font = open_shot(shot, geometry)
+    except (OSError, ValueError) as exc:
+        return [str(exc)]
+    row0, col0, nrows, ncols = region
+    problems = font_self_check(font, text)
+    if problems:
+        return problems
+    sr = row0 + r
+    for c in range(ncols):
+        want = render_cell(font, text[c]) if c < len(text) else blank_cell()
+        if not cell_matches(pixels, width, sr, col0 + c, want):
+            problems.append("%s: column %d is not %r - %s" % (label, c, text[c] if c < len(text) else " ",
+                                                                cell_census(pixels, width, sr, col0 + c)))
+            break
+    return problems
+
+
+def check_choices(shot, geometry, text):
+    """The choices row: row 0 of the region exactly `text`, row 1 blank."""
+    regs = regions(geometry[2], geometry[3])
+    problems = check_row_text(shot, geometry, regs["choices"], 0, text, "choices row")
+    problems += check_row_text(shot, geometry, regs["choices"], 1, "", "choices row, second line")
+    return problems
+
+
+def check_mode_field(shot, geometry, word):
+    """The strip's mode field: row 1 of the strip, the first 18 columns."""
+    regs = regions(geometry[2], geometry[3])
+    row0, col0, _, _ = regs["strip"]
+    field = (row0 + 1, col0, 1, 18)
+    return check_row_text(shot, geometry, field, 0, word.ljust(18), "mode field")
+
+
 # ----------------------------------------------------------------- modes ----
 
 def report(title, problems, capture=None):
@@ -574,9 +954,132 @@ def run_one_core():
     return 0 if ok else 1
 
 
+CHOICES_APP = choices_row(True, 1, TEST_CHOICES)      # "a alpha   b beta   Esc exit   Tab prompt"
+CHOICES_PROMPT_APP = choices_row(True, 0, TEST_CHOICES)
+CHOICES_NONE = choices_row(False, 0, [])              # "? ask   ! grow"
+
+
+def run_glass(smp):
+    """Test 3 at one -smp value: the glass, mocked."""
+    blob, problems = fixture_self_check("app")
+    if not report("the test app is not what the repository says", problems):
+        return 1
+    say("stage6/app.asm reproduces stage6/app.bin: %d bytes, sha256 %s"
+        % (len(blob), hashlib.sha256(blob).hexdigest()[:16]))
+
+    record = os.path.join(OUT, "broker.glass.%d.jsonl" % smp)
+    serial = os.path.join(OUT, "serial.glass.%d.txt" % smp)
+    shots = {k: os.path.join(OUT, "screen.glass.%d.%s.ppm" % (smp, k)) for k in "abc"}
+    mock, err = start_mock(record)
+    if err:
+        say(err)
+        return 1
+    say("mock broker listening on 127.0.0.1:%d, germline at %s, recording to %s"
+        % (BROKER_PORT, os.path.relpath(GERMLINE, REPO), os.path.relpath(record, REPO)))
+    try:
+        fresh_disk(NOTES)
+        steps = [
+            ("type", "before\n"), ("sleep", 1.5),
+            ("type", "! test app\n"), ("wait_record", record, 1, 150.0), ("sleep", 3.0),
+            ("type", "k"), ("sleep", 1.0),
+            ("shot", shots["a"]),
+            ("type", "\t"), ("sleep", 0.5),
+            ("type", "mid\n"), ("sleep", 1.5),
+            ("type", "\t"), ("sleep", 0.5),
+            ("type", "j"), ("sleep", 1.0),
+            ("shot", shots["b"]),
+            ("type", "\x1b"), ("sleep", 2.0),
+            ("type", "? ping\n"), ("wait_record", record, 2, 20.0), ("sleep", SETTLE),
+            ("type", "after\n"), ("sleep", SETTLE),
+            ("shot", shots["c"]),
+        ]
+        capture, _, err = drive(smp, NOTES, steps, serial)
+    finally:
+        stop_mock(mock)
+    if err:
+        say(err)
+        if capture:
+            dump_capture(capture)
+        return 1
+
+    ok = True
+    problems, geometry = check_boot_lines(capture, smp, "formatted")
+    problems += check_echo(capture, b"before\r\n! test app\r\nmid\r\n? ping\r\nafter\r\n")
+    ok &= report("the serial log is not what the spec asks for", problems, capture)
+    if not problems:
+        say("sixteen boot lines, nic %s; the wire after ready carries exactly the five typed lines" % MAC)
+
+    entries, problems = read_record(record)
+    if entries is not None:
+        if len(entries) != 2:
+            problems.append("the broker saw %d connection(s), want 2" % len(entries))
+        if len(entries) >= 1:
+            problems += check_grow_entry(1, entries[0], "test app", "generated", 1, ["pass"], "app",
+                                         app_frame(blob, b"test app", TEST_CHOICES, 0), name="test app")
+        if len(entries) >= 2:
+            problems += check_question_entry(2, entries[1], "ping")
+    ok &= report("the broker's record is not what GLASS.md asks for", problems)
+    if not problems:
+        say("the broker received the grow request byte-exact, generated once, rehearsed once, "
+            "and sent the app frame GLASS.md gives for stage6/app.bin; then 'ping'")
+
+    problems = check_germline_entry(GERMLINE, "test app", blob, "test app", TEST_CHOICES)
+    names = germline_entries(GERMLINE)
+    if len(names) != 1:
+        problems.append("the germline holds %d entries %r, want exactly 1" % (len(names), names))
+    ok &= report("the germline is not what GLASS.md asks for", problems)
+    if not problems:
+        say("the germline holds exactly one abi2 entry, the test app with its provenance and rehearsal log")
+
+    problems = check_image(NOTES, ["before", "mid", "after"])
+    ok &= report("the notebook is not what it should be", problems)
+    if not problems:
+        say("the notebook holds exactly 'before', 'mid' and 'after' - the note typed beside the running app journaled")
+
+    if None in geometry:
+        say("no picture to judge - the boot lines were wrong")
+        return 1
+    regs = regions(geometry[2], geometry[3])
+    conv = regs["conversation"]
+
+    problems = check_app_panel(shots["a"], geometry, "k")
+    problems += check_choices(shots["a"], geometry, CHOICES_APP)
+    problems += check_mode_field(shots["a"], geometry, "running test app")
+    problems += check_region_rows(shots["a"], geometry, conv, ["> before", "> ! test app", PROMPT])
+    ok &= report("screen A does not show the test app running with the keys", problems)
+    if not problems:
+        say("screen A: the app's strips with 'key: k' and the five blocks, the app's choices row, "
+            "'running test app' on the strip, the conversation intact")
+
+    problems = check_app_panel(shots["b"], geometry, "j")
+    problems += check_choices(shots["b"], geometry, CHOICES_APP)
+    problems += check_region_rows(shots["b"], geometry, conv, ["> before", "> ! test app", "> mid", PROMPT])
+    ok &= report("screen B does not show the note beside the running app", problems)
+    if not problems:
+        say("screen B: '> mid' journaled beside the app, the app then took 'j'")
+
+    problems = check_app_panel_blank(shots["c"], geometry)
+    problems += check_choices(shots["c"], geometry, CHOICES_NONE)
+    problems += check_mode_field(shots["c"], geometry, "prompt")
+    problems += check_region_rows(shots["c"], geometry, conv,
+                                  ["> before", "> ! test app", "> mid", "> ? ping", CANNED["ping"], "> after", PROMPT])
+    ok &= report("screen C does not show the conversation back after Esc", problems)
+    if not problems:
+        say("screen C: the app panel blank, the prompt's choices row, 'prompt' on the strip, "
+            "'? ping' answered and '> after' with the prompt below")
+
+    say("-smp %d: %s" % (smp, "the glass held - the app ran in its panel, the conversation stayed alive" if ok else "the glass did not hold"))
+    return 0 if ok else 1
+
+
 def main(argv):
     if argv == ["--one-core"]:
         return run_one_core()
+    if len(argv) == 2 and argv[0] == "--glass":
+        try:
+            return run_glass(int(argv[1]))
+        except ValueError:
+            pass
     say("usage: checkglass.py --one-core | --glass <smp> | --truth")
     return 1
 
