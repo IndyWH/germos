@@ -228,6 +228,30 @@ org 0                           ; file offsets == RVAs
 %define CELL_BLOCK          0x01        ; a solid foreground block
 %define FRAME_HZ            60
 
+; ABI 2 (GLASS.md, "An app is four callbacks", "The wire"): the frame's
+; header fields, the blob's offset table, the step pacing.
+%define APP_KIND            2
+%define APP_ABI             2
+%define APPH_ABI            1           ; header offsets, from the kind byte
+%define APPH_SOURCE         2
+%define APPH_LEN            4
+%define APPH_NAME           8
+%define APPH_INSTALLED      40
+%define APPH_CHOICES        44
+%define APP_NAME_MAX        32
+%define APP_CHOICES         4
+%define APP_CHOICE_BYTES    13
+%define APP_LABEL_MAX       12
+%define APP_CHOICES_SHOWN   3
+%define BLOB_HDR            16          ; four u32 offsets: init, step, key, exit
+%define CB_INIT             0
+%define CB_STEP             4
+%define CB_KEY              8
+%define CB_EXIT             12
+%define STEP_GAP_MS         10
+%define FOCUS_PROMPT        0
+%define FOCUS_APP           1
+
 ; The strip's field offsets, computed from GLASS.md's format strings.
 %define STRIP0_UP     3
 %define STRIP0_CORE   15
@@ -871,12 +895,15 @@ efi_main:
         ; demand.
         lea     rax, [svc_draw_text]
         mov     [svc_table + 8], rax
-        lea     rax, [svc_console_size]
+        lea     rax, [svc_panel_size]
         mov     [svc_table + 16], rax
-        lea     rax, [svc_poll_key]
-        mov     [svc_table + 24], rax
         lea     rax, [ticks_ms]
+        mov     [svc_table + 24], rax
+        lea     rax, [svc_fill]
         mov     [svc_table + 32], rax
+        mov     rax, [tsc_per_ms]       ; consecutive steps begin this far apart
+        imul    rax, rax, STEP_GAP_MS
+        mov     [step_gap], rax
 
         ; -------------------------------------------------------------------
         ; The console - the second new organ. Clears the screen, replays the
@@ -1033,8 +1060,15 @@ main_loop:
         mov     eax, [kbd_tail]
         cmp     eax, [kbd_head]
         jne     .have
+        cmp     dword [app_running], 0
+        jne     .app_turn               ; an app never lets the loop sleep
         sti                             ; the shadow: no interrupt lands
         hlt                             ; between these two instructions
+        jmp     main_loop
+.app_turn:
+        sti
+        call    app_step_maybe          ; its step, if 10 ms have passed
+        pause
         jmp     main_loop
 .have:
         sti
@@ -1043,14 +1077,41 @@ main_loop:
         jz      main_loop
         movzx   ebx, al
 
+        ; With an app running (GLASS.md, "Running an app"): Esc closes it
+        ; whoever has the keys; Tab moves the keys; with the app in focus
+        ; every other key is the app's; with the prompt in focus the key
+        ; takes the prompt's path below.
+        cmp     dword [app_running], 0
+        je      .prompt_key
+        cmp     bl, 0x1B
+        je      .app_close
+        cmp     bl, 9
+        je      .toggle_focus
+        cmp     qword [obs_page + OBS_FOCUS], FOCUS_APP
+        jne     .prompt_key
+        mov     edi, ebx
+        call    app_key
+        call    photon_mark
+        jmp     main_loop
+.app_close:
+        call    app_close
+        call    photon_mark
+        jmp     main_loop
+.toggle_focus:
+        xor     qword [obs_page + OBS_FOCUS], 1
+        call    choices_update
+        call    photon_mark
+        jmp     main_loop
+
+.prompt_key:
         cmp     bl, 13
         je      .enter
         cmp     bl, 8
         je      .backspace
         cmp     bl, 0x1B                ; Esc at the prompt does nothing - it
         je      main_loop               ; is an app's way home, not ours
-        cmp     bl, 9                   ; Tab: the focus key once an app runs
-        je      main_loop               ; (item 13); nothing at the prompt
+        cmp     bl, 9                   ; Tab with no app: nothing
+        je      main_loop
 
         ; A printable: into the line buffer if there is room (a key beyond
         ; the cap is ignored - not echoed, not drawn - so the screen and the
@@ -3268,6 +3329,7 @@ grow_request:
         inc     qword [obs_page + OBS_ERRORS]
         jmp     finish_line
 .grow:
+        call    app_close_if_running    ; one app at a time (GLASS.md)
         inc     qword [obs_page + OBS_REQUESTS]
         mov     qword [obs_page + OBS_MODE], MODE_GROWING
         lea     rdi, [grow_buf]
@@ -3297,12 +3359,12 @@ grow_request:
         mov     al, [rsi]
         test    al, al
         jz      .refusal
-        cmp     al, 0x01
-        jne     .bad
-        call    component_valid         ; RSI = the content, ECX = N
+        cmp     al, APP_KIND            ; kind 0x01 - a Stage 5 component -
+        jne     .bad                    ; has no callbacks: bad component frame
+        call    app_valid               ; RSI = the content, ECX = N
         test    eax, eax
         jz      .bad
-        call    run_component
+        call    run_app
         jmp     finish_line
 .refusal:
         inc     rsi
@@ -3321,46 +3383,298 @@ grow_request:
         inc     qword [obs_page + OBS_ERRORS]
         jmp     finish_line
 
-; component_valid - RSI = a component frame's content (the kind byte first),
-; ECX = its length N. EAX = 1 if it is what GERMLINE.md describes - bytes
-; 1-3 zero, ABI 1, L in 1..COMP_BLOB_MAX, bytes 12-31 zero, N = 32 + L -
-; else 0. Preserves RSI and ECX; clobbers RDX.
-component_valid:
-        cmp     ecx, COMP_HDR
+; app_valid - RSI = an app frame's content (the kind byte first), ECX =
+; its length N. EAX = 1 if it is what GLASS.md describes - ABI 2, source 0
+; or 1, byte 3 zero, L in 16..cap, N = 96 + L, a name of 1..32 printable
+; bytes NUL-padded, installed 0 or 1, bytes 41-43 zero, four choice slots
+; each empty (all zero) or a printable key with a 1..12 byte printable
+; NUL-padded label, packed from the first, and four callback offsets each
+; below L - else 0. Preserves RSI and ECX; clobbers RAX, RDX, RDI, R8-R11.
+app_valid:
+        cmp     ecx, APP_HDR + BLOB_HDR
         jb      .no
-        cmp     byte [rsi + 1], 0
+        cmp     byte [rsi + APPH_ABI], APP_ABI
         jne     .no
-        cmp     word [rsi + 2], 0
+        cmp     byte [rsi + APPH_SOURCE], 1
+        ja      .no
+        cmp     byte [rsi + 3], 0
         jne     .no
-        cmp     dword [rsi + 4], 1      ; the ABI version
-        jne     .no
-        mov     edx, [rsi + 8]          ; L
-        test    edx, edx
-        jz      .no
+        mov     edx, [rsi + APPH_LEN]   ; L
+        cmp     edx, BLOB_HDR
+        jb      .no
         cmp     edx, COMP_BLOB_MAX
         ja      .no
-        add     edx, COMP_HDR
-        cmp     edx, ecx
+        lea     eax, [rdx + APP_HDR]
+        cmp     eax, ecx
         jne     .no
-        push    rcx
-        push    rsi
-        add     rsi, 12
-        mov     ecx, 20
-.zeros:
-        cmp     byte [rsi], 0
-        jne     .no_pop
-        inc     rsi
-        dec     ecx
-        jnz     .zeros
-        pop     rsi
-        pop     rcx
+        ; the name: printable bytes, then NUL padding, at least one byte
+        lea     rdi, [rsi + APPH_NAME]
+        mov     r8d, APP_NAME_MAX
+        call    padded_text
+        test    eax, eax
+        jz      .no
+        cmp     byte [rsi + APPH_INSTALLED], 1
+        ja      .no
+        cmp     byte [rsi + APPH_INSTALLED + 1], 0
+        jne     .no
+        cmp     word [rsi + APPH_INSTALLED + 2], 0
+        jne     .no
+        ; the choices: packed from the first; an empty slot all zero
+        lea     rdi, [rsi + APPH_CHOICES]
+        mov     r9d, APP_CHOICES
+        xor     r10d, r10d              ; 1 once an empty slot was seen
+.slot:
+        movzx   eax, byte [rdi]
+        test    al, al
+        jnz     .used
+        mov     r11d, APP_CHOICE_BYTES  ; every byte of an empty slot zero
+.zero:
+        cmp     byte [rdi + r11 - 1], 0
+        jne     .no
+        dec     r11d
+        jnz     .zero
+        mov     r10d, 1
+        jmp     .next_slot
+.used:
+        test    r10d, r10d
+        jnz     .no                     ; a used slot after an empty one
+        cmp     al, 0x20
+        jb      .no
+        cmp     al, 0x7E
+        ja      .no
+        push    rdi
+        inc     rdi
+        mov     r8d, APP_LABEL_MAX
+        call    padded_text
+        pop     rdi
+        test    eax, eax
+        jz      .no
+.next_slot:
+        add     rdi, APP_CHOICE_BYTES
+        dec     r9d
+        jnz     .slot
+        ; the blob's four offsets, each below L
+        lea     rdi, [rsi + APP_HDR]
+        mov     edx, [rsi + APPH_LEN]
+        mov     r9d, 4
+.offset:
+        mov     eax, [rdi]
+        cmp     eax, edx
+        jae     .no
+        add     rdi, 4
+        dec     r9d
+        jnz     .offset
         mov     eax, 1
         ret
-.no_pop:
-        pop     rsi
-        pop     rcx
 .no:
         xor     eax, eax
+        ret
+
+; padded_text - RDI = a field of R8D bytes: EAX = 1 if it is one or more
+; printable bytes followed only by NULs, else 0. Clobbers RAX, R8, R11.
+padded_text:
+        xor     r11d, r11d              ; bytes of text seen
+.byte:
+        test    r8d, r8d
+        jz      .end
+        movzx   eax, byte [rdi + r11]
+        test    al, al
+        jz      .pad
+        cmp     al, 0x20
+        jb      .bad
+        cmp     al, 0x7E
+        ja      .bad
+        inc     r11d
+        dec     r8d
+        jmp     .byte
+.pad:
+        cmp     byte [rdi + r11], 0     ; the rest must be NUL
+        jne     .bad
+        inc     r11d
+        dec     r8d
+        jnz     .pad
+.end:
+        test    r11d, r11d
+        jz      .bad
+        movzx   eax, byte [rdi]         ; the first byte was text?
+        test    al, al
+        jz      .bad
+        mov     eax, 1
+        ret
+.bad:
+        xor     eax, eax
+        ret
+
+; run_app - the loader (GLASS.md, "Running an app"). The frame has been
+; received into the component region and checked; the blob's first byte
+; is at comp_region + APP_BLOB_OFF. The name and the choices are copied
+; out of the header, the source counted, the app panel cleared, the mode,
+; focus, strip name and choices row set, and init called with RDI = the
+; service table. Clobbers registers freely.
+run_app:
+        lea     rsi, [comp_region + COMP_RX_OFF + 4]    ; the content
+        lea     rdi, [obs_page + OBS_NAME]
+        push    rsi
+        add     rsi, APPH_NAME
+        mov     ecx, APP_NAME_MAX
+        rep     movsb
+        pop     rsi
+        push    rsi
+        add     rsi, APPH_CHOICES
+        lea     rdi, [app_choices]
+        mov     ecx, APP_CHOICES * APP_CHOICE_BYTES
+        rep     movsb
+        pop     rsi
+        cmp     byte [rsi + APPH_SOURCE], 0
+        jne     .served
+        inc     qword [obs_page + OBS_GROWS_GEN]
+        jmp     .counted
+.served:
+        inc     qword [obs_page + OBS_GROWS_SERVED]
+.counted:
+        call    app_clear
+        mov     dword [app_running], 1
+        mov     qword [obs_page + OBS_MODE], MODE_RUNNING
+        mov     qword [obs_page + OBS_FOCUS], FOCUS_APP
+        mov     qword [obs_page + OBS_STEPS], 0
+        mov     qword [obs_page + OBS_STEP_LAST], 0
+        mov     qword [obs_page + OBS_STEP_WORST], 0
+        mov     qword [step_begin], 0
+        call    choices_update
+        mov     eax, CB_INIT
+        lea     rdi, [svc_table]
+        call    app_call
+        ret
+
+; app_call - EAX = the callback's slot in the blob's header (0, 4, 8, 12);
+; RDI = its argument. The call into the grown code: RSP 16-aligned, kept
+; in memory because the callback may clobber every register but RSP.
+app_call:
+        lea     rdx, [comp_region + APP_BLOB_OFF]
+        mov     eax, [rdx + rax]        ; the offset
+        add     rax, rdx
+        mov     [saved_rsp], rsp
+        and     rsp, -16
+        call    rax                     ; the grown code runs here
+        mov     rsp, [saved_rsp]
+        cld                             ; the contract says clear; be sure
+        ret
+
+; app_step_maybe - step, if at least STEP_GAP_MS have passed since the
+; previous step began; timed for the obs page. Clobbers registers freely.
+app_step_maybe:
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        mov     rdx, rax
+        sub     rdx, [step_begin]
+        cmp     rdx, [step_gap]
+        jb      .not_yet
+        mov     [step_begin], rax
+        mov     eax, CB_STEP
+        xor     edi, edi
+        call    app_call
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        sub     rax, [step_begin]
+        mov     [obs_page + OBS_STEP_LAST], rax
+        cmp     rax, [obs_page + OBS_STEP_WORST]
+        jbe     .no_worst
+        mov     [obs_page + OBS_STEP_WORST], rax
+.no_worst:
+        inc     qword [obs_page + OBS_STEPS]
+.not_yet:
+        ret
+
+; app_key - EDI = the key: the app's key callback.
+app_key:
+        mov     eax, CB_KEY
+        call    app_call
+        ret
+
+; app_close_if_running - a request while an app runs closes it first.
+app_close_if_running:
+        cmp     dword [app_running], 0
+        je      .none
+        call    app_close
+.none:
+        ret
+
+; app_close - exit called, the app panel cleared, the prompt's mode, focus
+; and choices row back, the name empty. The conversation is untouched.
+app_close:
+        mov     eax, CB_EXIT
+        xor     edi, edi
+        call    app_call
+        mov     dword [app_running], 0
+        call    app_clear
+        mov     qword [obs_page + OBS_MODE], MODE_PROMPT
+        mov     qword [obs_page + OBS_FOCUS], FOCUS_PROMPT
+        lea     rdi, [obs_page + OBS_NAME]
+        mov     ecx, APP_NAME_MAX / 8
+        xor     eax, eax
+        rep     stosq
+        call    choices_update
+        ret
+
+; choices_update - the choices row for the state (GLASS.md, "The choices
+; row"): no app; the app with the keys (its first three choices, Esc exit,
+; Tab prompt); the prompt with the keys beside a running app.
+choices_update:
+        cmp     dword [app_running], 0
+        jne     .running
+        lea     rsi, [msg_choices_prompt]
+        mov     ecx, msg_choices_prompt_len
+        call    choices_set
+        ret
+.running:
+        cmp     qword [obs_page + OBS_FOCUS], FOCUS_APP
+        je      .app_keys
+        lea     rsi, [msg_choices_prompt_app]
+        mov     ecx, msg_choices_prompt_app_len
+        call    choices_set
+        ret
+.app_keys:
+        lea     rdi, [choices_line]
+        lea     rsi, [app_choices]
+        mov     r8d, APP_CHOICES_SHOWN
+.choice:
+        movzx   eax, byte [rsi]
+        test    al, al
+        jz      .choices_done
+        stosb                           ; the key
+        mov     al, ' '
+        stosb
+        push    rsi
+        inc     rsi
+        mov     ecx, APP_LABEL_MAX
+.label:
+        lodsb
+        test    al, al
+        jz      .label_done
+        stosb
+        dec     ecx
+        jnz     .label
+.label_done:
+        pop     rsi
+        mov     eax, '   '              ; three spaces between items
+        stosw
+        mov     al, ' '
+        stosb
+        add     rsi, APP_CHOICE_BYTES
+        dec     r8d
+        jnz     .choice
+.choices_done:
+        push    rdi
+        lea     rsi, [msg_choices_app_tail]
+        mov     ecx, msg_choices_app_tail_len
+        rep     movsb
+        pop     rax
+        lea     rsi, [choices_line]
+        mov     rcx, rdi
+        sub     rcx, rsi
+        call    choices_set
         ret
 
 ; draw_answer - RSI = bytes, ECX = how many: drawn through console_putc from
@@ -3406,6 +3720,10 @@ console_puts:
 ; debt); the prompt. Jumped to from the routines above, so its ret is theirs.
 finish_line:
         mov     qword [obs_page + OBS_MODE], MODE_PROMPT
+        cmp     dword [app_running], 0
+        je      .mode_set
+        mov     qword [obs_page + OBS_MODE], MODE_RUNNING
+.mode_set:
         cmp     dword [cur_col], 0
         je      .discard
         mov     al, 10
@@ -3439,12 +3757,11 @@ run_component:
         call    console_redraw
         ret
 
-; svc_draw_text - RDI = row, RSI = column, RDX = the bytes, RCX = how many.
-; Each byte in the next cell along the row from the shared font, stopping
-; at the right edge; a row outside the console draws nothing; a byte outside
-; 0x20-0x7E draws as a space. Pixels only - the shadow is untouched, which
-; is what lets run_component restore the conversation. Preserves RBX, RBP,
-; RSP, R12-R15 (the service contract).
+; svc_draw_text - RDI = row, RSI = column (panel-relative), RDX = the
+; bytes, RCX = how many. Each byte into the next cell along the row of the
+; app panel, stopping at its right edge; a row outside the panel draws
+; nothing; a byte outside 0x20-0x7E draws as a space. Cells only: the glass
+; core paints them. Preserves RBX, RBP, RSP, R12-R15 (the service contract).
 svc_draw_text:
         push    rbx
         push    r12
@@ -3470,7 +3787,7 @@ svc_draw_text:
         cmp     al, 0x7E
         jbe     .draw
 .space:
-        mov     eax, ' '                ; (CHAR_SPACE is defined further down - %define is positional)
+        mov     eax, ' '
 .draw:
         mov     ebx, r12d
         mov     ecx, r13d
@@ -3487,19 +3804,64 @@ svc_draw_text:
         pop     rbx
         ret
 
-; svc_console_size - RAX = cols | rows << 32.
-svc_console_size:
-        mov     eax, [con_cols]
-        mov     edx, [con_rows]
+; svc_panel_size - RAX = cols | rows << 32 of the app panel.
+svc_panel_size:
+        mov     eax, [app_cols]
+        mov     edx, [app_rows]
         shl     rdx, 32
         or      rax, rdx
         ret
 
-; svc_poll_key - RAX = the next key as kbd_next translates it, or 0. A key a
-; component takes never reaches the prompt and is never echoed.
-svc_poll_key:
-        call    kbd_next
-        movzx   eax, al
+; svc_fill - RDI = row, RSI = column, RDX = rows, RCX = columns, R8 = the
+; colour: 0 the background, 1 the foreground block, anything else the
+; background; the rectangle clipped to the panel. Preserves RBX, RBP,
+; RSP, R12-R15.
+svc_fill:
+        push    rbx
+        push    r12
+        push    r13
+        push    r14
+        push    r15
+        mov     r12, rdi                ; row
+        mov     r13, rsi                ; column
+        mov     r14, rdx                ; rows
+        mov     r15, rcx                ; columns
+        mov     eax, ' '
+        cmp     r8, 1
+        jne     .colour
+        mov     eax, CELL_BLOCK
+.colour:
+        mov     r8d, eax
+.row:
+        test    r14, r14
+        jz      .done
+        mov     eax, [app_rows]
+        cmp     r12, rax
+        jae     .done
+        mov     rcx, r13
+        mov     rdx, r15
+.col:
+        test    rdx, rdx
+        jz      .next_row
+        mov     eax, [app_cols]
+        cmp     rcx, rax
+        jae     .next_row
+        mov     eax, r8d
+        mov     ebx, r12d
+        call    app_put
+        inc     rcx
+        dec     rdx
+        jmp     .col
+.next_row:
+        inc     r12
+        dec     r14
+        jmp     .row
+.done:
+        pop     r15
+        pop     r14
+        pop     r13
+        pop     r12
+        pop     rbx
         ret
 
 ; The working indicator: one cell at column 0 of the fresh line, cycling
@@ -4058,8 +4420,9 @@ app_put:
         imul    eax, [app_cols]
         add     eax, ecx
         lea     rdx, [app_cells]
-        pop     rax
-        mov     [rdx + rax], al
+        add     rdx, rax                ; the cell's address, before RAX is the
+        pop     rax                     ; character again
+        mov     [rdx], al
         lea     rdx, [app_dirty]
         mov     byte [rdx + rbx], 1
 .out:
@@ -5432,6 +5795,10 @@ msg_obs:        db      'S6: obs page 0x', 0
 msg_glass:      db      'S6: glass core ', 0
 msg_choices_prompt: db  '? ask   ! grow'
 msg_choices_prompt_len equ $ - msg_choices_prompt
+msg_choices_prompt_app: db '? ask   ! grow   Tab app   Esc exit'
+msg_choices_prompt_app_len equ $ - msg_choices_prompt_app
+msg_choices_app_tail: db 'Esc exit   Tab prompt'
+msg_choices_app_tail_len equ $ - msg_choices_app_tail
 strip_tmpl0:    db      'up 000000 core 00 fr 000000 00.0/00.0 ph 00.0/00.0 k 0000 hw 000 err 000 step 00.0/00.0'
 strip_tmpl1:    db      'prompt             q 000 n 000 g 000/000 disk 0000 000000 w 000 000000 io 000000/000000'
 mode_words:     db      'prompt     ', 'asking     ', 'growing    ', 'running    ', 'installing '
@@ -5582,12 +5949,12 @@ gop_guid:       dd      0x9042a9de
 ; The service table (GERMLINE.md): ABI version, size, four addresses filled
 ; at boot. A component finds it in RDI.
         align   8
-svc_table:      dd      1               ; ABI version
+svc_table:      dd      APP_ABI         ; ABI version, 2
                 dd      40              ; the table's size in bytes
                 dq      0               ; draw_text
-                dq      0               ; console_size
-                dq      0               ; poll_key
+                dq      0               ; panel_size
                 dq      0               ; ticks_ms
+                dq      0               ; fill
 
         align   8
 gop_ptr:        dq      0               ; EFI_GRAPHICS_OUTPUT_PROTOCOL *
@@ -5694,6 +6061,17 @@ glass_ready:    resd    1               ; the glass core has checked in
 glass_go:       resd    1               ; the boot processor has started it
         alignb  8
 frame_ticks:    resq    1               ; TSC ticks per frame slot
+
+; The running app (GLASS.md, "Running an app"): whether one runs, its
+; declared choices as the header carried them, the step pacing, and the
+; choices row's line buffer.
+        alignb  16
+app_running:    resd    1
+        alignb  8
+step_begin:     resq    1               ; the TSC when the last step began
+step_gap:       resq    1               ; STEP_GAP_MS in ticks
+app_choices:    resb    APP_CHOICES * APP_CHOICE_BYTES
+choices_line:   resb    128
 strip_line:     resb    128             ; the glass core's formatting scratch
 
 ; The keyboard ring. The interrupt writes head, the main loop writes tail,
