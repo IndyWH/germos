@@ -4,8 +4,13 @@ Rolling state of the AI OS project. Read this first, then `ai-os-foundation.md`
 (the single source of truth), then the current stage's `spec.md` and `plan.md`.
 
 **Last updated:** 2 September 2026 — **Stage 6 ring 6a, the glass, is
-green pending the oracle.** All four automated tests pass at `-smp 2`
-and `-smp 8`: the screen has one owner (a glass core on the first AP
+CLOSED.** Wajira ran test 5 with the real broker: `! make me a clock`
+was grown by Claude against the ABI 2 contract, rehearsed in the twin,
+and ticked in its own panel while he typed a note beside it and the
+strip's numbers moved — with two choices Claude declared unasked on the
+choices row. *He is happy.* The screenshot is
+`history/2026-09-02-ring6a-clock-in-panel.png`. All four automated tests
+pass at `-smp 2` and `-smp 8`: the screen has one owner (a glass core on the first AP
 compositing four surfaces at sixty frames a second), the machine tells
 the truth about itself (an obs page every counter is written into by the
 thing doing the work, and an obs strip the harness reads back cell by
@@ -46,8 +51,8 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 
 | | |
 |---|---|
-| Stage | 6 — Growth, **ring 6a — the glass**, opened 1 September 2026, **green pending the oracle** (Stages 0–5 closed) |
-| Status | Ring 6a tests 1–4 **PASS** at `-smp 2` and `-smp 8` (2 September 2026); test 5 is Wajira's: `! make me a clock` in its panel, a note beside it, the strip moving, Esc. Rings 6b (the store of plans) and 6c (the pointer) wait for their own sessions. |
+| Stage | 6 — Growth: **ring 6a — the glass — CLOSED** 2 September 2026 (Stages 0–5 closed); next ring 6b, the store of plans |
+| Status | Ring 6a: all five tests **PASS** (test 5 confirmed by Wajira, 2 September 2026: the clock in its panel, a note beside it, the strip moving). Next: ring 6b's plan, in a fresh session, per `stage6/spec.md`. |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.252 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
@@ -680,7 +685,7 @@ tightens. **Next re-check at the Stage 7 gate.**
 
 | Ring | Name | Done when | State |
 |---|---|---|---|
-| 6a | **The glass** | `! make me a clock` ticks in its own panel while you type a note beside it, and the obs strip shows real numbers | **tests 1–4 green, 2 September 2026**; test 5 pending Wajira |
+| 6a | **The glass** | `! make me a clock` ticks in its own panel while you type a note beside it, and the obs strip shows real numbers | **CLOSED 2 September 2026** — test 5 confirmed by Wajira |
 | 6b | **The store of plans** | `! install calculator` from `plans/calculator.md` gives a working calculator; reboot with no broker; `! calculator` still runs it | not started — its own session after 6a closes |
 | 6c | **The pointer** | click a choice on the choices row and it happens; pointer input-to-photon is a number on the obs strip | not started — its own session; allowed to slip |
 
@@ -744,7 +749,31 @@ after `default rel`, where `extract_source` keeps them.
 | 2 | Serial — sixteen `S6:` lines with the EDID (`edid 1440x1440`, the mode 1440x1440, console 90x90, region `0x…4c8080`, obs page `0x…4c7000`, `glass core 1`), `edid none` and 2048x2048 without, found = woken = 8; at `-smp 1` the named error after fourteen lines, on serial and rendered on the screen | **PASS** |
 | 3 | The glass, mocked — `! test app` rehearsed in the twin, cached, delivered, run in its panel with its choices on the row and `running test app` on the strip; `k` to the app; Tab, a note beside it journaled; Tab, `j`; Esc restores the prompt's row; `? ping` answers; at `-smp 2` and `-smp 8` | **PASS** |
 | 4 | The truth on the strip — `fault`, `hog` and `escapee` each refused with their phrase after two rehearsals and never on the screen; the test app's keys counted; the strip on screen equal to the obs page read before and after it, frames strictly increasing; every region equal to its surface; the same app served from the germline (source 1, calls unchanged); `big` streamed as a `4 + 96 + 1,048,576` byte frame and run; `hold` showing `growing`; the markers; at the end `k 0080 q 001 n 001 g 002/001 err 007` on the strip and in the page | **PASS** |
-| 5 | **Oracle — Wajira, real broker** — `! make me a clock`; a note beside it; the strip moves; Esc | **PENDING** |
+| 5 | **Oracle — Wajira, real broker** — `! make me a clock`; a note beside it; the strip moves; Esc | **PASS — confirmed 2 September 2026** |
+
+**What the oracle showed** (`history/2026-09-02-ring6a-clock-in-panel.png`):
+two requests, `make a clock` and `make me a clock`, both grown by the
+real backend against GLASS.md's callback contract and both rehearsed in
+the twin — `g 002/000` on the strip; the clock ticking in the app panel
+while a note was typed and journaled beside it in the conversation; the
+strip honest about the human path against the wire — **`ph 13.2/15.5`
+ms** against **`w` 167,339 ms** for the two exchanges; and **two choices
+Claude declared unasked**, `h` (12/24 hour) and `d` (date on/off), on the
+choices row. The clock came with switches nobody asked for, as the Stage
+5 clock came with a date.
+
+**The owner's decision at the oracle: windowed runs use
+`xres=1920,yres=1080`.** A 1440-tall window overflows a 1440 monitor
+under QEMU's title and menu bars, and 1080p is what cheap monitors state
+— what Stage 7's metal will most likely say. The mode policy does the
+rest: the same binary reads the EDID and takes 1920x1080, console
+120x67. **The caveat that follows:** the frozen gate and the frozen twin
+keep 1440x1440, so the twin now rehearses an app on a 45x86 panel while
+the machine runs it on 60x63. Apps adapt through `panel_size` — the
+grown clock did — but a rehearsal is no longer on the machine's exact
+geometry. Ring 6b's broker module is to set `twin.VGA_ARGS` to match the
+machine's display before calling `twin.rehearse`, which the frozen file
+allows without being touched.
 
 Tests 1–4 were committed **red** before any of `stage6.asm` existed and
 went green where the plan predicted: test 1 at item 9, test 2 at item
@@ -840,22 +869,33 @@ probes on one image hit the lock again.
 
 ## Next action
 
-**Ring 6a is green pending the oracle.** Test 5 is Wajira's, in two
-terminals at the repo root. The broker (it answers questions and
-requests, rehearses every candidate app in the twin, and caches what
-passes in `germline/` under an `abi2` key):
+**Ring 6a is closed.** Next: **ring 6b — the store of plans**, per
+`stage6/spec.md`: `plans/<name>.md` in the format a new frozen
+`stage6/PLANS.md` defines (intent, choices, the five-verb tests),
+`! install <name>` rehearsed in the twin against the plan's own tests
+through `twin.rehearse`'s post-delivery hook, the home image with its
+frozen `stage6/HOME.md`, `S6: home <N> apps`, launch without the broker,
+`! undo install`, the calculator as its oracle. A fresh session, its own
+plan gate; it subclasses `Glazier` and calls `twin.rehearse` with the
+machine's display in `twin.VGA_ARGS` and the extra drive in
+`extra_args`, never editing a frozen file.
+
+To grow something on the glass again at any time — two terminals at the
+repo root. The broker (it answers questions and requests, rehearses
+every candidate app in the twin, and caches what passes in `germline/`
+under an `abi2` key):
 
 ```
 python3 broker/glass.py
 ```
 
 and the machine, windowed — the display flags are load-bearing (the
-EDID is what picks 1440x1440; `-full-screen` gives it exactly on a
-1440-tall monitor, or lower `yres` to taste):
+EDID is what picks the mode; 1920x1080 is the owner's choice for a
+window on this monitor, and the gate keeps 1440x1440):
 
 ```
 qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
-  -vga none -device VGA,edid=on,xres=1440,yres=1440 \
+  -vga none -device VGA,edid=on,xres=1920,yres=1080 \
   -drive format=raw,file=stage6/out/esp.img \
   -drive format=raw,file=stage6/out/notes.img,if=virtio \
   -netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9999' \

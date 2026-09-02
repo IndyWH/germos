@@ -18,6 +18,7 @@ The project went live on 31 August 2026 with an empty folder. Every stage is a g
 | **3 — Memory of its own** | A virtio-blk driver and an append-only notebook filesystem, grown overnight in one unattended run. Typed lines survive a reboot: *"It remembers!"* | 1 Sep 2026 | [it remembers](history/2026-09-01-stage3-it-remembers.png) |
 | **4 — The umbilical** | virtio-net, a minimal TCP/IP stack, and a caged network with one door to a broker that relays to Claude. The booted OS asked Claude its first question and printed the answer. | 1 Sep 2026 | [the first conversation](history/2026-09-01-first-conversation.png) |
 | **5 — The conversation** | The loop closes. A line typed `! ...` goes to Claude and comes back as machine code, **rehearsed in a twin boot before it may run**, then cached in the germline. *"Make me a clock"* produced a running clock — with the date and an exit line nobody asked for. | 1 Sep 2026 | [the first grown clock](history/2026-09-01-first-grown-clock.png) · [the boot log](history/2026-09-01-stage5-boot-log.png) |
+| **6a — The glass** | The screen gets one owner: a glass core composites four regions from surfaces in RAM at sixty frames a second; an obs strip of live counters the harness reads back against the machine's own obs page; an app is four callbacks stepped beside a live conversation. The grown clock ticked in its panel while a note was typed next to it — with two switches Claude added unasked. | 2 Sep 2026 | [the clock in its panel](history/2026-09-02-ring6a-clock-in-panel.png) |
 
 The pictures in `history/` are the machine's own screendumps, taken by each stage's acceptance harness (Stage 4's and Stage 5's are window captures from the oracle runs).
 
@@ -114,7 +115,7 @@ python3 broker/glass.py
 ./stage6/mkimage.sh
 truncate -s 16M stage6/out/notes.img
 qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
-  -vga none -device VGA,edid=on,xres=1440,yres=1440 \
+  -vga none -device VGA,edid=on,xres=1920,yres=1080 \
   -drive format=raw,file=stage6/out/esp.img \
   -drive format=raw,file=stage6/out/notes.img,if=virtio \
   -netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9999' \
