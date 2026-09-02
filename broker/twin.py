@@ -284,7 +284,7 @@ def rehearse(blob, name, choices, image, workdir, port=DEFAULT_PORT,
 
     ev = {"ready": False, "lines": [], "errs": [], "echo": None, "delivered": False,
           "b": False, "c": False, "notes": None, "listener_error": None,
-          "obs_b": None, "obs_c": None, "conv": None, "choices": None,
+          "obs_b": None, "obs_c": None, "conversation": None, "choices": None,
           "name": name, "after": None, "lines_want": lines}
 
     try:
@@ -334,7 +334,7 @@ def rehearse(blob, name, choices, image, workdir, port=DEFAULT_PORT,
                     obs_addr = int(m.group(1), 16)
                     try:
                         ev["obs_b"] = drv.read_obs(obs_addr)
-                        ev["conv"] = drv.read_surface(ev["obs_b"]["conversation"])
+                        ev["conversation"] = drv.read_surface(ev["obs_b"]["conversation"])
                         ev["choices"] = drv.read_surface(ev["obs_b"]["choices"])
                     except ValueError as exc:
                         say("xp: %s" % exc)

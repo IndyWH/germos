@@ -725,19 +725,23 @@ for the cell it painted at screen row 7, column 3; the fault for
 `ERR: exception 6`. The gate's test 3 cannot go green until the frozen
 twin is fixed.
 
-**The stop: a defect in the frozen `broker/twin.py`, found at item 13's
-first probe.** `judge` reads the conversation surface under the key
-`conversation`; `rehearse` stored it as `conv`. Every rehearsal that
-reaches the seventh criterion dies with a `KeyError` instead of a verdict
-and the broker's connection closes without an answer. Two lines. The
-diff is written, unapplied, at `stage6/out/twin.fix.patch` (gitignored,
-so its text is also here), verified on a scratch copy of the twin against
-all four candidates above. The owner applies it by his own hand, as at
-Stage 5 item 8b:
-
-```
-git apply stage6/out/twin.fix.patch
-```
+**The stop, and the freeze opened once — item 12b.** A defect in the
+frozen `broker/twin.py`, found at item 13's first probe: `judge` reads
+the conversation surface under the key `conversation`; `rehearse` stored
+it as `conv`. Every rehearsal that reached the seventh criterion died
+with a `KeyError` instead of a verdict and the broker's connection closed
+without an answer. Two lines. The session stopped at the scope guard
+(commit `4e59ffe`), wrote the diff unapplied at
+`stage6/out/twin.fix.patch` (gitignored, so its text is also here) and
+verified it on a scratch copy of the twin against all four candidates
+above. **Cowork verified the diff against the frozen file — the two
+renamed keys match the one read at the judge, no criterion is weakened,
+the nine phrases stand — and the owner applied it by his own hand with
+`git apply` at the repo root, 2 September 2026.** Item 12b commits it
+with the payload table re-run (814, 0 wrong). The freeze was opened for
+exactly that change and nothing else — the second such opening in the
+project's history, the first being Stage 5 item 8b. The diff, for the
+record:
 
 ```
 --- a/broker/twin.py
