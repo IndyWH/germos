@@ -688,15 +688,100 @@ code and frozen. Stage 5's files stay byte for byte as they are and
 `stage5/test.sh` must still pass at the end of the ring. The automated
 gate speaks only to the mock and spends no token.
 
+### Ring 6a — the build, item by item
+
+`stage6/plan-6a.md` was approved on 2 September 2026 with Cowork's four
+amendments (A1 at most three declared choices on the choices row; A2
+the twin and the pipeline composable before they freeze; A3 the error
+paths render their line to the screen; A4 two honesty lines in the wire
+document). Part 1 — everything written before any code — is done and
+frozen: `stage6/GLASS.md` (item 1), the three fixtures `stage6/app.asm`,
+`hog.asm`, `escapee.asm` with their binaries (item 2), `broker/glass.py`
+and `broker/twin.py` beside the untouched Stage 5 brokers and the
+backend's ABI 2 mode (item 3), `stage6/mkimage.sh` and `stage6/test.sh`
+with test 1 (item 4), test 2 with `stage6/checkglass.py --one-core`
+(item 5), `--glass` (item 6), `--truth` (item 7), and the freeze of
+eleven paths with the payload table at **814 payloads, 0 wrong** (item
+8). Part 2 so far: item 9 (Stage 5's body as `stage6.asm`, test 1
+green), item 10 (the EDID and the mode policy — `S6: edid 1440x1440`
+then `S6: gop 1440x1440`, `edid none` then 2048x2048 without; the region
+at `0x100080` with line thirteen at +128; the keyboard stamp ring; Tab),
+item 11 (the obs page and every counter, line fourteen), item 12 (the
+surfaces, the glass core on the first AP, the four regions, the strip
+formatted from the page, the choices row, line fifteen, the one-core
+error rendered to the screen — **test 2 green**).
+
+**Item 13 is written and proven on a scratch build but not committed —
+the session stopped at the scope guard.** The guest side (the kind
+`0x02` validator, the loader with `init`/`step`/`key`/`exit`, the four
+services into the app panel, the app-aware main loop with Tab and Esc,
+the choices row's three states) is held as the patch script the session
+used, and was proven against the fixed twin below: the test app runs in
+its panel and passes; the hog is refused for its 200 ms step; the escapee
+for the cell it painted at screen row 7, column 3; the fault for
+`ERR: exception 6`. The gate's test 3 cannot go green until the frozen
+twin is fixed.
+
+**The stop: a defect in the frozen `broker/twin.py`, found at item 13's
+first probe.** `judge` reads the conversation surface under the key
+`conversation`; `rehearse` stored it as `conv`. Every rehearsal that
+reaches the seventh criterion dies with a `KeyError` instead of a verdict
+and the broker's connection closes without an answer. Two lines. The
+diff is written, unapplied, at `stage6/out/twin.fix.patch` (gitignored,
+so its text is also here), verified on a scratch copy of the twin against
+all four candidates above. The owner applies it by his own hand, as at
+Stage 5 item 8b:
+
+```
+git apply stage6/out/twin.fix.patch
+```
+
+```
+--- a/broker/twin.py
++++ b/broker/twin.py
+@@ -304,7 +304,7 @@
+     ev = {"ready": False, "lines": [], "errs": [], "echo": None, "delivered": False,
+           "b": False, "c": False, "notes": None, "listener_error": None,
+-          "obs_b": None, "obs_c": None, "conv": None, "choices": None,
++          "obs_b": None, "obs_c": None, "conversation": None, "choices": None,
+           "name": name, "after": None, "lines_want": lines}
+@@ -349,7 +349,7 @@
+                         ev["obs_b"] = drv.read_obs(obs_addr)
+-                        ev["conv"] = drv.read_surface(ev["obs_b"]["conversation"])
++                        ev["conversation"] = drv.read_surface(ev["obs_b"]["conversation"])
+                         ev["choices"] = drv.read_surface(ev["obs_b"]["choices"])
+```
+
+**One wording defect in the frozen `stage6/GLASS.md`, for the owner's
+judgement, no code depends on it:** under "Running an app", the closing
+sentence says "if the cursor is not at column 0 a fresh line is started
+and a prompt drawn". The prompt is already live while an app runs (that
+is the point of the ring), so on Esc the cursor is always past column 0,
+and the frozen checker's screen C expects **no** extra prompt line between
+`> mid` and `> ? ping`. The guest does what the checker and the sentence's
+last clause say — the conversation comes back exactly as it was — and
+the sentence should lose its middle clause when the owner next opens
+that file.
+
+**Things that bit this ring, now in CLAUDE.md's gotchas:** NASM
+under `default rel` cannot make `[label + reg]` RIP-relative and silently
+emits the label's absolute 32-bit address — the RVA, not the loaded
+address — so a dirty flag went to low RAM and nothing painted (the Stage
+5 idiom, `lea` then index, is the rule); `mul` clobbers RDX; a patch that
+appended a block after itself left the live copy of `kbd_next` without
+its counter; QEMU's default VGA carries an EDID naming 1280x800; four
+probes on one image hit the lock again.
+
 ## Next action
 
-**Ring 6a is open.** This session reads the pattern files, commits the
-spec (this commit), measures before planning, drafts `stage6/plan-6a.md`
-in plan mode and commits it, then stops: the plan gate hook holds
-ExitPlanMode until Wajira approves from his own terminal. Cowork reviews
-the plan and may ask for amendments, adopted as numbered amendments in
-the plan. After approval: one commit per numbered item, tests green
-before every commit, this file updated as we go.
+**Ring 6a is stopped at the scope guard before item 13's commit**, with
+items 0–12 committed and tests 1 and 2 green. The owner: review the
+two-line diff above (Cowork can verify it), apply it with `git apply
+stage6/out/twin.fix.patch`, and say so. The session (or the next) then
+commits it as **item 12b** — the twin reads its own evidence (owner's
+fix) — with the payload table re-run, applies item 13 from its patch
+script, runs the gate to all four green, and finishes item 14. Nothing
+else is blocked: the guest code for item 13 is written and proven.
 
 **Stage 5 is closed** — test 5 confirmed by Wajira on 1 September 2026:
 the clock ran, right time, date and exit line included; the two oracle

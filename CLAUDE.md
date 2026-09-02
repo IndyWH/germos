@@ -220,6 +220,22 @@ test in the twin.
 - **`pkill -f <pattern>` matches the shell running it** when the pattern
   appears in the command line; the shell dies with exit 144. Use a
   self-excluding pattern (`germline.p[y]`).
+- **`default rel` cannot make `[label + reg]` RIP-relative.** NASM
+  silently emits the label's absolute 32-bit address instead — the RVA,
+  not where OVMF loaded the image — so the store lands in low RAM and
+  nothing complains. `mov byte [strip_dirty + rbx], 1` set a dirty flag
+  nobody ever read and no row was painted (ring 6a item 12). The idiom
+  is `lea rax, [label]` then `[rax + rbx]`; a constant offset
+  (`[label + 8]`) is fine.
+- **`mul` clobbers RDX.** Keep no pointer there across a `mul` (the
+  dirty-array pointer in `surf_describe` went to address 0).
+- **QEMU's default VGA carries an EDID of its own, naming 1280x800**, and
+  OVMF lists the EDID's preferred mode first. Under the mode policy a run
+  without `-vga none -device VGA,edid=on,xres=1440,yres=1440` gets an
+  80x50 console; the flags are load-bearing on every QEMU command, and
+  the EDID BAR's address moves with the device set — read the BAR.
+- **Several QEMUs on one image hit the lock, again** — every probe boots
+  its own copy under its own `out/`, as the twin does.
 
 ## Working with the hooks
 
