@@ -715,8 +715,11 @@ error rendered to the screen — **test 2 green**).
 the session stopped at the scope guard.** The guest side (the kind
 `0x02` validator, the loader with `init`/`step`/`key`/`exit`, the four
 services into the app panel, the app-aware main loop with Tab and Esc,
-the choices row's three states) is held as the patch script the session
-used, and was proven against the fixed twin below: the test app runs in
+the choices row's three states) is held under `stage6/out/` (gitignored):
+`item13.patch.py`, the anchored script that turns the committed
+`stage6.asm` into the proven build, and `item13.diff`, the same as a
+unified diff (625 lines) — either reproduces it byte for byte. It was
+proven against the fixed twin below: the test app runs in
 its panel and passes; the hog is refused for its 200 ms step; the escapee
 for the cell it painted at screen row 7, column 3; the fault for
 `ERR: exception 6`. The gate's test 3 cannot go green until the frozen
