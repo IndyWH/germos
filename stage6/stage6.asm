@@ -144,12 +144,24 @@ org 0                           ; file offsets == RVAs
 ; the frame's content - at +64, 64-aligned; the largest legal frame (4 + 32
 ; + 1 MB) ends exactly at +0x100040. Measured before planning: a blob
 ; copied here and called returns - our page tables carry no NX bits.
-%define COMP_REGION_SIZE    0x100040
+; Ring 6a (GLASS.md, "The wire"): the region grows to 0x100080 so that an
+; app frame - a 96-byte header, the blob at byte 100 of the frame - received
+; at +28 puts the blob at +128, 64-aligned, and the largest legal frame
+; (4 + 96 + 1 MB) ends exactly at +0x100080. Line thirteen prints +128.
+%define COMP_REGION_SIZE    0x100080
 %define COMP_RX_OFF         28          ; where the response stream begins
-%define COMP_BLOB_OFF       64          ; where the component's first byte lives
-%define COMP_HDR            32          ; the kind byte and the 31 after it
+%define COMP_BLOB_OFF       64          ; a Stage 5 component's first byte (kind 0x01; retired at item 13)
+%define COMP_HDR            32          ; a Stage 5 component's header (retired at item 13)
+%define APP_HDR             96          ; an app frame's kind byte and the 95 after it
+%define APP_BLOB_OFF        128         ; where an app's first byte lives
 %define COMP_BLOB_MAX       0x100000    ; the cap, 1048576 bytes
-%define COMP_RX_MAX         (4 + COMP_HDR + COMP_BLOB_MAX)
+%define COMP_RX_MAX         (4 + APP_HDR + COMP_BLOB_MAX)
+
+; The display's EDID (GLASS.md, "The screen"): 128 bytes read from the VGA
+; device's BAR2, the preferred mode from the first detailed timing
+; descriptor at byte 54.
+%define EDID_BYTES          128
+%define EDID_DTD1           54
 
 ; More enabled processors than this in the MADT is an error we report, not a
 ; buffer we overrun. mlrig has 32 logical CPUs; the mirror run uses all of them.
@@ -333,6 +345,12 @@ efi_main:
         call    serial_err
 .gop_found:
 
+        ; The display's own word first (GLASS.md, "The screen"; line two):
+        ; the EDID from the VGA device's BAR2, the preferred mode out of its
+        ; first detailed timing descriptor - or none. The mode loop below
+        ; remembers the mode that matches it, and takes it.
+        call    edid_read
+
         mov     rbx, [gop_ptr]          ; RBX, R12-R15 are callee-saved, so the
         mov     rax, [rbx + 0x18]       ; firmware gives them back untouched
         mov     r13d, [rax]             ; Mode->MaxMode
@@ -365,6 +383,14 @@ efi_main:
         jz      .free_and_next
         test    ecx, ecx
         jz      .free_and_next
+        cmp     eax, [edid_w]           ; the display's preferred mode, if this
+        jne     .not_preferred          ; is it (edid_w is 0 when none was stated)
+        cmp     ecx, [edid_h]
+        jne     .not_preferred
+        cmp     dword [edid_mode], -1
+        jne     .not_preferred          ; the first match wins
+        mov     [edid_mode], r12d
+.not_preferred:
         mov     edx, eax
         imul    edx, ecx                ; area, the thing we maximise
         cmp     edx, [best_area]
@@ -386,6 +412,12 @@ efi_main:
         jmp     .mode_loop
 
 .mode_done:
+        ; The display's preferred mode wins when it is in the list; else
+        ; Stage 1's highest stands (spec decision 8).
+        cmp     dword [edid_mode], -1
+        je      .keep_highest
+        mov     r14d, [edid_mode]
+.keep_highest:
         cmp     r14d, -1
         jne     .have_mode
         lea     rsi, [err_no_mode]
@@ -805,9 +837,9 @@ efi_main:
         ; twelve says where, because the address moves with every build and
         ; a component must never assume it (GERMLINE.md).
         ; -------------------------------------------------------------------
-        lea     rsi, [msg_region]       ; line twelve
+        lea     rsi, [msg_region]       ; line thirteen
         call    serial_puts
-        lea     rax, [comp_region + COMP_BLOB_OFF]
+        lea     rax, [comp_region + APP_BLOB_OFF]
         call    serial_puthex64
         lea     rsi, [msg_region_cap]
         call    serial_puts
@@ -871,7 +903,9 @@ main_loop:
         cmp     bl, 8
         je      .backspace
         cmp     bl, 0x1B                ; Esc at the prompt does nothing - it
-        je      main_loop               ; is a component's way home, not ours
+        je      main_loop               ; is an app's way home, not ours
+        cmp     bl, 9                   ; Tab: the focus key once an app runs
+        je      main_loop               ; (item 13); nothing at the prompt
 
         ; A printable: into the line buffer if there is room (a key beyond
         ; the cap is ignored - not echoed, not drawn - so the screen and the
@@ -940,6 +974,9 @@ kbd_next:
         je      .none
         lea     rdx, [kbd_ring]         ; pop one scancode
         movzx   ebx, byte [rdx + rax]
+        lea     rdx, [kbd_stamps]       ; and its stamp: the last one popped
+        mov     rdx, [rdx + rax*8]      ; before a key translates is the key's
+        mov     [key_stamp], rdx
         inc     eax
         and     eax, KBD_RING_SIZE - 1
         mov     [kbd_tail], eax
@@ -1178,6 +1215,7 @@ irq1_handler:
         push    rax
         push    rbx
         push    rdx
+        push    rcx
         in      al, 0x60                ; reading the byte is the acknowledge
         mov     ebx, [kbd_head]
         mov     edx, ebx
@@ -1187,6 +1225,15 @@ irq1_handler:
         je      .eoi                    ; overwrite what the loop has not read
         lea     rdx, [kbd_ring]
         mov     [rdx + rbx], al
+        ; The stamp beside the scancode (GLASS.md, "Input-to-photon"): the
+        ; TSC the moment the key arrived, kept in a ring of its own with the
+        ; same index, so the consumer can hand it on with the key.
+        mov     ecx, ebx
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        lea     rdx, [kbd_stamps]
+        mov     [rdx + rcx*8], rax
         mov     ebx, [kbd_head]
         inc     ebx
         and     ebx, KBD_RING_SIZE - 1
@@ -1194,6 +1241,7 @@ irq1_handler:
 .eoi:
         mov     al, 0x20                ; EOI to the master; IRQ1 is its line
         out     0x20, al
+        pop     rcx
         pop     rdx
         pop     rbx
         pop     rax
@@ -1267,6 +1315,113 @@ pci_cfg_write32:
         out     dx, eax
         pop     rdx
         pop     rax
+        ret
+
+; edid_read - the display's preferred mode (GLASS.md, "The screen"). Scans
+; bus 0 for a device of class 0x0300 (display, VGA-compatible), reads the
+; 128 bytes at its BAR2 one byte at a time, requires the EDID header and a
+; non-zero pixel clock in the first detailed timing descriptor, and takes
+; the preferred width and height out of it. Prints line two either way.
+; Called before the GOP mode loop, boot services still up (the BAR is
+; mapped by the firmware's tables). Clobbers registers freely.
+edid_read:
+        mov     dword [edid_w], 0
+        mov     dword [edid_h], 0
+        mov     dword [edid_mode], -1
+        xor     esi, esi                ; device number
+.dev:
+        cmp     esi, 32
+        jae     .none
+        mov     ebx, esi
+        shl     ebx, 11                 ; bus 0, function 0
+        xor     ecx, ecx
+        call    pci_cfg_read32
+        cmp     ax, 0xFFFF
+        je      .next_dev               ; nothing in this slot
+        mov     ecx, 0x0C
+        call    pci_cfg_read32          ; header type in bits 16-23
+        mov     r9d, 1                  ; functions to look at
+        test    eax, 1 << 23            ; multi-function
+        jz      .fns
+        mov     r9d, 8
+.fns:
+        xor     r8d, r8d                ; function number
+.fn:
+        mov     ebx, esi
+        shl     ebx, 11
+        mov     eax, r8d
+        shl     eax, 8
+        or      ebx, eax
+        xor     ecx, ecx
+        call    pci_cfg_read32
+        cmp     ax, 0xFFFF
+        je      .next_fn
+        mov     ecx, 0x08
+        call    pci_cfg_read32          ; class code in bits 31..8
+        shr     eax, 16
+        cmp     ax, 0x0300
+        jne     .next_fn
+        mov     ecx, 0x18               ; BAR2
+        call    pci_cfg_read32
+        test    al, 1
+        jnz     .next_fn                ; an I/O BAR is not it
+        and     eax, ~0xF
+        test    eax, eax
+        jz      .next_fn
+        mov     [edid_bar], eax
+        mov     esi, eax                ; below 4 GB: a 32-bit BAR
+        lea     rdi, [edid_buf]
+        mov     ecx, EDID_BYTES
+        rep     movsb                   ; byte reads, the region's own width
+        lea     rsi, [edid_buf]
+        cmp     byte [rsi], 0
+        jne     .none
+        cmp     dword [rsi + 1], 0xFFFFFFFF
+        jne     .none
+        cmp     word [rsi + 5], 0xFFFF
+        jne     .none
+        cmp     byte [rsi + 7], 0
+        jne     .none
+        cmp     word [rsi + EDID_DTD1], 0        ; pixel clock zero: not a timing
+        je      .none
+        movzx   eax, byte [rsi + EDID_DTD1 + 2]
+        movzx   edx, byte [rsi + EDID_DTD1 + 4]
+        shr     edx, 4
+        shl     edx, 8
+        or      eax, edx                ; horizontal active
+        movzx   ecx, byte [rsi + EDID_DTD1 + 5]
+        movzx   edx, byte [rsi + EDID_DTD1 + 7]
+        shr     edx, 4
+        shl     edx, 8
+        or      ecx, edx                ; vertical active
+        test    eax, eax
+        jz      .none
+        test    ecx, ecx
+        jz      .none
+        mov     [edid_w], eax
+        mov     [edid_h], ecx
+        lea     rsi, [msg_edid]
+        call    serial_puts
+        call    serial_putdec
+        mov     al, 'x'
+        call    serial_putc
+        mov     eax, ecx
+        call    serial_putdec
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+        ret
+.next_fn:
+        inc     r8d
+        cmp     r8d, r9d
+        jb      .fn
+.next_dev:
+        inc     esi
+        jmp     .dev
+.none:
+        mov     dword [edid_w], 0
+        mov     dword [edid_h], 0
+        lea     rsi, [msg_edid_none]
+        call    serial_puts
         ret
 
 ; pci_scan - one pass over bus 0, devices 0-31, every function of a
@@ -4476,6 +4631,8 @@ boot_services:  dq      0               ; EFI_BOOT_SERVICES *
 ; the raw echo of what is typed, and nothing else on this channel.
 msg_alive:      db      'S6: alive', 13, 10, 0
 
+msg_edid:       db      'S6: edid ', 0
+msg_edid_none:  db      'S6: edid none', 13, 10, 0
 msg_gop:        db      'S6: gop ', 0
 msg_fb:         db      ' fb 0x', 0
 msg_exited:     db      'S6: boot services exited', 13, 10, 0
@@ -4554,7 +4711,7 @@ scan1_map:
         db      0, 0x1B                                 ; 00 -, 01 Esc (a component's way home)
         db      '1','2','3','4','5','6','7','8','9','0' ; 02-0B
         db      '-','='                                 ; 0C, 0D
-        db      8, 0                                    ; 0E Backspace, 0F Tab
+        db      8, 9                                    ; 0E Backspace, 0F Tab (focus, ring 6a)
         db      'q','w','e','r','t','y','u','i','o','p' ; 10-19
         db      '[',']'                                 ; 1A, 1B
         db      13, 0                                   ; 1C Enter, 1D LCtrl
@@ -4575,7 +4732,7 @@ scan1_shift_map:
         db      0, 0x1B                                 ; 00 -, 01 Esc
         db      '!','@','#','$','%','^','&','*','(',')' ; 02-0B
         db      '_','+'                                 ; 0C, 0D
-        db      8, 0                                    ; 0E Backspace, 0F Tab
+        db      8, 9                                    ; 0E Backspace, 0F Tab (focus, ring 6a)
         db      'Q','W','E','R','T','Y','U','I','O','P' ; 10-19
         db      '{','}'                                 ; 1A, 1B
         db      13, 0                                   ; 1C Enter, 1D LCtrl
@@ -4737,6 +4894,17 @@ spin_phase:     resd    1               ; which of - \ | / is on screen
 spin_count:     resd    1               ; breaths since the last spin
         alignb  16
 kbd_ring:       resb    KBD_RING_SIZE
+        alignb  16
+kbd_stamps:     resq    KBD_RING_SIZE   ; the TSC when each scancode arrived
+key_stamp:      resq    1               ; the stamp of the key kbd_next last returned
+
+; The display's EDID (GLASS.md, "The screen").
+        alignb  16
+edid_w:         resd    1               ; the preferred width, 0 if none stated
+edid_h:         resd    1
+edid_mode:      resd    1               ; the GOP mode that matches it, or -1
+edid_bar:       resd    1
+edid_buf:       resb    EDID_BYTES
 
 ; The virtio devices. One owner - the BSP - so none of this needs a lock. A
 ; device block per device (the VIO_* layout at the top of the file): the
