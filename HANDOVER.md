@@ -3,16 +3,25 @@
 Rolling state of the AI OS project. Read this first, then `ai-os-foundation.md`
 (the single source of truth), then the current stage's `spec.md` and `plan.md`.
 
-**Last updated:** 1 September 2026 — **Stage 6 OPENED, ring 6a — the
-glass.** `stage6/spec.md` is approved by the owner with all eight
-recommendations taken (Fable 5.1 at high effort implements; the screen
-mode is the display's EDID-preferred one, 1440x1440 in the twin). The
-stage is three rings — glass, store of plans, pointer — each with its own
-plan gate, frozen tests and fresh session; ring 6a opened today in this
-session, whose plan (`stage6/plan-6a.md`) is being drafted in plan mode.
-The policy gate was re-checked at this gate: `claude -p` still draws from
-the subscription, no API keys, next re-check at Stage 7. See "Stage 6"
-below. Earlier the same day — **Stage 5 CLOSED.** Wajira ran test 5
+**Last updated:** 2 September 2026 — **Stage 6 ring 6a, the glass, is
+green pending the oracle.** All four automated tests pass at `-smp 2`
+and `-smp 8`: the screen has one owner (a glass core on the first AP
+compositing four surfaces at sixty frames a second), the machine tells
+the truth about itself (an obs page every counter is written into by the
+thing doing the work, and an obs strip the harness reads back cell by
+cell against that page), and the conversation stays alive while an app
+runs (ABI 2: four callbacks stepped by the main loop, Tab moving the keys
+between the app and the prompt). Built in one session on Fable 5.1 at
+high effort from the plan approved with Cowork's four amendments, one
+commit per item, tests red before code; the one stop (a two-line defect
+in the frozen twin, found at the first app rehearsal) was fixed by the
+owner's own hand as item 12b. Test 5 is Wajira's: `! make me a clock` in
+its own panel, a note typed beside it, the strip moving, Esc. The spec
+was approved on 1 September with all eight recommendations taken
+(Fable 5.1 at high effort implements; the screen mode is the display's
+EDID-preferred one, 1440x1440 in the twin); the policy gate was
+re-checked then: `claude -p` still draws from the subscription, no API
+keys, next re-check at Stage 7. Earlier — **Stage 5 CLOSED.** Wajira ran test 5
 with the real broker: he typed `! make me a clock` at the GermOS prompt;
 Claude wrote NASM for a flat binary against GERMLINE.md's ABI; the broker
 assembled it, **rehearsed it in a headless boot of the same image**, cached
@@ -37,8 +46,8 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 
 | | |
 |---|---|
-| Stage | 6 — Growth, **ring 6a — the glass**, **OPENED** 1 September 2026 (Stages 0–5 closed) |
-| Status | `stage6/spec.md` approved; `stage6/plan-6a.md` in draft behind the plan gate. No ring 6a test exists yet. Rings 6b (the store of plans) and 6c (the pointer) wait for their own sessions. |
+| Stage | 6 — Growth, **ring 6a — the glass**, opened 1 September 2026, **green pending the oracle** (Stages 0–5 closed) |
+| Status | Ring 6a tests 1–4 **PASS** at `-smp 2` and `-smp 8` (2 September 2026); test 5 is Wajira's: `! make me a clock` in its panel, a note beside it, the strip moving, Esc. Rings 6b (the store of plans) and 6c (the pointer) wait for their own sessions. |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.252 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
@@ -671,7 +680,7 @@ tightens. **Next re-check at the Stage 7 gate.**
 
 | Ring | Name | Done when | State |
 |---|---|---|---|
-| 6a | **The glass** | `! make me a clock` ticks in its own panel while you type a note beside it, and the obs strip shows real numbers | **opened 1 September 2026** in this session; `stage6/plan-6a.md` drafted behind the plan gate |
+| 6a | **The glass** | `! make me a clock` ticks in its own panel while you type a note beside it, and the obs strip shows real numbers | **tests 1–4 green, 2 September 2026**; test 5 pending Wajira |
 | 6b | **The store of plans** | `! install calculator` from `plans/calculator.md` gives a working calculator; reboot with no broker; `! calculator` still runs it | not started — its own session after 6a closes |
 | 6c | **The pointer** | click a choice on the choices row and it happens; pointer input-to-photon is a number on the obs strip | not started — its own session; allowed to slip |
 
@@ -711,19 +720,60 @@ surfaces, the glass core on the first AP, the four regions, the strip
 formatted from the page, the choices row, line fifteen, the one-core
 error rendered to the screen — **test 2 green**).
 
-**Item 13 is written and proven on a scratch build but not committed —
-the session stopped at the scope guard.** The guest side (the kind
-`0x02` validator, the loader with `init`/`step`/`key`/`exit`, the four
-services into the app panel, the app-aware main loop with Tab and Esc,
-the choices row's three states) is held under `stage6/out/` (gitignored):
-`item13.patch.py`, the anchored script that turns the committed
-`stage6.asm` into the proven build, and `item13.diff`, the same as a
-unified diff (625 lines) — either reproduces it byte for byte. It was
-proven against the fixed twin below: the test app runs in
-its panel and passes; the hog is refused for its 200 ms step; the escapee
-for the cell it painted at screen row 7, column 3; the fault for
-`ERR: exception 6`. The gate's test 3 cannot go green until the frozen
-twin is fixed.
+Then item 12b (the owner's fix to the frozen twin, below), and item 13
+(ABI 2: the kind `0x02` validator field by field, the loader with
+`init`/`step`/`key`/`exit` and RSP kept in memory across every callback,
+the four services into the app panel, the app-aware main loop — Esc
+closes whoever has the keys, Tab moves them, the step every 10 ms timed
+into the page — the choices row's three states, a `!` closing the running
+app first) — **all four automated tests green at `-smp 2` and `-smp 8`.**
+Item 14 is this handover.
+
+| # | Test | Status |
+|---|---|---|
+| 1 | Artefact — PE32+ magics, x86-64, subsystem 10, relocs stripped, packed image | **PASS** |
+| 2 | Serial — sixteen `S6:` lines with the EDID (`edid 1440x1440`, the mode 1440x1440, console 90x90, region `0x…4c8080`, obs page `0x…4c7000`, `glass core 1`), `edid none` and 2048x2048 without, found = woken = 8; at `-smp 1` the named error after fourteen lines, on serial and rendered on the screen | **PASS** |
+| 3 | The glass, mocked — `! test app` rehearsed in the twin, cached, delivered, run in its panel with its choices on the row and `running test app` on the strip; `k` to the app; Tab, a note beside it journaled; Tab, `j`; Esc restores the prompt's row; `? ping` answers; at `-smp 2` and `-smp 8` | **PASS** |
+| 4 | The truth on the strip — `fault`, `hog` and `escapee` each refused with their phrase after two rehearsals and never on the screen; the test app's keys counted; the strip on screen equal to the obs page read before and after it, frames strictly increasing; every region equal to its surface; the same app served from the germline (source 1, calls unchanged); `big` streamed as a `4 + 96 + 1,048,576` byte frame and run; `hold` showing `growing`; the markers; at the end `k 0080 q 001 n 001 g 002/001 err 007` on the strip and in the page | **PASS** |
+| 5 | **Oracle — Wajira, real broker** — `! make me a clock`; a note beside it; the strip moves; Esc | **PENDING** |
+
+Tests 1–4 were committed **red** before any of `stage6.asm` existed and
+went green where the plan predicted: test 1 at item 9, test 2 at item
+12, tests 3 and 4 at item 13. The gate is five boots of its own plus ten
+rehearsal boots, about fourteen minutes, and refuses to run while
+anything listens on 9999 or 9998.
+
+**On this build:** the glass core is the first AP (APIC id 1); a frame
+that paints nothing costs about 0.06 ms and the worst seen in the gate
+is a few ms (a whole-panel repaint); input-to-photon is typically 1–4 ms
+with a worst of one frame slot (16.7 ms); the test app's `step` is under
+0.1 ms.
+
+**Caveats carried forward:**
+
+- **Everything Stage 5 carried.** The x2APIC path and the trampoline
+  fallback remain unproven; the i8042 is not reconfigured; one machine,
+  one firmware; the stack's omissions; plaintext inside the cage; a
+  component runs at ring 0 with the whole machine in reach.
+- **One app at a time, cooperatively stepped, no preemption and no
+  watchdog.** A `step` that never returns hangs the real machine; the
+  twin's 50 ms budget and 90 s bound catch it first. `step` is not called
+  while the BSP waits on the wire (a `?` question pauses a running clock
+  for the wait; deviation 7). A `!` request closes the running app first.
+- **The glass core is the first AP to check in**, not chosen by
+  topology until Stage 7. A torn cell may last one frame. No timer
+  interrupt: the glass paces on the TSC, the BSP spins while an app runs.
+- **The choices row is text**, not drawn targets (ring 6c). The strip is
+  87 columns wide and is cut at the right edge on a narrower screen.
+- **The trials are recorded for, not run**: time-to-done and every error
+  are in the obs page; no N-of-1 trial exists yet.
+- **`ph` is not literally a photon** (GLASS.md's honesty line), and
+  **grows served is the one strip number taken from the broker**.
+- **The real backend's ABI 2 brief is exercised only at test 5**, as
+  Stage 4's `--bare` lesson prescribes; `claude_backend.grow(abi=2)` has
+  never been run.
+- **A GLASS.md wording defect stands** (below): the frozen checker's
+  expectation is the operative criterion.
 
 **The stop, and the freeze opened once — item 12b.** A defect in the
 frozen `broker/twin.py`, found at item 13's first probe: `judge` reads
@@ -781,14 +831,44 @@ probes on one image hit the lock again.
 
 ## Next action
 
-**Ring 6a is stopped at the scope guard before item 13's commit**, with
-items 0–12 committed and tests 1 and 2 green. The owner: review the
-two-line diff above (Cowork can verify it), apply it with `git apply
-stage6/out/twin.fix.patch`, and say so. The session (or the next) then
-commits it as **item 12b** — the twin reads its own evidence (owner's
-fix) — with the payload table re-run, applies item 13 from its patch
-script, runs the gate to all four green, and finishes item 14. Nothing
-else is blocked: the guest code for item 13 is written and proven.
+**Ring 6a is green pending the oracle.** Test 5 is Wajira's, in two
+terminals at the repo root. The broker (it answers questions and
+requests, rehearses every candidate app in the twin, and caches what
+passes in `germline/` under an `abi2` key):
+
+```
+python3 broker/glass.py
+```
+
+and the machine, windowed — the display flags are load-bearing (the
+EDID is what picks 1440x1440; `-full-screen` gives it exactly on a
+1440-tall monitor, or lower `yres` to taste):
+
+```
+qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
+  -vga none -device VGA,edid=on,xres=1440,yres=1440 \
+  -drive format=raw,file=stage6/out/esp.img \
+  -drive format=raw,file=stage6/out/notes.img,if=virtio \
+  -netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9999' \
+  -device virtio-net-pci,netdev=n0 -serial stdio
+```
+
+Type **`! make me a clock`**. The strip says `growing` while Claude
+writes and the twin rehearses (the broker's terminal narrates each
+step); the clock ticks in the app panel with `running make me a` on the
+strip and `Esc exit   Tab prompt` on the choices row; **Tab** gives the
+keys to the prompt — type a note beside the ticking clock, it journals —
+**Tab** gives them back; the strip's numbers move; **Esc** closes the
+app. `! make me a clock` again comes from `germline/` at once with
+`g 001/001`. **The Stage 5 clock in `germline/` is an `abi1` entry**:
+ring 6a keys its germline `abi2`, so the first request regenerates
+against GLASS.md's callback contract — the brief in
+`broker/claude_backend.py` (unfrozen) is the thing to adjust if a
+candidate fails rehearsal twice; the screen says `rehearsal failed:
+<phrase>` and the broker's terminal says which. `stage6/out/` is
+gitignored: `./stage6/mkimage.sh` rebuilds the boot image and
+`truncate -s 16M stage6/out/notes.img` makes a blank notebook. His word
+closes the ring; then ring 6b, the store of plans, in its own session.
 
 **Stage 5 is closed** — test 5 confirmed by Wajira on 1 September 2026:
 the clock ran, right time, date and exit line included; the two oracle

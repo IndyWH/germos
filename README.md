@@ -104,6 +104,25 @@ qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
 
 Type `! make me a clock`. The indicator turns while Claude writes and the twin rehearses; a clock ticks; **Esc** brings the prompt back; ask again and it comes from the germline at once. `?` still asks (with or without the space now), and a plain line is still a note. The automated gate (`./stage5/test.sh`) uses only a mock broker with a canned test component, so it never spends a token.
 
+**Stage 6, ring 6a — the glass.** The screen gets one owner: a dedicated core composites four regions — an obs strip of live counters on top, a choices row at the bottom, the conversation on the left, the app on the right — from surfaces in RAM, sixty frames a second. An app is four callbacks (`init`, `step`, `key`, `exit`, per [`stage6/GLASS.md`](stage6/GLASS.md)) stepped by the main loop, so the conversation stays alive beside it. The display's EDID picks the mode, so QEMU is given a display that states one. Two terminals:
+
+```
+python3 broker/glass.py
+```
+
+```
+./stage6/mkimage.sh
+truncate -s 16M stage6/out/notes.img
+qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
+  -vga none -device VGA,edid=on,xres=1440,yres=1440 \
+  -drive format=raw,file=stage6/out/esp.img \
+  -drive format=raw,file=stage6/out/notes.img,if=virtio \
+  -netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9999' \
+  -device virtio-net-pci,netdev=n0 -serial stdio
+```
+
+Type `! make me a clock`: the strip says `growing` while Claude writes and the twin rehearses, then the clock ticks in the app panel with `running make me a` on the strip. **Tab** gives the keys to the prompt — type a note beside the running clock — and **Tab** gives them back; **Esc** closes the app. The choices row always says what the keys do. The Stage 5 clock in `germline/` is an ABI 1 entry: ring 6a keys its germline `abi2`, so the first request regenerates. The automated gate (`./stage6/test.sh`) speaks only to the mock and its canned apps, and spends no token.
+
 ## The team of three
 
 GermOS is built by a team of three, and the division of labour is the experiment as much as the OS is:
