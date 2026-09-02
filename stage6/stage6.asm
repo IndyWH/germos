@@ -163,6 +163,61 @@ org 0                           ; file offsets == RVAs
 %define EDID_BYTES          128
 %define EDID_DTD1           54
 
+; The obs page (GLASS.md, "The obs page"): one page of u64 fields, each
+; written by the thing doing the work and read by the glass core, the twin
+; and the harness (through the monitor's xp). Line fourteen says where.
+%define OBS_MAGIC           0x00
+%define OBS_TSC_PER_MS      0x08
+%define OBS_TSC_BOOT        0x10
+%define OBS_MODE            0x18
+%define OBS_GLASS_APIC      0x20
+%define OBS_FRAMES          0x28
+%define OBS_FRAME_LAST      0x30
+%define OBS_FRAME_WORST     0x38
+%define OBS_PHOTON_LAST     0x40
+%define OBS_PHOTON_WORST    0x48
+%define OBS_KEYS            0x50
+%define OBS_KEYS_HW         0x58
+%define OBS_ERRORS          0x60
+%define OBS_QUESTIONS       0x68
+%define OBS_REQUESTS        0x70
+%define OBS_NOTES           0x78
+%define OBS_DISK_REQS       0x80
+%define OBS_DISK_WAIT       0x88
+%define OBS_WIRE_CONNS      0x90
+%define OBS_BYTES_IN        0x98
+%define OBS_BYTES_OUT       0xA0
+%define OBS_WIRE_WAIT       0xA8
+%define OBS_GROWS_GEN       0xB0
+%define OBS_GROWS_SERVED    0xB8
+%define OBS_STEPS           0xC0
+%define OBS_STEP_LAST       0xC8
+%define OBS_STEP_WORST      0xD0
+%define OBS_TT_LAST         0xD8
+%define OBS_TT_WORST        0xE0
+%define OBS_FOCUS           0xE8
+%define OBS_COLS            0xF0
+%define OBS_ROWS            0xF8
+%define OBS_NAME            0x100
+%define OBS_ECHO_STAMP      0x120
+%define OBS_ECHO_PENDING    0x128
+%define OBS_NOW             0x130
+%define OBS_SURF_STRIP      0x140
+%define OBS_SURF_CHOICES    0x180
+%define OBS_SURF_CONV       0x1C0
+%define OBS_SURF_APP        0x200
+%define SURF_CELLS          0
+%define SURF_DIRTY          8
+%define SURF_ROW0           16
+%define SURF_COL0           24
+%define SURF_ROWS           32
+%define SURF_COLS           40
+%define SURF_CURSOR         48
+%define MODE_PROMPT         0
+%define MODE_ASKING         1
+%define MODE_GROWING        2
+%define MODE_RUNNING        3
+
 ; More enabled processors than this in the MADT is an error we report, not a
 ; buffer we overrun. mlrig has 32 logical CPUs; the mirror run uses all of them.
 %define MAX_CORES       64
@@ -761,6 +816,14 @@ efi_main:
         ; -------------------------------------------------------------------
         call    tsc_calibrate
 
+        ; The obs page begins: the magic, the clock it is read with.
+        mov     rax, 'OBSPAGE2'
+        mov     [obs_page + OBS_MAGIC], rax
+        mov     rax, [tsc_per_ms]
+        mov     [obs_page + OBS_TSC_PER_MS], rax
+        mov     rax, [tsc_boot]
+        mov     [obs_page + OBS_TSC_BOOT], rax
+
         ; The service table a component is born into (GERMLINE.md, "The
         ; service table"): four addresses, filled here with RIP-relative
         ; leas - no absolute address anywhere, as the stripped relocations
@@ -780,6 +843,10 @@ efi_main:
         ; the tee - this very line included.
         ; -------------------------------------------------------------------
         call    console_init
+        mov     eax, [con_cols]
+        mov     [obs_page + OBS_COLS], rax
+        mov     eax, [con_rows]
+        mov     [obs_page + OBS_ROWS], rax
         lea     rsi, [msg_console]
         call    serial_puts
         mov     eax, [con_cols]
@@ -842,6 +909,15 @@ efi_main:
         lea     rax, [comp_region + APP_BLOB_OFF]
         call    serial_puthex64
         lea     rsi, [msg_region_cap]
+        call    serial_puts
+
+        ; The obs page - line fourteen says where, so the twin and the
+        ; harness can read the machine's own numbers through the monitor.
+        lea     rsi, [msg_obs]
+        call    serial_puts
+        lea     rax, [obs_page]
+        call    serial_puthex64
+        lea     rsi, [msg_crlf]
         call    serial_puts
 
         ; -------------------------------------------------------------------
@@ -923,6 +999,8 @@ main_loop:
         jmp     main_loop
 .enter:
         call    erase_cursor            ; the block would linger at line end
+        mov     rax, [key_stamp]        ; time-to-done starts here (obs tt)
+        mov     [enter_stamp], rax
         mov     al, 13                  ; Enter echoes CRLF...
         call    serial_putc
         mov     al, 10
@@ -1017,6 +1095,7 @@ kbd_next:
         movzx   eax, byte [rdx + rbx]
         test    al, al
         jz      .again                  ; not a key this stage listens to
+        inc     qword [obs_page + OBS_KEYS]
         pop     rdx
         pop     rbx
         ret
@@ -1238,6 +1317,11 @@ irq1_handler:
         inc     ebx
         and     ebx, KBD_RING_SIZE - 1
         mov     [kbd_head], ebx
+        sub     ebx, [kbd_tail]         ; the ring's occupancy now ...
+        and     ebx, KBD_RING_SIZE - 1
+        cmp     rbx, [obs_page + OBS_KEYS_HW]
+        jbe     .eoi                    ; ... and its high-water mark
+        mov     [obs_page + OBS_KEYS_HW], rbx
 .eoi:
         mov     al, 0x20                ; EOI to the master; IRQ1 is its line
         out     0x20, al
@@ -1874,7 +1958,13 @@ disk_rw:
 
         ; Completion is the used index moving on. Polled with a PIT breath
         ; between looks, bounded, so a dead device is a message in five
-        ; seconds rather than a gate that hangs.
+        ; seconds rather than a gate that hangs. Counted and timed for the
+        ; obs page.
+        inc     qword [obs_page + OBS_DISK_REQS]
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        mov     [t_disk], rax
         mov     rsi, [r9 + Q_USED]
         mov     r8d, VQ_POLL_TRIES
 .poll:
@@ -1889,6 +1979,11 @@ disk_rw:
         call    serial_err
 .completed:
         lfence
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        sub     rax, [t_disk]
+        add     [obs_page + OBS_DISK_WAIT], rax
         mov     edx, [r9 + Q_LAST_USED] ; the used element this completion fills
         and     edx, [r9 + Q_MASK]
         mov     eax, [rsi + 4 + rdx*8]  ; its id must be our chain head, 0
@@ -2131,6 +2226,8 @@ net_send:
         pop     rcx
         mov     ecx, 60
 .long_enough:
+        mov     eax, ecx
+        add     [obs_page + OBS_BYTES_OUT], rax
         lea     rdi, [nic_tx_buf]       ; the virtio-net header: all zero -
         xor     eax, eax                ; no checksum offload, no GSO
         mov     [rdi], rax
@@ -2202,6 +2299,8 @@ net_poll:
         cmp     ecx, VNET_HDR_LEN + ETH_HDR
         jb      .repost                 ; too short to carry a type
         sub     ecx, VNET_HDR_LEN       ; ECX = the Ethernet frame length
+        mov     eax, ecx
+        add     [obs_page + OBS_BYTES_IN], rax
         mov     eax, r13d
         shl     eax, 11                 ; x NIC_RX_BUF
         lea     rsi, [nic_rx_bufs + VNET_HDR_LEN]
@@ -2778,6 +2877,7 @@ tcp_input:
 ; retransmitted after a second up to SYN_TRIES times. Returns EAX = 1
 ; established, or 0.
 tcp_connect:
+        inc     qword [obs_page + OBS_WIRE_CONNS]
         lea     rdi, [tcb]
         mov     ecx, TCB_SIZE / 4
         xor     eax, eax
@@ -2929,6 +3029,20 @@ tcp_close:
 ; EAX = 1 with the answer at rx_stream + 4 and its length at [rx_stream],
 ; or 0: no answer from the broker.
 umbilical_ask:
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        mov     [t_wire], rax
+        call    umbilical_ask_inner
+        push    rax
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        sub     rax, [t_wire]
+        add     [obs_page + OBS_WIRE_WAIT], rax
+        pop     rax
+        ret
+umbilical_ask_inner:
         lea     rdi, [req_buf]
         mov     [rdi], ecx                      ; the frame: length, then bytes
         add     rdi, 4
@@ -3026,8 +3140,11 @@ ask_question:
         jnz     .ask
         lea     rsi, [msg_nothing_ask]
         call    console_puts
+        inc     qword [obs_page + OBS_ERRORS]
         jmp     finish_line
 .ask:
+        inc     qword [obs_page + OBS_QUESTIONS]
+        mov     qword [obs_page + OBS_MODE], MODE_ASKING
         lea     rax, [rx_stream]        ; the answer lands in the 4 KB stream
         mov     [rx_dst], rax
         mov     dword [rx_max], RX_STREAM_MAX
@@ -3046,6 +3163,7 @@ ask_question:
 .no_answer:
         lea     rsi, [msg_no_answer]
         call    console_puts
+        inc     qword [obs_page + OBS_ERRORS]
         jmp     finish_line
 
 ; grow_request - RSI = the body, ECX = its length. GERMLINE.md's grow
@@ -3059,8 +3177,11 @@ grow_request:
         jnz     .grow
         lea     rsi, [msg_nothing_grow]
         call    console_puts
+        inc     qword [obs_page + OBS_ERRORS]
         jmp     finish_line
 .grow:
+        inc     qword [obs_page + OBS_REQUESTS]
+        mov     qword [obs_page + OBS_MODE], MODE_GROWING
         lea     rdi, [grow_buf]
         mov     byte [rdi], 0x01        ; the grow marker
         inc     rdi
@@ -3099,14 +3220,17 @@ grow_request:
         inc     rsi
         dec     ecx
         call    draw_answer
+        inc     qword [obs_page + OBS_ERRORS]
         jmp     finish_line
 .no_answer:
         lea     rsi, [msg_no_answer]
         call    console_puts
+        inc     qword [obs_page + OBS_ERRORS]
         jmp     finish_line
 .bad:
         lea     rsi, [msg_bad_frame]
         call    console_puts
+        inc     qword [obs_page + OBS_ERRORS]
         jmp     finish_line
 
 ; component_valid - RSI = a component frame's content (the kind byte first),
@@ -3193,6 +3317,7 @@ console_puts:
 ; showed nothing, so they do nothing - the screen owes the user no invisible
 ; debt); the prompt. Jumped to from the routines above, so its ret is theirs.
 finish_line:
+        mov     qword [obs_page + OBS_MODE], MODE_PROMPT
         cmp     dword [cur_col], 0
         je      .discard
         mov     al, 10
@@ -3374,6 +3499,8 @@ notebook_init:
         jmp     .scan
 .scanned:
         mov     [nb_next], ebx          ; the first sector that is not a record
+        mov     eax, [nb_count]
+        mov     [obs_page + OBS_NOTES], rax
         lea     rsi, [msg_nb]
         call    serial_puts
         mov     eax, [nb_count]
@@ -3528,6 +3655,8 @@ notebook_append:
 
         inc     dword [nb_count]
         inc     dword [nb_next]
+        mov     eax, [nb_count]
+        mov     [obs_page + OBS_NOTES], rax
 .full:
         mov     dword [line_len], 0
 .out:
@@ -4015,6 +4144,25 @@ console_scroll:
 ; where the typed text begins, so backspace can never eat the prompt.
 console_prompt:
         push    rax
+        push    rdx
+        ; Time-to-done (GLASS.md, "The obs page"): the Enter that led here
+        ; to this prompt, last and worst. Nothing at boot's first prompt.
+        mov     rdx, [enter_stamp]
+        test    rdx, rdx
+        jz      .no_tt
+        mov     qword [enter_stamp], 0
+        push    rdx
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        pop     rdx
+        sub     rax, rdx
+        mov     [obs_page + OBS_TT_LAST], rax
+        cmp     rax, [obs_page + OBS_TT_WORST]
+        jbe     .no_tt
+        mov     [obs_page + OBS_TT_WORST], rax
+.no_tt:
+        pop     rdx
         mov     al, '>'
         call    console_putc
         mov     al, ' '
@@ -4649,6 +4797,7 @@ msg_nb_fmt:     db      'S6: notebook formatted', 13, 10, 0
 msg_nic:        db      'S6: nic ', 0
 msg_region:     db      'S6: component region 0x', 0
 msg_region_cap: db      ' 1048576 bytes', 13, 10, 0     ; COMP_BLOB_MAX, spelled
+msg_obs:        db      'S6: obs page 0x', 0
 msg_no_answer:  db      'no answer from the broker', 0
 msg_nothing_ask: db     'nothing to ask', 0
 msg_nothing_grow: db    'nothing to grow', 0
@@ -5000,6 +5149,14 @@ grow_buf:       resb    1 + 512         ; the grow request's text: the marker, t
 tsc_per_ms:     resq    1
 tsc_boot:       resq    1
 saved_rsp:      resq    1               ; the loader's stack pointer across a component
+enter_stamp:    resq    1               ; the last Enter's key stamp, until its prompt
+t_disk:         resq    1               ; the TSC when a disk request was posted
+t_wire:         resq    1               ; the TSC when an exchange began
+
+; The obs page (GLASS.md, "The obs page"): one page, page-aligned, its
+; address on line fourteen.
+        alignb  4096
+obs_page:       resb    4096
 
 ; The component region (the COMP_* layout at the top of the file): a grow
 ; response lands here from +28, and a component runs from +64. Page-aligned
