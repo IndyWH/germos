@@ -727,7 +727,16 @@ the four services into the app panel, the app-aware main loop — Esc
 closes whoever has the keys, Tab moves them, the step every 10 ms timed
 into the page — the choices row's three states, a `!` closing the running
 app first) — **all four automated tests green at `-smp 2` and `-smp 8`.**
-Item 14 is this handover.
+Item 14 is this handover. **Item 14b — Cowork's pre-oracle review, fix
+first:** the one defect, input-to-photon on the Enter path — `photon_mark`
+ran after `notebook_append`, `ask_question` or `grow_request` returned,
+so `ph` measured the whole broker wait and one real grow would have
+pinned its worst at 99.9 for the session; it is now marked once, right
+after the CRLF echo (the new line is Enter's echo), and the wire's wait
+stays in `w`. Two nits taken: `draw_cursor` stores the new cursor word
+before dirtying the old row, so the glass core can never leave a ghost
+block; the backend's ABI 2 brief puts the `; choice` lines immediately
+after `default rel`, where `extract_source` keeps them.
 
 | # | Test | Status |
 |---|---|---|

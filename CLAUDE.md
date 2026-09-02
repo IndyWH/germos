@@ -236,6 +236,12 @@ test in the twin.
   the EDID BAR's address moves with the device set — read the BAR.
 - **Several QEMUs on one image hit the lock, again** — every probe boots
   its own copy under its own `out/`, as the twin does.
+- **A latency counter is stamped at the echo, never after a wait that
+  has its own counter.** Input-to-photon marked after `grow_request`
+  returned measured the whole broker wait, and one real grow pinned
+  `ph` worst at 99.9 for the session — the strip telling an untruth
+  about the human path while `w` already held the wire's wait. Mark at
+  the moment the key's echo lands in the surface (ring 6a item 14b).
 
 ## Working with the hooks
 

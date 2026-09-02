@@ -1136,6 +1136,9 @@ main_loop:
         call    serial_putc
         mov     al, 10
         call    serial_putc
+        call    photon_mark             ; the new line IS Enter's echo: the
+                                        ; photon is stamped here, never after a
+                                        ; wait that has its own counter (w, tt)
         ; The forgiving marker parse (GERMLINE.md, "What is a question, what
         ; is a request"): leading spaces skipped, "?" asks, "!" requests,
         ; anything else is a note on Stage 3's path. Nothing after this
@@ -1147,15 +1150,12 @@ main_loop:
         je      .request
         call    notebook_append         ; ...the line goes to disk, and only
         call    console_prompt          ; then a new prompt, console-only
-        call    photon_mark
         jmp     main_loop
 .question:
         call    ask_question            ; console-only, then the prompt
-        call    photon_mark
         jmp     main_loop
 .request:
         call    grow_request            ; console-only, then the prompt
-        call    photon_mark
         jmp     main_loop
 .backspace:
         mov     eax, [cur_col]          ; only within this line's typed text -
@@ -4719,21 +4719,23 @@ draw_cell:
 draw_cursor:
         push    rax
         push    rbx
-        mov     rax, [obs_page + OBS_SURF_CONV + SURF_CURSOR]
-        test    eax, 1 << 31
-        jz      .was_off
-        mov     ebx, eax                ; the row the cursor was on: dirty
-        shr     ebx, 16
-        and     ebx, 0x7FFF
-        call    conv_dirty_row
-.was_off:
+        push    rdx
+        mov     rdx, [obs_page + OBS_SURF_CONV + SURF_CURSOR]     ; the old word
         mov     eax, [cur_row]
         shl     eax, 16
         or      eax, [cur_col]
         or      eax, 1 << 31
-        mov     [obs_page + OBS_SURF_CONV + SURF_CURSOR], rax       ; one store
+        mov     [obs_page + OBS_SURF_CONV + SURF_CURSOR], rax       ; one store, first
+        test    edx, 1 << 31            ; then the row the cursor was on: dirty,
+        jz      .was_off                ; after the new word is in place, so the
+        mov     ebx, edx                ; glass core can never render the old row
+        shr     ebx, 16                 ; with the old word and leave a ghost
+        and     ebx, 0x7FFF
+        call    conv_dirty_row
+.was_off:
         mov     ebx, [cur_row]
         call    conv_dirty_row
+        pop     rdx
         pop     rbx
         pop     rax
         ret

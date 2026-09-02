@@ -210,7 +210,8 @@ APP_BRIEF = (
     "- Preserve RBX, RBP, R12-R15 across your own service calls: the services "
     "preserve them, but clobber RAX, RCX, RDX, RSI, RDI, R8-R11.\n"
     "- You may declare up to four keyboard choices the screen will show, one per "
-    "comment line at the top: `; choice <key> <label>` with a one-character key and a "
+    "comment line placed immediately after the `default rel` line: `; choice <key> "
+    "<label>` with a one-character key and a "
     "label of at most 12 characters. Handle those keys in key.\n\n"
 )
 
