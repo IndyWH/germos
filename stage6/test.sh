@@ -468,6 +468,70 @@ else
 fi
 echo
 
+# --------------------------------------------- test 4: the truth on the strip
+# Two halves. First this harness inspects its OWN cage and display strings
+# - the ones every QEMU line above was given - and the checker inspects its
+# own QEMU argv and the twin's: slirp user mode, restrict=on, exactly one
+# guestfwd, to tcp:10.0.2.4:9999, delivered by nc to 127.0.0.1 on 9999 (the
+# gate's guest) and 9998 (the twin), no hostfwd, -vga none and the standard
+# VGA device with the EDID. Then the long run at -smp 8: fault, hog and
+# escapee each refused with the right phrase after two rehearsals and never
+# reaching the screen; the test app run, keys sent, the obs page read
+# through the monitor before and after a screendump and the strip rendered
+# from it cell by cell; frames strictly increasing across a second; every
+# region outside the app panel matching its surface; the same app served
+# from the germline; the 1 MB twin run; the mock told to hold and "growing"
+# on the strip; the marker cases; and at the end the strip's counts - keys,
+# questions, notes, grows, errors - byte for byte what the checker did, the
+# page agreeing. The work is in stage6/checkglass.py --truth.
+
+echo "Test 4 - The truth on the strip: the bad apps refused, the counts exact, the page and the screen agree"
+cage_probs=()
+case "$CAGE_NETDEV" in
+  user,*) : ;;
+  *) cage_probs+=("the netdev is not slirp user mode: $CAGE_NETDEV") ;;
+esac
+case ",$CAGE_NETDEV," in
+  *,restrict=on,*) : ;;
+  *) cage_probs+=("the netdev lacks restrict=on: $CAGE_NETDEV") ;;
+esac
+n_fwd=$(printf '%s' "$CAGE_NETDEV" | grep -o 'guestfwd=' | wc -l)
+[ "$n_fwd" -eq 1 ] || cage_probs+=("expected exactly one guestfwd, found $n_fwd: $CAGE_NETDEV")
+printf '%s' "$CAGE_NETDEV" | grep -qE 'guestfwd=tcp:10\.0\.2\.4:9999-cmd:nc -N 127\.0\.0\.1 9999(,|$)' || \
+  cage_probs+=("the guestfwd is not tcp:10.0.2.4:9999 via 'nc -N 127.0.0.1 9999': $CAGE_NETDEV")
+case "$CAGE_NETDEV" in
+  *hostfwd*) cage_probs+=("the netdev opens a hostfwd: $CAGE_NETDEV") ;;
+esac
+IFS=',' read -ra dev_fields <<<"$CAGE_DEVICE"
+dev_ok=0
+if [ "${dev_fields[0]:-}" = "virtio-net-pci" ]; then
+  has_nd=0; has_mac=0
+  for f in "${dev_fields[@]:1}"; do
+    [ "$f" = "netdev=n0" ] && has_nd=1
+    [ "$f" = "mac=$MAC" ] && has_mac=1
+  done
+  [ "$has_nd" -eq 1 ] && [ "$has_mac" -eq 1 ] && dev_ok=1
+fi
+[ "$dev_ok" -eq 1 ] || \
+  cage_probs+=("the device is not a virtio-net-pci on netdev n0 with the harness's MAC: $CAGE_DEVICE")
+[ "$DISPLAY_EDID" = "-vga none -device VGA,edid=on,xres=1440,yres=1440" ] || \
+  cage_probs+=("the display is not the standard VGA device with the 1440x1440 EDID: $DISPLAY_EDID")
+
+if [ "${#cage_probs[@]}" -ne 0 ]; then
+  fail "test 4: this harness's own cage or display string is not the cage"
+  for p in "${cage_probs[@]}"; do echo "    - $p"; done
+else
+  echo "    the harness's own -netdev carries restrict=on and the single guestfwd to 10.0.2.4:9999 via nc to 127.0.0.1:9999; the display is the VGA device with the EDID"
+  if [ ! -f "$ESP" ]; then
+    fail "test 4: no image was built"
+  elif python3 "$REPO/stage6/checkglass.py" --truth; then
+    pass "test 4: the bad apps refused, the counts exact, the obs page and the screen agree - inside the cage"
+  else
+    fail "test 4: the truth is not told (see above)"
+  fi
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then

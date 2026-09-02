@@ -87,7 +87,7 @@ OBS = {                          # u64 fields at these byte offsets
     "bytes_out": 0xA0, "wire_wait": 0xA8, "grows_generated": 0xB0,
     "grows_served": 0xB8, "steps": 0xC0, "step_last": 0xC8, "step_worst": 0xD0,
     "tt_last": 0xD8, "tt_worst": 0xE0, "focus": 0xE8, "cols": 0xF0, "rows": 0xF8,
-    "name": 0x100, "echo_stamp": 0x120, "echo_pending": 0x128,
+    "name": 0x100, "echo_stamp": 0x120, "echo_pending": 0x128, "now": 0x130,
 }
 SURFACES = {"strip": 0x140, "choices": 0x180, "conversation": 0x1C0, "app": 0x200}
 SURFACE = {"cells": 0, "dirty": 8, "row0": 16, "col0": 24, "rows": 32, "cols": 40, "cursor": 48}

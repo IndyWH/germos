@@ -126,7 +126,7 @@ the boot processor (index 1 of Stage 1's wake). It records its APIC id in
 the obs page, signals ready, waits to be started, and then loops for ever
 with interrupts off:
 
-1. `t0 = rdtsc`.
+1. `t0 = rdtsc`, stored in the obs page as `now`.
 2. For each surface — strip, choices, conversation, app — for each dirty
    row: exchange the flag to 0, render the row's cells to the uncached
    framebuffer at the region's place, the cursor overlaid on its cell.
@@ -188,6 +188,7 @@ reader converts with `tsc_per_ms` from the page itself.
 | `0x100` | `name` | BSP | the running app's name, 32 bytes, NUL-padded; empty when none |
 | `0x120` | `echo_stamp` | BSP | see "Input-to-photon" |
 | `0x128` | `echo_pending` | BSP sets, glass clears | |
+| `0x130` | `now` | glass | the TSC at the start of the last frame drawn — what the strip's `up` was computed from, so a reader can render the strip exactly as that frame did |
 | `0x140` | strip surface | boot | a descriptor, below |
 | `0x180` | choices surface | boot | |
 | `0x1C0` | conversation surface | boot (cursor: BSP) | |
@@ -227,7 +228,7 @@ prompt            q 000 n 000 g 000/000 disk 0000 000000 w 000 000000 io 000000/
 
 | Field | Width | From |
 |---|---|---|
-| `up` | 6 | `(rdtsc − tsc_boot) / tsc_per_ms / 1000`, seconds |
+| `up` | 6 | `(now − tsc_boot) / tsc_per_ms / 1000`, seconds, `now` the frame's own stamp |
 | `core` | 2 | `glass_apic` |
 | `fr` | 6, then `last/worst` | `frames`, `frame_last`, `frame_worst` |
 | `ph` | `last/worst` | `photon_last`, `photon_worst` |
@@ -586,7 +587,7 @@ OBS = {                          # u64 fields at these byte offsets
     "bytes_out": 0xA0, "wire_wait": 0xA8, "grows_generated": 0xB0,
     "grows_served": 0xB8, "steps": 0xC0, "step_last": 0xC8, "step_worst": 0xD0,
     "tt_last": 0xD8, "tt_worst": 0xE0, "focus": 0xE8, "cols": 0xF0, "rows": 0xF8,
-    "name": 0x100, "echo_stamp": 0x120, "echo_pending": 0x128,
+    "name": 0x100, "echo_stamp": 0x120, "echo_pending": 0x128, "now": 0x130,
 }
 SURFACES = {"strip": 0x140, "choices": 0x180, "conversation": 0x1C0, "app": 0x200}
 SURFACE = {"cells": 0, "dirty": 8, "row0": 16, "col0": 24, "rows": 32, "cols": 40, "cursor": 48}

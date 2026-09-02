@@ -1072,9 +1072,373 @@ def run_glass(smp):
     return 0 if ok else 1
 
 
+# --------------------------------------------------------- the truth -------
+
+def check_cage_argv(argv, port, want_mac):
+    """A QEMU command inspected for the cage and the display: slirp user
+    mode, restrict=on, exactly one guestfwd from 10.0.2.4:9999 delivered by
+    nc to 127.0.0.1 on the given port, no hostfwd, no other network option,
+    one virtio-net-pci device on n0 (carrying the harness's MAC when one is
+    wanted), -vga none and the one standard VGA device with the EDID,
+    every drive a file under stage6/out/."""
+    problems = []
+    netdevs = [argv[i + 1] for i, a in enumerate(argv) if a == "-netdev"]
+    devices = [argv[i + 1] for i, a in enumerate(argv) if a == "-device"]
+    if len(netdevs) != 1:
+        problems.append("expected exactly one -netdev, found %d" % len(netdevs))
+    for nd in netdevs:
+        if not nd.startswith("user,"):
+            problems.append("the netdev is not slirp's user mode: %r" % nd)
+        if "restrict=on" not in nd.split(","):
+            problems.append("the netdev lacks restrict=on: %r" % nd)
+        if nd.count("guestfwd=") != 1:
+            problems.append("expected exactly one guestfwd, found %d in %r" % (nd.count("guestfwd="), nd))
+        if not re.search(r"guestfwd=tcp:10\.0\.2\.4:9999-cmd:nc -N 127\.0\.0\.1 %d(,|$)" % port, nd):
+            problems.append("the guestfwd is not tcp:10.0.2.4:9999 delivered by 'nc -N 127.0.0.1 %d': %r" % (port, nd))
+        if "hostfwd" in nd:
+            problems.append("the netdev opens a hostfwd: %r" % nd)
+    for flag in ("-nic", "-net", "-netdev-add"):
+        if flag in argv:
+            problems.append("the command carries %s" % flag)
+    nics = [d for d in devices if d.startswith("virtio-net-pci")]
+    vgas = [d for d in devices if d.startswith("VGA")]
+    if len(nics) != 1 or len(vgas) != 1 or len(devices) != 2:
+        problems.append("expected exactly two -device options, a virtio-net-pci and the VGA, found %r" % devices)
+    for d in nics:
+        if "netdev=n0" not in d.split(","):
+            problems.append("the NIC is not attached to netdev n0: %r" % d)
+        if want_mac and ("mac=" + want_mac) not in d.split(","):
+            problems.append("the NIC does not carry the harness's MAC %s: %r" % (want_mac, d))
+    for d in vgas:
+        if d != DISPLAY_EDID[3]:
+            problems.append("the display is not %r: %r" % (DISPLAY_EDID[3], d))
+    vga = [argv[i + 1] for i, a in enumerate(argv) if a == "-vga"]
+    if vga != ["none"]:
+        problems.append("the command does not carry -vga none: %r" % vga)
+    drives = [argv[i + 1] for i, a in enumerate(argv) if a == "-drive"]
+    for dr in drives:
+        m = re.search(r"(?:^|,)file=([^,]*)", dr)
+        if not m or not m.group(1).startswith(OUT + os.sep):
+            problems.append("a drive is not a file under stage6/out/: %r" % dr)
+    return problems
+
+
+def read_cells(shot, geometry, region, r):
+    """Row r of a region, read back cell by cell: a glyph, a block (0x01)
+    or a blank, "?" for anything else. The checker's own reading of what
+    the glass drew, matched against every glyph of the shared font."""
+    width, height, pixels, cols, rows, font = open_shot(shot, geometry)
+    row0, col0, nrows, ncols = region
+    glyphs = [(chr(v), render_cell(font, chr(v))) for v in range(0x21, 0x7F)]
+    out = []
+    for c in range(ncols):
+        sr, sc = row0 + r, col0 + c
+        if cell_matches(pixels, width, sr, sc, blank_cell()):
+            out.append(" ")
+            continue
+        if cell_matches(pixels, width, sr, sc, cursor_cell()):
+            out.append("\x01")
+            continue
+        for ch, want in glyphs:
+            if cell_matches(pixels, width, sr, sc, want):
+                out.append(ch)
+                break
+        else:
+            out.append("?")
+    return "".join(out)
+
+
+STRIP0 = re.compile(r"up (\d{6}) core (\d{2}) fr (\d{6}) (\d\d\.\d)/(\d\d\.\d) ph (\d\d\.\d)/(\d\d\.\d) "
+                    r"k (\d{4}) hw (\d{3}) err (\d{3}) step (\d\d\.\d)/(\d\d\.\d)")
+
+
+def check_strip(shot, geometry, obs1, obs2, label):
+    """The strip on the screen against the obs page read just before and
+    just after the screendump: the static fields equal, the moving ones -
+    uptime, frames, the worst times - between the two readings, the last
+    times well formed. Rendered from the page by GLASS.md's own function."""
+    regs = regions(geometry[2], geometry[3])
+    strip = regs["strip"]
+    try:
+        got0 = read_cells(shot, geometry, strip, 0).rstrip()
+        got1 = read_cells(shot, geometry, strip, 1).rstrip()
+    except (OSError, ValueError) as exc:
+        return [str(exc)]
+    want1a, want1b = strip_rows(obs1, obs1["now"])
+    want2a, want2b = strip_rows(obs2, obs2["now"])
+    problems = []
+    if want1b != want2b:
+        problems.append("%s: the strip's second row changed between the two page reads (%r -> %r) though nothing happened" % (label, want1b, want2b))
+    if got1 != want1b.rstrip():
+        problems.append("%s: the strip's second row is %r, but the obs page renders %r" % (label, got1, want1b.rstrip()))
+    m = STRIP0.fullmatch(got0)
+    m1 = STRIP0.fullmatch(want1a)
+    m2 = STRIP0.fullmatch(want2a)
+    if not m or not m1 or not m2:
+        return problems + ["%s: the strip's first row does not parse: screen %r, page %r" % (label, got0, want1a)]
+    names = ["up", "core", "frames", "frame_last", "frame_worst", "photon_last", "photon_worst",
+             "keys", "hw", "err", "step_last", "step_worst"]
+    for i, name in enumerate(names):
+        g, a, b = m.group(i + 1), m1.group(i + 1), m2.group(i + 1)
+        if name in ("up", "frames", "frame_worst", "step_worst"):
+            if not (float(a) <= float(g) <= float(b)):
+                problems.append("%s: the strip's %s is %s, but the page read before says %s and after says %s" % (label, name, g, a, b))
+        elif name in ("frame_last", "step_last"):
+            pass   # any well-formed time: it changes every frame
+        elif g != a or a != b:
+            problems.append("%s: the strip's %s is %s, the page says %s then %s" % (label, name, g, a, b))
+    return problems
+
+
+def check_surfaces(shot, reads, label, which=("choices", "conversation", "app")):
+    """Every named region of the screen is what its surface says."""
+    problems = []
+    try:
+        font = load_font()
+        obs = reads["obs"]
+        for name in which:
+            at = surface_mismatch(shot, obs[name], reads[name], font)
+            if at is not None:
+                problems.append("%s: the %s region's cell %r is not what its surface says" % (label, name, at))
+    except (OSError, ValueError, KeyError) as exc:
+        problems.append("%s: cannot compare the surfaces with the screen: %s" % (label, exc))
+    return problems
+
+
+def check_counts(obs, want, label):
+    problems = []
+    for k, v in want.items():
+        if obs.get(k) != v:
+            problems.append("%s: the obs page's %s is %r, want %r" % (label, k, obs.get(k), v))
+    return problems
+
+
+REFUSAL_FAULT = "rehearsal failed: the twin reported an error"
+REFUSAL_HOG = "rehearsal failed: the app missed its budget"
+REFUSAL_ESCAPEE = "rehearsal failed: the app drew outside its panel"
+REFUSAL_HOLD = "mock: held"
+REFUSAL_X = "mock: no canned component for: x"
+ANSWER_X = "mock: no canned answer for: x"
+
+
+def run_truth():
+    """Test 4: the truth on the strip, at -smp 8."""
+    smp = 8
+    argv = qemu_argv(smp, NOTES, os.path.join(OUT, "x"))
+    problems = check_cage_argv(argv, BROKER_PORT, MAC)
+    if twin.VGA_ARGS != DISPLAY_EDID:
+        problems.append("the twin's display flags %r are not the harness's %r" % (twin.VGA_ARGS, DISPLAY_EDID))
+    if not report("the harness's own QEMU command is not the cage with the display", problems):
+        return 1
+    say("the checker's QEMU command carries restrict=on, the single guestfwd to 10.0.2.4:9999 via nc to 127.0.0.1:%d, and the VGA device with the EDID" % BROKER_PORT)
+
+    rargv = twin.qemu_argv(ESP, os.path.join(REHEARSAL, "notes.img"), os.path.join(REHEARSAL, "serial.txt"), REHEARSAL_PORT)
+    problems = check_cage_argv(rargv, REHEARSAL_PORT, None)
+    if twin.DEFAULT_PORT != REHEARSAL_PORT:
+        problems.append("the twin's default port is %d, not %d" % (twin.DEFAULT_PORT, REHEARSAL_PORT))
+    if not report("the twin's QEMU command is not the cage with the display", problems):
+        return 1
+    say("the twin's QEMU command carries the same cage and display, its guestfwd via nc to 127.0.0.1:%d" % REHEARSAL_PORT)
+
+    blobs = {}
+    for name in ("app", "hog", "escapee"):
+        blob, problems = fixture_self_check(name)
+        if not report("the %s fixture is not what the repository says" % name, problems):
+            return 1
+        blobs[name] = blob
+    app = blobs["app"]
+    big = app + bytes(CAP - len(app))
+
+    record = os.path.join(OUT, "broker.truth.jsonl")
+    serial = os.path.join(OUT, "serial.truth.txt")
+    shots = {k: os.path.join(OUT, "screen.truth.%s.ppm" % k) for k in ("a", "a2", "b", "h", "d")}
+    mock, err = start_mock(record)
+    if err:
+        say(err)
+        return 1
+    say("mock broker listening on 127.0.0.1:%d, germline wiped at %s" % (BROKER_PORT, os.path.relpath(GERMLINE, REPO)))
+    try:
+        fresh_disk(NOTES)
+        steps = [
+            ("type", "! fault\n"), ("wait_record", record, 1, 240.0), ("sleep", SETTLE),
+            ("type", "! hog\n"), ("wait_record", record, 2, 240.0), ("sleep", SETTLE),
+            ("type", "! escapee\n"), ("wait_record", record, 3, 240.0), ("sleep", SETTLE),
+            ("type", "! test app\n"), ("wait_record", record, 4, 150.0), ("sleep", 3.0),
+            ("type", "key"), ("sleep", 1.0),
+            ("surfaces", "a"), ("shot", shots["a"]), ("obs", "a2"),
+            ("sleep", 1.0),
+            ("obs", "a3"), ("shot", shots["a2"]),
+            ("type", "\x1b"), ("sleep", 2.0),
+            ("type", "! test app\n"), ("wait_record", record, 5, 20.0), ("sleep", 3.0),
+            ("type", "\x1b"), ("sleep", 2.0),
+            ("type", "! big\n"), ("wait_record", record, 6, 150.0), ("sleep", 3.0),
+            ("shot", shots["b"]),
+            ("type", "\x1b"), ("sleep", 2.0),
+            ("type", "! hold\n"), ("sleep", 3.0),
+            ("obs", "h"), ("shot", shots["h"]),
+            ("wait_record", record, 7, 20.0), ("sleep", SETTLE),
+            ("type", "?\n"), ("sleep", 1.5),
+            ("type", "?x\n"), ("wait_record", record, 8, 20.0), ("sleep", SETTLE),
+            ("type", "!\n"), ("sleep", 1.5),
+            ("type", "!x\n"), ("wait_record", record, 9, 20.0), ("sleep", SETTLE),
+            ("type", "last\n"), ("sleep", 1.5),
+            ("surfaces", "d"), ("shot", shots["d"]), ("obs", "d2"),
+        ]
+        capture, reads, err = drive(smp, NOTES, steps, serial)
+    finally:
+        stop_mock(mock)
+    if err:
+        say(err)
+        if capture:
+            dump_capture(capture)
+        return 1
+    keys_typed = sum(len(s[1]) for s in steps if s[0] == "type")
+
+    ok = True
+    problems, geometry = check_boot_lines(capture, smp, "formatted")
+    problems += check_echo(capture, b"! fault\r\n! hog\r\n! escapee\r\n! test app\r\n! test app\r\n! big\r\n"
+                                    b"! hold\r\n?\r\n?x\r\n!\r\n!x\r\nlast\r\n")
+    ok &= report("the serial log is not what the spec asks for", problems, capture)
+    if not problems:
+        say("sixteen boot lines; the wire after ready carries exactly the twelve typed lines")
+
+    entries, problems = read_record(record)
+    if entries is not None:
+        if len(entries) != 9:
+            problems.append("the broker saw %d connection(s), want 9" % len(entries))
+        checks = [
+            lambda e: check_grow_entry(1, e, "fault", "refused", 2, ["fail: the twin reported an error"] * 2,
+                                       "refusal", refusal_frame(REFUSAL_FAULT.encode()), REFUSAL_FAULT),
+            lambda e: check_grow_entry(2, e, "hog", "refused", 4, ["fail: the app missed its budget"] * 2,
+                                       "refusal", refusal_frame(REFUSAL_HOG.encode()), REFUSAL_HOG),
+            lambda e: check_grow_entry(3, e, "escapee", "refused", 6, ["fail: the app drew outside its panel"] * 2,
+                                       "refusal", refusal_frame(REFUSAL_ESCAPEE.encode()), REFUSAL_ESCAPEE),
+            lambda e: check_grow_entry(4, e, "test app", "generated", 7, ["pass"], "app",
+                                       app_frame(app, b"test app", TEST_CHOICES, 0), name="test app"),
+            lambda e: check_grow_entry(5, e, "test app", "germline", 7, [], "app",
+                                       app_frame(app, b"test app", TEST_CHOICES, 1), name="test app"),
+            lambda e: check_grow_entry(6, e, "big", "generated", 8, ["pass"], "app",
+                                       app_frame(big, b"big", TEST_CHOICES, 0), name="big"),
+            lambda e: check_grow_entry(7, e, "hold", "refused", 9, [], "refusal",
+                                       refusal_frame(REFUSAL_HOLD.encode()), REFUSAL_HOLD),
+            lambda e: check_question_entry(8, e, "x"),
+            lambda e: check_grow_entry(9, e, "x", "refused", 10, [], "refusal",
+                                       refusal_frame(REFUSAL_X.encode()), REFUSAL_X),
+        ]
+        for check, entry in zip(checks, entries):
+            problems += check(entry)
+    ok &= report("the broker's record is not what GLASS.md asks for", problems)
+    if not problems:
+        say("the record: fault, hog and escapee each refused after two failed rehearsals with their phrases "
+            "(calls 2, 4, 6); test app generated (7) then served from the germline (still 7, source 1); "
+            "big generated (8) as a frame of exactly %d bytes; hold held then refused (9); x asked, then refused (10)"
+            % len(app_frame(big, b"big", TEST_CHOICES, 0)))
+
+    problems = check_germline_entry(GERMLINE, "test app", app, "test app", TEST_CHOICES)
+    problems += check_germline_entry(GERMLINE, "big", big, "big", TEST_CHOICES)
+    names = germline_entries(GERMLINE)
+    if len(names) != 2:
+        problems.append("the germline holds %d entries %r, want exactly 2" % (len(names), names))
+    ok &= report("the germline is not what GLASS.md asks for", problems)
+    if not problems:
+        say("the germline holds exactly two abi2 entries - the test app and its 1 MB twin - each with provenance and a rehearsal log")
+
+    problems = check_image(NOTES, ["last"])
+    ok &= report("the notebook is not what it should be", problems)
+    if not problems:
+        say("the notebook holds exactly 'last' - no request, question or bare marker was journaled")
+
+    if None in geometry:
+        say("no picture to judge - the boot lines were wrong")
+        return 1
+    regs = regions(geometry[2], geometry[3])
+    conv = regs["conversation"]
+
+    # Screen A: the test app running after "key"; the strip against the page.
+    problems = []
+    if "a" not in reads or "a2" not in reads or "a3" not in reads:
+        problems.append("the obs page or the surfaces could not be read around screen A")
+    else:
+        problems += check_app_panel(shots["a"], geometry, "y")
+        problems += check_choices(shots["a"], geometry, CHOICES_APP)
+        problems += check_strip(shots["a"], geometry, reads["a"]["obs"], reads["a2"], "screen A")
+        problems += check_surfaces(shots["a"], reads["a"], "screen A")
+        keys_so_far = sum(len(s[1]) for s in steps[:steps.index(("surfaces", "a"))] if s[0] == "type")
+        problems += check_counts(reads["a"]["obs"], {"mode": 3, "name": "test app", "focus": 1, "keys": keys_so_far,
+                                                    "questions": 0, "requests": 4, "notes": 0, "errors": 3,
+                                                    "grows_generated": 1, "grows_served": 0, "wire_conns": 4,
+                                                    "cols": geometry[2], "rows": geometry[3]}, "screen A")
+        o1, o2 = reads["a2"], reads["a3"]
+        if not o2["frames"] > o1["frames"]:
+            problems.append("frames did not increase across a second: %d then %d" % (o1["frames"], o2["frames"]))
+        if o1["steps"] < 1 or o1["step_worst"] > 50 * o1["tsc_per_ms"]:
+            problems.append("the test app's steps are %d with a worst of %.1f ms" % (o1["steps"], o1["step_worst"] / o1["tsc_per_ms"]))
+        problems += check_region_rows(shots["a2"], geometry, conv,
+                                      ["> ! fault", REFUSAL_FAULT, "> ! hog", REFUSAL_HOG, "> ! escapee", REFUSAL_ESCAPEE,
+                                       "> ! test app", PROMPT])
+    ok &= report("screen A is not the truth", problems)
+    if not problems:
+        say("screen A: the test app with 'key: y'; the strip agrees with the obs page read before and after it, "
+            "its counts are the checker's; every region outside the app matches its surface; frames %d -> %d a second later"
+            % (reads["a2"]["frames"], reads["a3"]["frames"]))
+
+    problems = check_app_panel(shots["b"], geometry, "-")
+    problems += check_choices(shots["b"], geometry, choices_row(True, 1, TEST_CHOICES))
+    problems += check_mode_field(shots["b"], geometry, "running big")
+    ok &= report("screen B does not show the 1 MB app running", problems)
+    if not problems:
+        say("screen B: the 1 MB app's strips with 'key: -', 'running big' on the strip - the padding never reached")
+
+    problems = []
+    if "h" not in reads:
+        problems.append("the obs page could not be read during the hold")
+    else:
+        problems += check_counts(reads["h"], {"mode": 2, "focus": 0}, "the hold")
+        problems += check_mode_field(shots["h"], geometry, "growing")
+        problems += check_choices(shots["h"], geometry, CHOICES_NONE)
+        problems += check_app_panel_blank(shots["h"], geometry)
+    ok &= report("the hold does not show 'growing'", problems)
+    if not problems:
+        say("during the hold: 'growing' on the strip and in the page, the prompt's choices row, the app panel blank")
+
+    problems = []
+    if "d" not in reads or "d2" not in reads:
+        problems.append("the obs page or the surfaces could not be read at the end")
+    else:
+        problems += check_strip(shots["d"], geometry, reads["d"]["obs"], reads["d2"], "screen D")
+        problems += check_surfaces(shots["d"], reads["d"], "screen D")
+        problems += check_counts(reads["d"]["obs"], {"mode": 0, "name": "", "focus": 0, "keys": keys_typed,
+                                                    "questions": 1, "requests": 8, "notes": 1, "errors": 7,
+                                                    "grows_generated": 2, "grows_served": 1, "wire_conns": 9},
+                                 "screen D")
+        problems += check_mode_field(shots["d"], geometry, "prompt")
+        problems += check_choices(shots["d"], geometry, CHOICES_NONE)
+        problems += check_app_panel_blank(shots["d"], geometry)
+        problems += check_region_rows(shots["d"], geometry, conv, [
+            "> ! fault", REFUSAL_FAULT,
+            "> ! hog", REFUSAL_HOG,
+            "> ! escapee", REFUSAL_ESCAPEE,
+            "> ! test app", "> ! test app", "> ! big",
+            "> ! hold", REFUSAL_HOLD,
+            "> ?", "nothing to ask",
+            "> ?x", ANSWER_X,
+            "> !", "nothing to grow",
+            "> !x", REFUSAL_X,
+            "> last", PROMPT])
+    ok &= report("screen D is not the truth", problems)
+    if not problems:
+        say("screen D: the strip says k %04d q 001 n 001 g 002/001 err 007 and the obs page agrees; every region "
+            "matches its surface; the whole conversation with the refusals and the marker lines, two colours only" % keys_typed)
+
+    say("the truth: %s" % ("told - the strip is the obs page, the page is what happened" if ok else "not told"))
+    return 0 if ok else 1
+
+
 def main(argv):
     if argv == ["--one-core"]:
         return run_one_core()
+    if argv == ["--truth"]:
+        return run_truth()
     if len(argv) == 2 and argv[0] == "--glass":
         try:
             return run_glass(int(argv[1]))
