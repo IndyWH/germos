@@ -4,18 +4,28 @@ Rolling state of the AI OS project. Read this first, then `ai-os-foundation.md`
 (the single source of truth), then the current stage's `spec.md` and `plan.md`.
 
 **Last updated:** 3 September 2026 — **Stage 6 ring 6b, the store of
-plans, is GREEN on its automated gate and pending its oracle.** All
-four tests pass at `-smp 2` and `-smp 8`: an app is a plan file, grown at
-install time, rehearsed in the twin against the plan's own five-verb
-tests on top of the nine safety criteria, kept on a second disk with its
-SHA-256, launched after a reboot with no broker and nothing on the wire,
-undone one step. Built on **Fable 5.1 at medium effort** — the owner's
-experiment — in one session from the plan approved with Cowork's four
-amendments, one commit per item, tests red before code; one stop at the
-scope guard (three counts in the frozen checker, wrong by the plan's own
-arithmetic) fixed by the owner's hand as item 10b. **Test 5 is Wajira's:
-`! install calculator`, a sum, a reboot with the broker off,
-`! calculator`, the sum again.** Ring 6b's section is below the ring 6a
+plans, is CLOSED.** Wajira ran test 5 with the real broker:
+`! install calculator` was built by the real backend from
+`plans/calculator.md` and rehearsed against the plan's five tests in one
+72-second exchange (`w 001 071881` on the strip); `installed calculator`
+with the plan's choices `= result` and `c clear` on the row; a sum done.
+Then a reboot with no broker: `S6: home 2 apps` (the gate's echo fixture
+shares `stage6/out/home.img` with the oracle), `! calculator` on the
+choices row, and the launch from disk with `wire_conns` 0 and `io
+000000/000000`. *It worked as expected.* The screenshots are
+`history/2026-09-03-ring6b-calculator-installed.png` and
+`history/2026-09-03-ring6b-calculator-offline-launch.png`. All four
+automated tests pass at `-smp 2` and `-smp 8`: an app is a plan file,
+grown at install time, rehearsed in the twin against the plan's own
+five-verb tests on top of the nine safety criteria, kept on a second
+disk with its SHA-256, launched after a reboot with no broker and
+nothing on the wire, undone one step. **The model note, for the owner's
+comparison:** ring 6b was implemented on **Fable 5.1 at medium effort**
+and passed its oracle first time; at the plan gate Cowork needed one
+blocking amendment (fixtures must draw at `init` or the frozen twin's
+criterion 5 fails them), and the freeze was opened once for a miscount
+in the plan's own test arithmetic (item 10b). One session, one commit per
+item, tests red before code. Ring 6b's section is below the ring 6a
 build. Earlier — **Stage 6 ring 6a, the glass, is CLOSED.** Wajira ran test 5 with the real broker: `! make me a clock`
 was grown by Claude against the ABI 2 contract, rehearsed in the twin,
 and ticked in its own panel while he typed a note beside it and the
@@ -63,8 +73,8 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 
 | | |
 |---|---|
-| Stage | 6 — Growth: ring 6a closed 2 September 2026; **ring 6b — the store of plans — green, pending the oracle** 3 September 2026 (Stages 0–5 closed); then ring 6c, the pointer |
-| Status | Ring 6b: tests 1–4 **PASS** at `-smp 2` and `-smp 8`; test 5 **PENDING** — Wajira, with the real broker: `! install calculator`, a sum, reboot with the broker off, `! calculator`, the sum again. Ring 6a's gate and Stages 0–5 green on the same binary. |
+| Stage | 6 — Growth: ring 6a closed 2 September 2026; **ring 6b — the store of plans — CLOSED** 3 September 2026 (Stages 0–5 closed); next ring 6c, the pointer |
+| Status | Ring 6b: all five tests **PASS** (test 5 confirmed by Wajira, 3 September 2026: the calculator installed from its plan, a sum, the reboot with no broker, the launch from disk). Next: ring 6c's plan, in a fresh session, per `stage6/spec.md`. |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.252 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
@@ -698,7 +708,7 @@ tightens. **Next re-check at the Stage 7 gate.**
 | Ring | Name | Done when | State |
 |---|---|---|---|
 | 6a | **The glass** | `! make me a clock` ticks in its own panel while you type a note beside it, and the obs strip shows real numbers | **CLOSED 2 September 2026** — test 5 confirmed by Wajira |
-| 6b | **The store of plans** | `! install calculator` from `plans/calculator.md` gives a working calculator; reboot with no broker; `! calculator` still runs it | **green on tests 1–4, 3 September 2026** — test 5 pending Wajira |
+| 6b | **The store of plans** | `! install calculator` from `plans/calculator.md` gives a working calculator; reboot with no broker; `! calculator` still runs it | **CLOSED 3 September 2026** — test 5 confirmed by Wajira |
 | 6c | **The pointer** | click a choice on the choices row and it happens; pointer input-to-photon is a number on the obs strip | not started — its own session; allowed to slip |
 
 **Ring 6a's shape, from the spec** (the plan fixes the details): the
@@ -953,7 +963,24 @@ criteria and its five verbs, `liar.bin` failed at `expect "a"`.
 | 2 | Serial — seventeen `S6:` lines with `S6: home 0 apps` twelfth on two fresh disks at 1920x1080 (console 120x67); the home image parsed from the host as formatted and empty; the same image booted again byte-identical; one disk gives ring 6a's sixteen | **PASS** |
 | 3 | The install, mocked — `! install echo` rehearsed against the plan's tests in the twin (seventeen lines, the hook's verdicts in the log), `installing` on the strip meanwhile, the frame with `installed` 1, `installed echo` in the conversation, the app in its panel, the home image holding exactly that build with the guest's hash equal to hashlib's, the germline's provenance naming the plan and its hash, `! echo` on the choices row at the prompt; at `-smp 2` and `-smp 8` | **PASS** |
 | 4 | The store keeps its word — a reboot with **no broker**: `S6: home 1 apps`, `! echo` on the row, `! echo` run from disk with `wire_conns` 0 and the byte counters unchanged between a read after ready and a read after the launch (A3), an undo with nothing to undo refused; then `! install liar` refused `rehearsal failed: expect "a"` after two rehearsals, `! install echo, but big` replacing (4096 bytes), `! install echo` served from the germline with `source` 1 and `installed` 1 replacing again, `! undo install echo` swapping the previous build back, `! echo` running it — both extents hash-checked from the host, the strip against the page (`err 001`, `g 001/001`) | **PASS** |
-| 5 | **Oracle — Wajira, real broker** — `! install calculator`; a sum; reboot with the broker off; `! calculator`; the sum again | **PENDING** |
+| 5 | **Oracle — Wajira, real broker** — `! install calculator`; a sum; reboot with the broker off; `! calculator`; the sum again | **PASS — confirmed 3 September 2026** |
+
+**What the oracle showed** (`history/2026-09-03-ring6b-calculator-installed.png`,
+`history/2026-09-03-ring6b-calculator-offline-launch.png`): the real
+backend built the calculator from `plans/calculator.md`'s intent and the
+twin rehearsed it against the plan's five tests in one exchange of 72
+seconds — `w 001 071881` on the strip; `installed calculator`, the
+plan's choices `= result` and `c clear` on the choices row, a sum done.
+Then the reboot with no broker: `S6: home 2 apps` — the gate's echo
+fixture shares `stage6/out/home.img` with the oracle — `! calculator` on
+the choices row, and the launch from disk with `wire_conns` 0 and `io
+000000/000000`: nothing on the wire, as HOME.md promises.
+
+**The oracle's own evidence is still on the disk:** `stage6/out/home.img`
+was set aside as `stage6/out/home.oracle.img` (gitignored, as Stage 3 did
+with its notes) so the next gate run, which rewrites `home.img`, does not
+erase the first calculator installed from a plan. The harness never
+touches that name.
 
 Tests 1–4 were committed **red** before any of the ring's guest code and
 went green where the plan predicted: tests 1 and 2 at item 9, tests 3
@@ -1049,7 +1076,22 @@ gotchas, the payload table re-run (1072, 0 wrong).
 
 ## Next action
 
-**Test 5 is Wajira's.** Two terminals at the repo root. The broker (it
+**Ring 6b is closed.** Next: **ring 6c — the pointer**, per
+`stage6/spec.md`: the PS/2 mouse on the i8042's auxiliary port (IRQ12,
+three-byte packets into a ring as the keyboard's), the i8042 configured
+for the first time, `S6: mouse ready` as the eighteenth line, the cursor
+drawn by the glass core last in every frame from a position the handler
+keeps in the obs page, pointer input-to-photon on the strip, a click on
+a choices-row target doing what its key does, a new ABI 2 callback
+`point(row, col, button)` with the table one entry longer, GLASS.md
+extended by a new frozen section rather than edited (the 6a section
+stands byte for byte), and acceptance tests 1–4 written red before any
+code. A fresh session, its own plan gate. The twin's `lines` becomes 18
+through the frozen seam; ring 6b's gate (`./stage6/test-6b.sh`) and ring
+6a's stay green as regressions on the same binary.
+
+To install something from a plan again at any time — two terminals at
+the repo root. The broker (it
 answers questions, grows requests, and installs plans — every candidate
 rehearsed in the twin at 1920x1080 with a home drive, an install against
 its plan's own tests):
