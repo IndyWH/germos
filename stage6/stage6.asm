@@ -238,6 +238,7 @@ org 0                           ; file offsets == RVAs
 %define MODE_ASKING         1
 %define MODE_GROWING        2
 %define MODE_RUNNING        3
+%define MODE_INSTALLING     4           ; ring 6b: a request that begins "install"
 
 ; The surfaces (GLASS.md, "Surfaces and the glass core"): cell buffers and
 ; a dirty byte per row. Capacities are for any mode we can run; the sizes
@@ -2498,6 +2499,443 @@ home_build_valid:
         xor     eax, eax
         ret
 
+; home_install - the frame in the region has been checked and carries
+; installed 1 (HOME.md, "What becomes an app on disk"): the blob's tail
+; zeroed to the sector boundary, its sectors written from the next free
+; one, its SHA-256 taken, the table entry made (the first empty slot) or
+; replaced (the current build becoming the previous), that table sector
+; written, the table recounted, and "installed <name>" on the console.
+; With no home image, or no room, the app is not kept, the console says
+; so, an error is counted - and the app runs anyway: it passed the twin.
+; Clobbers registers freely.
+home_install:
+        lea     rsi, [comp_region + COMP_RX_OFF + 4]    ; the content
+        lea     r14, [rsi + APPH_NAME]                  ; the name
+        cmp     dword [home_present], 0
+        je      .no_home
+        mov     r12d, [rsi + APPH_LEN]                  ; L, the size
+        lea     rdi, [comp_region + APP_BLOB_OFF]
+        add     rdi, r12
+        mov     ecx, r12d
+        neg     ecx
+        and     ecx, 511                                ; bytes to the boundary
+        xor     eax, eax
+        rep     stosb
+        mov     r13d, r12d
+        add     r13d, 511
+        shr     r13d, 9                                 ; the sectors
+        mov     eax, [home_next]
+        add     eax, r13d
+        jc      .full
+        cmp     eax, [home_dev + VIO_SECTORS]
+        ja      .full
+        call    home_find_entry                         ; EAX = the entry, or -1
+        cmp     eax, -1
+        jne     .replace
+        call    home_free_slot
+        cmp     eax, -1
+        je      .full
+        mov     r15d, eax
+        call    home_entry_addr                         ; RDI = the entry
+        push    rdi
+        mov     ecx, HOME_ENTRY / 8
+        xor     eax, eax
+        rep     stosq                                   ; a fresh entry, zero
+        pop     rdi
+        mov     rsi, r14
+        mov     ecx, APP_NAME_MAX
+        rep     movsb                                   ; the name in
+        jmp     .write_blob
+.replace:
+        mov     r15d, eax
+        call    home_entry_addr
+        lea     rsi, [rdi + HE_CUR]                     ; the current build
+        add     rdi, HE_PREV                            ; becomes the previous
+        mov     ecx, HB_BYTES / 8
+        rep     movsq
+.write_blob:
+        mov     ebx, [home_next]
+        lea     rdi, [comp_region + APP_BLOB_OFF]
+        mov     ecx, r13d
+.sector:
+        mov     eax, VBLK_T_OUT
+        call    home_rw
+        add     rdi, 512
+        inc     ebx
+        dec     ecx
+        jnz     .sector
+        lea     rsi, [comp_region + APP_BLOB_OFF]       ; the digest
+        mov     rcx, r12
+        lea     rdi, [sha_digest]
+        call    sha256
+        call    home_entry_addr                         ; R15D = the entry
+        mov     [rdi + HE_CUR + HB_SIZE], r12d
+        mov     eax, [home_next]
+        mov     [rdi + HE_CUR + HB_FIRST], eax
+        mov     [rdi + HE_CUR + HB_SECTORS], r13d
+        mov     dword [rdi + HE_CUR + HB_ZERO], 0
+        push    rdi
+        lea     rsi, [sha_digest]
+        add     rdi, HE_CUR + HB_SHA
+        mov     ecx, 4
+        rep     movsq
+        pop     rdi
+        lea     rsi, [comp_region + COMP_RX_OFF + 4 + APPH_CHOICES]
+        add     rdi, HE_CHOICES
+        mov     ecx, APP_CHOICES * APP_CHOICE_BYTES
+        rep     movsb                                   ; the frame's slots
+        call    home_write_entry_sector                 ; only now: the blob is on disk
+        call    home_recount
+        lea     rsi, [msg_installed]
+        mov     rdx, r14
+        lea     rcx, [msg_empty]
+        call    home_say
+        ret
+.full:
+        lea     rsi, [msg_home_full]
+        mov     rdx, r14
+        lea     rcx, [msg_not_kept]
+        call    home_say
+        inc     qword [obs_page + OBS_ERRORS]
+        ret
+.no_home:
+        lea     rsi, [msg_no_home]
+        mov     rdx, r14
+        lea     rcx, [msg_not_kept]
+        call    home_say
+        inc     qword [obs_page + OBS_ERRORS]
+        ret
+
+; home_entry_addr - R15D = an entry index: RDI = its address in the table.
+home_entry_addr:
+        lea     rdi, [home_table]
+        mov     eax, r15d
+        shl     eax, 8
+        add     rdi, rax
+        ret
+
+; home_write_entry_sector - R15D = an entry index: the table sector holding
+; it written through. Clobbers RAX, RBX, RDI.
+home_write_entry_sector:
+        mov     eax, r15d
+        shr     eax, 1
+        lea     ebx, [rax + HOME_TABLE_FIRST]
+        shl     eax, 9
+        lea     rdi, [home_table]
+        add     rdi, rax
+        mov     eax, VBLK_T_OUT
+        call    home_rw
+        ret
+
+; home_find_entry - R14 = a 32-byte NUL-padded name: EAX = the index of the
+; valid entry with that name, or -1. Clobbers RAX, RCX, RSI, RDI, R8.
+home_find_entry:
+        xor     r8d, r8d
+.entry:
+        lea     rax, [home_valid]
+        cmp     byte [rax + r8], 0
+        je      .next
+        lea     rsi, [home_table]
+        mov     eax, r8d
+        shl     eax, 8
+        add     rsi, rax
+        mov     rdi, r14
+        mov     ecx, APP_NAME_MAX
+        repe    cmpsb
+        jne     .next
+        mov     eax, r8d
+        ret
+.next:
+        inc     r8d
+        cmp     r8d, HOME_ENTRIES
+        jb      .entry
+        mov     eax, -1
+        ret
+
+; home_free_slot - EAX = the first entry that is not valid (empty, or
+; invalid and so overwritable), or -1. Clobbers RAX, R8.
+home_free_slot:
+        xor     r8d, r8d
+.entry:
+        lea     rax, [home_valid]
+        cmp     byte [rax + r8], 0
+        jne     .next
+        mov     eax, r8d
+        ret
+.next:
+        inc     r8d
+        cmp     r8d, HOME_ENTRIES
+        jb      .entry
+        mov     eax, -1
+        ret
+
+; home_say - RSI = a NUL-terminated prefix, RDX = a name (32 bytes, NUL
+; padded), RCX = a NUL-terminated suffix: "<prefix><name><suffix>" on the
+; console, and only the console. The line is finished by whoever prompts
+; next. Preserves everything.
+home_say:
+        push    rax
+        push    rcx
+        push    rdx
+        push    rsi
+        push    rdi
+        lea     rdi, [say_buf]
+.prefix:
+        lodsb
+        test    al, al
+        jz      .name
+        stosb
+        jmp     .prefix
+.name:
+        mov     rsi, rdx
+        mov     edx, APP_NAME_MAX
+.name_byte:
+        lodsb
+        test    al, al
+        jz      .suffix
+        stosb
+        dec     edx
+        jnz     .name_byte
+.suffix:
+        mov     rsi, rcx
+.suffix_byte:
+        lodsb
+        stosb
+        test    al, al
+        jnz     .suffix_byte
+        lea     rsi, [say_buf]
+        call    console_puts
+        pop     rdi
+        pop     rsi
+        pop     rdx
+        pop     rcx
+        pop     rax
+        ret
+
+; body_is_install - RSI = a request body, ECX = its length: EAX = 1 if it
+; is the word "install" alone or followed by a space (PLANS.md: every such
+; body is an install, and the strip says so). Preserves RSI, ECX.
+body_is_install:
+        cmp     ecx, 7
+        jb      .no
+        push    rsi
+        push    rcx
+        push    rdi
+        lea     rdi, [msg_install_word]
+        mov     ecx, 7
+        repe    cmpsb
+        pop     rdi
+        pop     rcx
+        pop     rsi
+        jne     .no
+        cmp     ecx, 7
+        je      .yes
+        cmp     byte [rsi + 7], ' '
+        jne     .no
+.yes:
+        mov     eax, 1
+        ret
+.no:
+        xor     eax, eax
+        ret
+
+; sha256 - RSI = the bytes, RCX = how many, RDI = 32 bytes for the digest.
+; FIPS 180-4, one 64-byte block at a time, the message schedule and the
+; sixty-four rounds in plain 32-bit arithmetic; the tail padded in its
+; own buffer. Called at an install (the entry's hash) and at a launch (the
+; check). Preserves the callee-saved registers; clobbers RAX, RCX, RDX,
+; RSI, RDI, R8-R11.
+sha256:
+        push    rbx
+        push    rbp
+        push    r12
+        push    r13
+        push    r14
+        push    r15
+        mov     r12, rsi                ; the bytes still to hash
+        mov     r13, rcx                ; how many remain
+        mov     r14, rdi                ; the digest
+        mov     r15, rcx                ; the whole length, for the tail
+        lea     rsi, [sha_init]
+        lea     rdi, [sha_state]
+        mov     ecx, 8
+        rep     movsd
+.blocks:
+        cmp     r13, 64
+        jb      .tail
+        mov     rsi, r12
+        call    sha256_block
+        add     r12, 64
+        sub     r13, 64
+        jmp     .blocks
+.tail:                                  ; the remainder, 0x80, zeros, the
+        lea     rdi, [sha_tail]         ; bit length big-endian - one block
+        mov     ecx, 16                 ; if the remainder is under 56 bytes,
+        xor     eax, eax                ; two otherwise
+        rep     stosq
+        lea     rdi, [sha_tail]
+        mov     rsi, r12
+        mov     rcx, r13
+        rep     movsb
+        mov     byte [rdi], 0x80
+        mov     rax, r15
+        shl     rax, 3
+        bswap   rax
+        mov     edx, 64
+        cmp     r13, 56
+        jb      .one_block
+        mov     edx, 128
+.one_block:
+        lea     rdi, [sha_tail]
+        mov     [rdi + rdx - 8], rax
+        lea     rsi, [sha_tail]
+        call    sha256_block
+        cmp     edx, 64
+        je      .digest
+        lea     rsi, [sha_tail + 64]
+        call    sha256_block
+.digest:
+        lea     rsi, [sha_state]
+        mov     rdi, r14
+        mov     ecx, 8
+.out:
+        lodsd
+        bswap   eax
+        stosd
+        dec     ecx
+        jnz     .out
+        pop     r15
+        pop     r14
+        pop     r13
+        pop     r12
+        pop     rbp
+        pop     rbx
+        ret
+
+; sha256_block - RSI = one 64-byte block, folded into sha_state.
+; Preserves RSI's owner's registers: everything callee-saved is pushed.
+sha256_block:
+        push    rbx
+        push    rbp
+        push    r12
+        push    r13
+        push    r14
+        push    r15
+        push    rdx
+        lea     rdi, [sha_w]
+        mov     ecx, 16
+.load:
+        lodsd
+        bswap   eax
+        stosd
+        dec     ecx
+        jnz     .load
+        mov     ecx, 16
+        lea     rdi, [sha_w]
+.schedule:                              ; W[t] = s1(W[t-2]) + W[t-7] + s0(W[t-15]) + W[t-16]
+        mov     eax, [rdi + rcx*4 - 8]
+        mov     edx, eax
+        ror     edx, 17
+        mov     ebx, eax
+        ror     ebx, 19
+        xor     edx, ebx
+        shr     eax, 10
+        xor     edx, eax                ; s1
+        mov     eax, [rdi + rcx*4 - 60]
+        mov     ebx, eax
+        ror     ebx, 7
+        mov     ebp, eax
+        ror     ebp, 18
+        xor     ebx, ebp
+        shr     eax, 3
+        xor     ebx, eax                ; s0
+        add     edx, ebx
+        add     edx, [rdi + rcx*4 - 28]
+        add     edx, [rdi + rcx*4 - 64]
+        mov     [rdi + rcx*4], edx
+        inc     ecx
+        cmp     ecx, 64
+        jb      .schedule
+
+        lea     rbx, [sha_state]        ; a..h
+        mov     r8d, [rbx]
+        mov     r9d, [rbx + 4]
+        mov     r10d, [rbx + 8]
+        mov     r11d, [rbx + 12]
+        mov     r12d, [rbx + 16]
+        mov     r13d, [rbx + 20]
+        mov     r14d, [rbx + 24]
+        mov     r15d, [rbx + 28]
+        xor     ecx, ecx
+        lea     rsi, [sha_w]
+        lea     rdi, [sha_k]
+.round:
+        mov     eax, r12d               ; T1 = h + S1(e) + Ch(e, f, g) + K[t] + W[t]
+        ror     eax, 6
+        mov     edx, r12d
+        ror     edx, 11
+        xor     eax, edx
+        mov     edx, r12d
+        ror     edx, 25
+        xor     eax, edx
+        mov     edx, r12d
+        and     edx, r13d
+        mov     ebp, r12d
+        not     ebp
+        and     ebp, r14d
+        xor     edx, ebp
+        add     eax, edx
+        add     eax, r15d
+        add     eax, [rdi + rcx*4]
+        add     eax, [rsi + rcx*4]
+        mov     edx, r8d                ; T2 = S0(a) + Maj(a, b, c)
+        ror     edx, 2
+        mov     ebp, r8d
+        ror     ebp, 13
+        xor     edx, ebp
+        mov     ebp, r8d
+        ror     ebp, 22
+        xor     edx, ebp
+        mov     ebp, r8d
+        and     ebp, r9d
+        mov     ebx, r8d
+        and     ebx, r10d
+        xor     ebp, ebx
+        mov     ebx, r9d
+        and     ebx, r10d
+        xor     ebp, ebx
+        add     edx, ebp
+        mov     r15d, r14d              ; h = g, g = f, f = e, e = d + T1,
+        mov     r14d, r13d              ; d = c, c = b, b = a, a = T1 + T2
+        mov     r13d, r12d
+        mov     r12d, r11d
+        add     r12d, eax
+        mov     r11d, r10d
+        mov     r10d, r9d
+        mov     r9d, r8d
+        mov     r8d, eax
+        add     r8d, edx
+        inc     ecx
+        cmp     ecx, 64
+        jb      .round
+        lea     rbx, [sha_state]
+        add     [rbx], r8d
+        add     [rbx + 4], r9d
+        add     [rbx + 8], r10d
+        add     [rbx + 12], r11d
+        add     [rbx + 16], r12d
+        add     [rbx + 20], r13d
+        add     [rbx + 24], r14d
+        add     [rbx + 28], r15d
+        pop     rdx
+        pop     r15
+        pop     r14
+        pop     r13
+        pop     r12
+        pop     rbp
+        pop     rbx
+        ret
+
 ; ---------------------------------------------------------------------------
 ; The NIC - a virtio-net device on the same plumbing (plan decision 8). Two
 ; feature bits, MAC and VERSION_1, nothing else: no mergeable buffers, no
@@ -3667,6 +4105,11 @@ grow_request:
         call    app_close_if_running    ; one app at a time (GLASS.md)
         inc     qword [obs_page + OBS_REQUESTS]
         mov     qword [obs_page + OBS_MODE], MODE_GROWING
+        call    body_is_install         ; "install ..." says so on the strip
+        test    eax, eax
+        jz      .mode_set
+        mov     qword [obs_page + OBS_MODE], MODE_INSTALLING
+.mode_set:
         lea     rdi, [grow_buf]
         mov     byte [rdi], 0x01        ; the grow marker
         inc     rdi
@@ -3699,6 +4142,10 @@ grow_request:
         call    app_valid               ; RSI = the content, ECX = N
         test    eax, eax
         jz      .bad
+        cmp     byte [rsi + APPH_INSTALLED], 1
+        jne     .run
+        call    home_install            ; kept on the home image first (HOME.md)
+.run:
         call    run_app
         jmp     finish_line
 .refusal:
@@ -6144,6 +6591,16 @@ msg_notes:      db      ' notes', 13, 10, 0
 msg_nb_fmt:     db      'S6: notebook formatted', 13, 10, 0
 msg_home:       db      'S6: home ', 0
 msg_apps:       db      ' apps', 13, 10, 0
+msg_install_word: db    'install'                       ; 7 bytes, compared
+msg_installed:  db      'installed ', 0                 ; HOME.md's console lines
+msg_home_full:  db      'home image full: ', 0
+msg_no_home:    db      'no home image: ', 0
+msg_not_kept:   db      ' not kept', 0
+msg_restored:   db      ': previous build restored', 0
+msg_no_previous: db     ' has no previous build', 0
+msg_no_app:     db      'no app named ', 0
+msg_bad_hash:   db      ': build does not match its hash', 0
+msg_empty:      db      0
 msg_nic:        db      'S6: nic ', 0
 msg_region:     db      'S6: component region 0x', 0
 msg_region_cap: db      ' 1048576 bytes', 13, 10, 0     ; COMP_BLOB_MAX, spelled
@@ -6159,6 +6616,20 @@ strip_tmpl0:    db      'up 000000 core 00 fr 000000 00.0/00.0 ph 00.0/00.0 k 00
 strip_tmpl1:    db      'prompt             q 000 n 000 g 000/000 disk 0000 000000 w 000 000000 io 000000/000000'
 mode_words:     db      'prompt     ', 'asking     ', 'growing    ', 'running    ', 'installing '
 block_glyph:    db      0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
+; The SHA-256 constants (FIPS 180-4): the sixty-four round constants and
+; the eight initial hash words.
+        align   4
+sha_k:
+        dd 0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5
+        dd 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174
+        dd 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da
+        dd 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967
+        dd 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85
+        dd 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070
+        dd 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3
+        dd 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+sha_init:
+        dd 0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
 msg_no_answer:  db      'no answer from the broker', 0
 msg_nothing_ask: db     'nothing to ask', 0
 msg_nothing_grow: db    'nothing to grow', 0
@@ -6477,6 +6948,14 @@ home_next:      resd    1
 home_valid:     resb    HOME_ENTRIES
         alignb  512
 home_table:     resb    HOME_TABLE_SECTORS * 512
+
+; SHA-256's working state, and the line a home message is built in.
+        alignb  16
+sha_state:      resb    32
+sha_w:          resb    256
+sha_tail:       resb    128
+sha_digest:     resb    32
+say_buf:        resb    128
 
         alignb  16
 req_hdr:        resb    16              ; type, reserved, sector
