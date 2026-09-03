@@ -56,7 +56,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.252 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
-| Model | **Fable 5.1, high effort** — the owner's decision at Stage 6 approval (Fable 5 at high effort built Stages 2–5) |
+| Model | **Fable 5.1, high effort** — the owner's decision at Stage 6 approval (Fable 5 at high effort built Stages 2–5). **Ring 6b: Fable 5.1 at medium effort, the owner's experiment** — to be compared with Opus at high (Stages 0 and 1) and Fable at high (Stages 2 to 6a); Cowork reviews to the same standard as every ring |
 
 ## The project in three lines
 
@@ -867,9 +867,23 @@ appended a block after itself left the live copy of `kbd_next` without
 its counter; QEMU's default VGA carries an EDID naming 1280x800; four
 probes on one image hit the lock again.
 
+## Ring 6b — the store of plans · opened 3 September 2026
+
+`stage6/plan-6b.md` was approved on 3 September 2026 with Cowork's four
+amendments (A1 every app draws its starting state in `init`, and the
+fixtures run in the twin before they freeze; A2 the owner's two changes to
+the calculator's intent; A3 the no-broker launch compares two obs reads;
+A4 `install` with no plan name is refused before any call) and all ten
+deviations accepted. **The owner's experiment for this ring: Fable 5.1 at
+medium effort implements**, to be compared with Opus at high (Stages 0 and
+1) and Fable at high (Stages 2 to 6a); Cowork reviews to the same standard
+as every ring. Item 0 (this record and the plan's commit) is done; the
+items follow one commit each, exactly as the plan says.
+
 ## Next action
 
-**Ring 6a is closed.** Next: **ring 6b — the store of plans**, per
+**Ring 6b is in progress** (see above). Before it opened — **ring 6a is
+closed.** Ring 6b's shape, per
 `stage6/spec.md`: `plans/<name>.md` in the format a new frozen
 `stage6/PLANS.md` defines (intent, choices, the five-verb tests),
 `! install <name>` rehearsed in the twin against the plan's own tests
