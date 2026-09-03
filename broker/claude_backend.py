@@ -232,12 +232,52 @@ def app_choices(src):
     return out
 
 
-def grow(request, failure=None, timeout=120.0, model=None, abi=1):
+PLAN_RULE = (
+    "- Draw the starting state in init: a panel that is blank until the first "
+    "key fails rehearsal before the tests run.\n\n"
+)
+
+
+def plan_brief(plan, amendment=None):
+    """Ring 6b: the plan's intent, choices and tests as the brief's last
+    section (stage6/PLANS.md, 'The install')."""
+    out = ["\n\nYou are building the app named `%s` from this plan.\n" % plan["name"],
+           "Intent: %s\n" % plan["intent"]]
+    if plan["choices"]:
+        out.append("The choices row will show these keys; handle each in key: "
+                   + ", ".join("%s (%s)" % (chr(k), l.decode("ascii")) for k, l in plan["choices"]) + ".\n")
+    out.append("After it is built the twin will run these tests against it, in order, and "
+               "the build must pass every one:\n")
+    for verb, arg in plan["tests"]:
+        if verb == "press":
+            out.append("  press %s\n" % arg)
+        elif verb == "wait":
+            out.append("  wait %d\n" % arg)
+        elif verb == "expect changed":
+            out.append("  expect changed\n")
+        else:
+            out.append('  %s "%s"\n' % (verb, arg))
+    out.append("`press <keys>` sends each character to key, 0.2 s apart; `expect \"<text>\"` "
+               "means that text is somewhere on the app's panel, read cell by cell; `expect not` "
+               "that it is nowhere; `expect changed` that the panel changed since the twin last "
+               "looked. Draw only what the intent says. Draw the starting state in init: a panel "
+               "that is blank until the first key fails rehearsal before the tests run.\n")
+    if amendment:
+        out.append("The person installing it adds: %s\n" % amendment)
+    return "".join(out)
+
+
+def grow(request, failure=None, timeout=120.0, model=None, abi=1, plan=None):
     """The request in, a blob out - or a refusal. Never an exception.
     abi=1 (Stage 5): a blob (bytes) or a refusal string. abi=2 (Stage 6):
-    ("app", blob, name, choices) or ("refusal", text)."""
+    ("app", blob, name, choices) or ("refusal", text). With a plan (ring
+    6b, a parsed plans/<name>.md, optionally with an amendment under
+    plan["amendment"]): the plan brief, the plan's name and choices."""
     if abi == 2:
-        result = _grow(request, failure, timeout, model, APP_BRIEF + glass_sections(), True)
+        brief = APP_BRIEF + (PLAN_RULE if plan else "") + glass_sections()
+        if plan:
+            brief += plan_brief(plan, plan.get("amendment"))
+        result = _grow(request, failure, timeout, model, brief, True)
         if isinstance(result, tuple):
             blob, src = result
             try:
@@ -246,6 +286,8 @@ def grow(request, failure=None, timeout=120.0, model=None, abi=1):
                 offs = None
             if offs is None or any(o >= len(blob) for o in offs):
                 return ("refusal", "broker: the assembled app does not begin with four offsets inside it")
+            if plan:
+                return ("app", blob, plan["name"].encode("ascii"), list(plan["choices"]))
             return ("app", blob, app_name(request), app_choices(src))
         return ("refusal", result)
     return _grow(request, failure, timeout, model, GROW_BRIEF + abi_sections(), False)
