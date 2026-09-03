@@ -179,7 +179,253 @@ else
 fi
 echo
 
-# TESTS_2_TO_4
+# ------------------------------------------------- the serial check ----------
+# serial_check <smp> <disks> <label> [home image]. Boots the image headless
+# inside the cage with the display, with a fresh notebook image and - when
+# disks is 2 - the given home image, and requires HOME.md's SEVENTEEN S6:
+# lines in order (or ring 6a's sixteen when disks is 1 - HOME.md, "Two
+# disks": without a second virtio-blk the machine is ring 6a's, line for
+# line): "S6: edid <W>x<H>" second and the gop line equal to it; found =
+# woken = the -smp value; the console geometry from the mode; the disk's
+# sector count from the image the harness made; the notebook formatted;
+# "S6: home <N> apps" TWELFTH with the N the caller expects; "S6: nic <mac>"
+# with the harness's MAC; the component region 128 mod 4096; the obs page
+# page-aligned; "S6: glass core <id>"; "S6: keyboard ready" last. The guest
+# waits for keystrokes forever, so exit 124 is the expected outcome.
+
+serial_check() {
+  local smp="$1"
+  local disks="$2"
+  local label="$3"
+  local home="${4:-}"
+  local want_home="${5:-0}"
+  local disk="$OUT/serial.$label.img"
+  local cap="$OUT/serial.$label.txt"
+  local qerr="$OUT/qemu.$label.err"
+  local lines_file="$OUT/s6.$label.txt"
+  local rc want_lines=17
+  local -a home_drive=()
+
+  rm -f "$cap" "$qerr" "$lines_file"
+  fresh_disk "$disk"
+  if [ "$disks" = "2" ]; then
+    home_drive=(-drive "format=raw,file=$home,if=virtio")
+  else
+    want_lines=16
+  fi
+
+  # shellcheck disable=SC2086
+  timeout -k 5 60 qemu-system-x86_64 \
+    -machine q35 -m 256M -smp "$smp" \
+    -bios "$OVMF" \
+    $DISPLAY \
+    -drive format=raw,file="$ESP" \
+    -drive format=raw,file="$disk",if=virtio \
+    "${home_drive[@]}" \
+    -netdev "$CAGE_NETDEV" \
+    -device "$CAGE_DEVICE" \
+    -display none -serial stdio \
+    </dev/null >"$cap" 2>"$qerr"
+  rc=$?
+
+  if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
+    echo "    $label: qemu exited $rc, expected 124 (killed by the 60s timeout)"
+    sed 's/^/      /' "$qerr"
+    return 1
+  fi
+
+  tr -d '\r' <"$cap" 2>/dev/null | grep -ao 'S6: .*' >"$lines_file" 2>/dev/null
+
+  local -a got=()
+  mapfile -t got <"$lines_file"
+
+  local bad=()
+
+  if [ "${#got[@]}" -ne "$want_lines" ]; then
+    bad+=("expected exactly $want_lines S6: lines with $disks virtio disk(s), found ${#got[@]}")
+  fi
+  if grep -aq 'ERR: ' "$cap"; then
+    bad+=("the guest reported: $(tr -d '\r' <"$cap" | grep -ao 'ERR: .*' | head -1)")
+  fi
+
+  local l w="" h="" ew="" eh=""
+  l="${got[0]:-}"; [ "$l" = "S6: alive" ] || bad+=("line 1: got '$l', want 'S6: alive'")
+
+  l="${got[1]:-}"
+  if [[ "$l" =~ ^S6:\ edid\ ([0-9]+)x([0-9]+)$ ]]; then
+    ew="${BASH_REMATCH[1]}"; eh="${BASH_REMATCH[2]}"
+  else
+    bad+=("line 2: got '$l', want 'S6: edid <W>x<H>' - the harness gave the device an EDID")
+  fi
+
+  l="${got[2]:-}"
+  if [[ "$l" =~ ^S6:\ gop\ ([0-9]+)x([0-9]+)\ fb\ 0x([0-9a-f]{16})$ ]]; then
+    w="${BASH_REMATCH[1]}"; h="${BASH_REMATCH[2]}"
+    [ "${BASH_REMATCH[3]}" != "0000000000000000" ] || bad+=("line 3: framebuffer address is zero")
+    if [ -n "$ew" ]; then
+      [ "$w" = "$ew" ] && [ "$h" = "$eh" ] || \
+        bad+=("line 3: the mode is ${w}x${h}, but the display's EDID prefers ${ew}x${eh}")
+    fi
+  else
+    bad+=("line 3: got '$l', want 'S6: gop <W>x<H> fb 0x<16 hex digits>'")
+  fi
+
+  l="${got[3]:-}"; [ "$l" = "S6: boot services exited" ] || bad+=("line 4: got '$l', want 'S6: boot services exited'")
+  l="${got[4]:-}"; [ "$l" = "S6: gdt and paging ours" ] || bad+=("line 5: got '$l', want 'S6: gdt and paging ours'")
+  l="${got[5]:-}"; [ "$l" = "S6: idt ready" ] || bad+=("line 6: got '$l', want 'S6: idt ready'")
+
+  local found="" woken=""
+  l="${got[6]:-}"
+  if [[ "$l" =~ ^S6:\ cores\ found\ ([0-9]+)$ ]]; then found="${BASH_REMATCH[1]}"; else bad+=("line 7: got '$l', want 'S6: cores found <N>'"); fi
+  l="${got[7]:-}"
+  if [[ "$l" =~ ^S6:\ cores\ woken\ ([0-9]+)$ ]]; then woken="${BASH_REMATCH[1]}"; else bad+=("line 8: got '$l', want 'S6: cores woken <N>'"); fi
+
+  l="${got[8]:-}"
+  if [[ "$l" =~ ^S6:\ console\ ([0-9]+)x([0-9]+)$ ]]; then
+    local cols="${BASH_REMATCH[1]}" rows="${BASH_REMATCH[2]}"
+    if [ -n "$w" ] && [ -n "$h" ]; then
+      [ "$cols" -eq $((w / 16)) ] || bad+=("line 9: $cols columns, but $w pixels / 16 = $((w / 16))")
+      [ "$rows" -eq $((h / 16)) ] || bad+=("line 9: $rows rows, but $h pixels / 16 = $((h / 16))")
+    fi
+  else
+    bad+=("line 9: got '$l', want 'S6: console <COLS>x<ROWS>'")
+  fi
+
+  l="${got[9]:-}"
+  if [[ "$l" =~ ^S6:\ disk\ ([0-9]+)\ sectors$ ]]; then
+    [ "${BASH_REMATCH[1]}" -eq $((DISK_BYTES / 512)) ] || \
+      bad+=("line 10: the guest counted ${BASH_REMATCH[1]} sectors, but the image is $((DISK_BYTES / 512)) sectors")
+  else
+    bad+=("line 10: got '$l', want 'S6: disk <N> sectors'")
+  fi
+
+  l="${got[10]:-}"; [ "$l" = "S6: notebook formatted" ] || bad+=("line 11: got '$l', want 'S6: notebook formatted' - the disk was blank")
+
+  # From here the line numbers depend on the disk count: with two disks
+  # the home line is twelfth and everything after it moves down one.
+  local off=0
+  if [ "$disks" = "2" ]; then
+    l="${got[11]:-}"; [ "$l" = "S6: home $want_home apps" ] || \
+      bad+=("line 12: got '$l', want 'S6: home $want_home apps' (HOME.md, line twelve)")
+    off=1
+  else
+    if printf '%s\n' "${got[@]}" | grep -q '^S6: home '; then
+      bad+=("a home line appeared with only one virtio disk - the machine must be ring 6a's, line for line")
+    fi
+  fi
+
+  l="${got[$((11 + off))]:-}"; [ "$l" = "S6: nic $MAC" ] || bad+=("line $((12 + off)): got '$l', want 'S6: nic $MAC'")
+
+  l="${got[$((12 + off))]:-}"
+  if [[ "$l" =~ ^S6:\ component\ region\ 0x([0-9a-f]{16})\ 1048576\ bytes$ ]]; then
+    local addr="${BASH_REMATCH[1]}"
+    [ "$addr" != "0000000000000000" ] || bad+=("the component region address is zero")
+    [ "${addr:0:8}" = "00000000" ] || bad+=("the component region 0x$addr is above 4 GB")
+    [ "${addr:13:3}" = "080" ] || bad+=("the component region 0x$addr is not 128 mod 4096")
+  else
+    bad+=("line $((13 + off)): got '$l', want 'S6: component region 0x<16 hex digits> 1048576 bytes'")
+  fi
+
+  l="${got[$((13 + off))]:-}"
+  if [[ "$l" =~ ^S6:\ obs\ page\ 0x([0-9a-f]{16})$ ]]; then
+    local obs="${BASH_REMATCH[1]}"
+    [ "$obs" != "0000000000000000" ] || bad+=("the obs page address is zero")
+    [ "${obs:0:8}" = "00000000" ] || bad+=("the obs page 0x$obs is above 4 GB")
+    [ "${obs:13:3}" = "000" ] || bad+=("the obs page 0x$obs is not page-aligned")
+  else
+    bad+=("line $((14 + off)): got '$l', want 'S6: obs page 0x<16 hex digits>'")
+  fi
+
+  l="${got[$((14 + off))]:-}"
+  [[ "$l" =~ ^S6:\ glass\ core\ [0-9]+$ ]] || bad+=("line $((15 + off)): got '$l', want 'S6: glass core <id>'")
+
+  l="${got[$((15 + off))]:-}"; [ "$l" = "S6: keyboard ready" ] || bad+=("line $((16 + off)): got '$l', want 'S6: keyboard ready'")
+
+  [ -n "$found" ] && [ "$found" != "$smp" ] && bad+=("cores found is $found, but the machine was given -smp $smp")
+  [ -n "$woken" ] && [ "$woken" != "$smp" ] && bad+=("cores woken is $woken, but the machine was given -smp $smp")
+
+  if [ "${#bad[@]}" -eq 0 ]; then
+    echo "    $label: $want_lines S6: lines, in order, mode ${w}x${h}, found = woken = $smp, $([ "$disks" = 2 ] && echo "${got[11]#S6: }" || echo "no home line"), nic $MAC"
+    return 0
+  fi
+
+  echo "    $label: the serial log is not what the spec asks for"
+  for b in "${bad[@]}"; do echo "      - $b"; done
+  echo "      whole capture follows (OVMF chatter included):"
+  if [ -s "$cap" ]; then
+    cat -v "$cap" | sed 's/^/        /'
+  else
+    echo "        (nothing was captured at all)"
+  fi
+  return 1
+}
+
+# home_formatted_empty <image> - the image parsed from the host by HOME.md:
+# the header of a 16 MB disk, sixteen empty entries, nothing else written.
+home_formatted_empty() {
+  python3 - "$1" "$DISK_BYTES" <<'EOF'
+import struct, sys
+data = open(sys.argv[1], "rb").read()
+want = int(sys.argv[2])
+bad = []
+if len(data) != want:
+    bad.append("the image is %d bytes, the harness made it %d" % (len(data), want))
+if data[0:8] != b"GERMHOME":
+    bad.append("sector 0 bytes 0-7 are %r, not GERMHOME" % data[0:8])
+else:
+    fields = struct.unpack_from("<IIQQQQ", data, 8)
+    if fields != (1, 512, 1, 8, 9, want // 512):
+        bad.append("header fields are %r, want (1, 512, 1, 8, 9, %d)" % (fields, want // 512))
+    if any(data[0x30:0x200]):
+        bad.append("header padding is not zero")
+    if any(data[0x200:0x200 + 8 * 512]):
+        bad.append("the table (sectors 1-8) is not all zero after a format")
+    if any(data[0x200 + 8 * 512:]):
+        bad.append("something beyond the table was written on a fresh image")
+for b in bad:
+    print("      - " + b)
+sys.exit(1 if bad else 0)
+EOF
+}
+
+# ------------------------------------------------- test 2: the serial lines --
+# Three boots. With two fresh disks at -smp 8: the seventeen lines, "S6:
+# home 0 apps" twelfth, and the home image parsed from the host afterwards -
+# formatted, empty. The SAME home image at -smp 2: "home 0 apps" again and
+# the image byte-identical (a recognised image is not reformatted). With one
+# disk at -smp 8: exactly ring 6a's sixteen lines and no home line.
+
+echo "Test 2 - Serial, first boot: seventeen S6: lines with the home image, the image formatted, one disk gives sixteen"
+if [ ! -f "$ESP" ]; then
+  fail "test 2: no image was built"
+else
+  t2=0
+  fresh_disk "$HOME_IMG"
+  serial_check 8 2 "two" "$HOME_IMG" 0 || t2=1
+  if home_formatted_empty "$HOME_IMG"; then
+    echo "    two: the home image parses as a formatted, empty home (HOME.md)"
+  else
+    echo "    two: the home image is not a freshly formatted home"
+    t2=1
+  fi
+  cp "$HOME_IMG" "$OUT/home.after-first-boot.img"
+  serial_check 2 2 "again" "$HOME_IMG" 0 || t2=1
+  if cmp -s "$HOME_IMG" "$OUT/home.after-first-boot.img"; then
+    echo "    again: the home image is byte-identical after the second boot - recognised, not reformatted"
+  else
+    echo "    again: the home image changed on a second boot"
+    t2=1
+  fi
+  serial_check 8 1 "one" || t2=1
+  if [ "$t2" -eq 0 ]; then
+    pass "test 2: serial log matches the spec with two disks, twice, and with one"
+  else
+    fail "test 2: serial log does not match the spec"
+  fi
+fi
+echo
+
+# TESTS_3_TO_4
 
 # ------------------------------------------------------------- summary -------
 
