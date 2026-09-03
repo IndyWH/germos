@@ -425,7 +425,38 @@ else
 fi
 echo
 
-# TESTS_3_TO_4
+# ------------------------------------------------- test 3: the install ------
+# The thesis, mocked. The checker starts the MOCK broker (broker/plans.py)
+# with a wiped germline, boots with both disks, types "! install echo";
+# the mock reads plans/echo.md, serves the canned correct build, REHEARSES
+# it in a headless boot of a copy of this image at 1920x1080 with a home
+# drive and runs the plan's five tests there through the frozen twin's
+# hook; the guest writes the build to its home image, says "installed
+# echo", runs it in its panel; the checker types into it, journals a note
+# beside it, screendumps, Escapes. It demands the seventeen boot lines,
+# the echo byte-exact, the record with the plan's fields and the frame
+# with installed 1, the germline entry under the plan's key, the home
+# image holding exactly that build with the guest's SHA-256 equal to
+# hashlib's, the notebook, and the four screens - 'installing' during the
+# wait, the one-cell panel, and the installed app on the choices row at
+# the prompt. At -smp 2 and -smp 8. The work is in stage6/checkplans.py.
+
+echo "Test 3 - The install: '! install echo' rehearsed against the plan, kept on the home image, run, at -smp 2 and -smp 8"
+if [ ! -f "$ESP" ]; then
+  fail "test 3: no image was built"
+else
+  installed=0
+  python3 "$REPO/stage6/checkplans.py" --install 2 || installed=1
+  python3 "$REPO/stage6/checkplans.py" --install 8 || installed=1
+  if [ "$installed" -eq 0 ]; then
+    pass "test 3: the install held at both -smp 2 and -smp 8"
+  else
+    fail "test 3: the install did not hold (see above)"
+  fi
+fi
+echo
+
+# TEST_4
 
 # ------------------------------------------------------------- summary -------
 
