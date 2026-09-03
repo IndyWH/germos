@@ -1191,7 +1191,7 @@ main_loop:
         call    ask_question            ; console-only, then the prompt
         jmp     main_loop
 .request:
-        call    grow_request            ; console-only, then the prompt
+        call    bang_line               ; undo, a launch, or the broker; then the prompt
         jmp     main_loop
 .backspace:
         mov     eax, [cur_col]          ; only within this line's typed text -
@@ -2297,6 +2297,7 @@ home_init:
         cmp     ebx, HOME_TABLE_FIRST + HOME_TABLE_SECTORS
         jb      .read
         call    home_recount
+        call    choices_update          ; the installed apps on the row
         lea     rsi, [msg_home]
         call    serial_puts
         mov     eax, [home_count]
@@ -2585,7 +2586,7 @@ home_install:
         mov     ecx, APP_CHOICES * APP_CHOICE_BYTES
         rep     movsb                                   ; the frame's slots
         call    home_write_entry_sector                 ; only now: the blob is on disk
-        call    home_recount
+        call    home_recount                            ; the row is rebuilt when the app closes
         lea     rsi, [msg_installed]
         mov     rdx, r14
         lea     rcx, [msg_empty]
@@ -2738,6 +2739,200 @@ body_is_install:
 .no:
         xor     eax, eax
         ret
+
+; bang_line - RSI = a "!" line's trimmed body, ECX = its length (HOME.md,
+; "What a ! line does now"): empty, or anything unknown, takes ring 6a's
+; path to the broker (grow_request); "undo install <name>" is the undo;
+; a body equal to a valid home entry's name is a launch from the home
+; image with nothing on the wire. Each path ends in finish_line, whose
+; ret is the caller's. Clobbers registers freely.
+bang_line:
+        test    ecx, ecx
+        jz      grow_request                    ; "nothing to grow"
+        cmp     ecx, 13
+        jbe     .not_undo                       ; "undo install " and a name
+        push    rsi
+        push    rcx
+        push    rdi
+        lea     rdi, [msg_undo_word]
+        mov     ecx, 13
+        repe    cmpsb
+        pop     rdi
+        pop     rcx
+        pop     rsi
+        jne     .not_undo
+        add     rsi, 13
+        sub     ecx, 13
+        jmp     home_undo
+.not_undo:
+        call    home_lookup_name                ; EAX = the entry, or -1
+        cmp     eax, -1
+        je      grow_request                    ; the broker, as ring 6a
+        mov     r15d, eax
+        jmp     home_launch
+
+; home_lookup_name - RSI = a name, ECX = its length: name_buf holds it NUL
+; padded (cut at 32), and EAX = the valid entry of that exact name, or -1.
+; Preserves RSI and RCX (the body goes on to the broker on a miss);
+; clobbers RAX, RDI, R8, R14.
+home_lookup_name:
+        push    rsi
+        push    rcx
+        call    .lookup
+        pop     rcx
+        pop     rsi
+        ret
+.lookup:
+        lea     rdi, [name_buf]
+        push    rdi
+        mov     eax, ecx
+        xor     ecx, ecx
+        mov     [rdi], rcx
+        mov     [rdi + 8], rcx
+        mov     [rdi + 16], rcx
+        mov     [rdi + 24], rcx
+        mov     ecx, eax
+        cmp     ecx, APP_NAME_MAX
+        jbe     .copy
+        mov     ecx, APP_NAME_MAX
+        pop     rdi
+        rep     movsb
+        mov     eax, -1                         ; longer than a name can be
+        ret
+.copy:
+        pop     rdi
+        rep     movsb
+        cmp     dword [home_present], 0
+        je      .none
+        lea     r14, [name_buf]
+        call    home_find_entry
+        ret
+.none:
+        mov     eax, -1
+        ret
+
+; home_undo - RSI = the name after "undo install ", ECX = its length: the
+; entry's two builds swapped and its table sector written, or the reason
+; why not. Console only; then finish_line.
+home_undo:
+        call    app_close_if_running            ; a ! line closes the app first
+        call    home_lookup_name
+        cmp     eax, -1
+        je      .no_app
+        mov     r15d, eax
+        call    home_entry_addr                 ; RDI = the entry
+        cmp     dword [rdi + HE_PREV + HB_SIZE], 0
+        je      .no_previous
+        push    rdi
+        lea     rsi, [rdi + HE_CUR]             ; the current build aside
+        lea     rdi, [sha_tail]
+        mov     ecx, HB_BYTES / 8
+        rep     movsq
+        pop     rdi
+        push    rdi
+        lea     rsi, [rdi + HE_PREV]            ; the previous becomes current
+        add     rdi, HE_CUR
+        mov     ecx, HB_BYTES / 8
+        rep     movsq
+        pop     rdi
+        lea     rsi, [sha_tail]                 ; and the old current, previous
+        add     rdi, HE_PREV
+        mov     ecx, HB_BYTES / 8
+        rep     movsq
+        call    home_write_entry_sector
+        call    home_recount
+        lea     rsi, [msg_empty]
+        lea     rdx, [name_buf]
+        lea     rcx, [msg_restored]
+        call    home_say
+        jmp     finish_line
+.no_previous:
+        lea     rsi, [msg_empty]
+        lea     rdx, [name_buf]
+        lea     rcx, [msg_no_previous]
+        call    home_say
+        inc     qword [obs_page + OBS_ERRORS]
+        jmp     finish_line
+.no_app:
+        lea     rsi, [msg_no_app]
+        lea     rdx, [name_buf]
+        lea     rcx, [msg_empty]
+        call    home_say
+        inc     qword [obs_page + OBS_ERRORS]
+        jmp     finish_line
+
+; home_launch - R15D = a valid entry: its current build read from the home
+; image into the component region at +128, hashed and checked against the
+; entry, a frame header synthesised in the region (kind 2, ABI 2, source
+; 0, installed 1, the name, the entry's choices), and the app run exactly
+; as a delivered one - with nothing on the wire, and neither grows counter
+; moved. A hash mismatch runs nothing and says so. Then finish_line.
+home_launch:
+        call    app_close_if_running
+        call    home_entry_addr                 ; RDI = the entry
+        mov     r12d, [rdi + HE_CUR + HB_SIZE]
+        mov     ebx, [rdi + HE_CUR + HB_FIRST]
+        mov     r13d, [rdi + HE_CUR + HB_SECTORS]
+        push    rdi
+        lea     rdi, [comp_region + APP_BLOB_OFF]
+        mov     ecx, r13d
+.sector:
+        mov     eax, VBLK_T_IN
+        call    home_rw
+        add     rdi, 512
+        inc     ebx
+        dec     ecx
+        jnz     .sector
+        lea     rsi, [comp_region + APP_BLOB_OFF]
+        mov     rcx, r12
+        lea     rdi, [sha_digest]
+        call    sha256
+        pop     rdi
+        push    rdi
+        lea     rsi, [sha_digest]
+        add     rdi, HE_CUR + HB_SHA
+        mov     ecx, 32
+        repe    cmpsb
+        pop     rdi
+        jne     .bad_hash
+        ; the header, as the wire would have carried it
+        push    rdi
+        lea     rdi, [comp_region + COMP_RX_OFF]
+        mov     eax, r12d
+        add     eax, APP_HDR
+        mov     [rdi], eax                      ; N, for tidiness
+        add     rdi, 4
+        mov     ecx, APP_HDR / 8
+        xor     eax, eax
+        rep     stosq
+        pop     rsi                             ; the entry
+        lea     rdi, [comp_region + COMP_RX_OFF + 4]
+        mov     byte [rdi], APP_KIND
+        mov     byte [rdi + APPH_ABI], APP_ABI
+        mov     [rdi + APPH_LEN], r12d
+        mov     byte [rdi + APPH_INSTALLED], 1
+        push    rsi
+        push    rdi
+        add     rdi, APPH_NAME
+        mov     ecx, APP_NAME_MAX
+        rep     movsb                           ; the name (RSI at the entry's)
+        pop     rdi
+        pop     rsi
+        add     rsi, HE_CHOICES
+        add     rdi, APPH_CHOICES
+        mov     ecx, APP_CHOICES * APP_CHOICE_BYTES
+        rep     movsb
+        mov     dword [launch_home], 1
+        call    run_app
+        mov     dword [launch_home], 0
+        jmp     finish_line
+.bad_hash:
+        lea     rsi, [msg_empty]
+        lea     rdx, [name_buf]
+        lea     rcx, [msg_bad_hash]
+        call    home_say
+        inc     qword [obs_page + OBS_ERRORS]
+        jmp     finish_line
 
 ; sha256 - RSI = the bytes, RCX = how many, RDI = 32 bytes for the digest.
 ; FIPS 180-4, one 64-byte block at a time, the message schedule and the
@@ -4324,6 +4519,8 @@ run_app:
         mov     ecx, APP_CHOICES * APP_CHOICE_BYTES
         rep     movsb
         pop     rsi
+        cmp     dword [launch_home], 0  ; a launch from the home image received
+        jne     .counted                ; no frame: neither counter moves
         cmp     byte [rsi + APPH_SOURCE], 0
         jne     .served
         inc     qword [obs_page + OBS_GROWS_GEN]
@@ -4423,8 +4620,52 @@ app_close:
 choices_update:
         cmp     dword [app_running], 0
         jne     .running
+        ; No app: the markers, then up to three installed apps as "! <name>"
+        ; in table order (HOME.md, "The choices row") - five items at most.
+        lea     rdi, [choices_line]
         lea     rsi, [msg_choices_prompt]
         mov     ecx, msg_choices_prompt_len
+        rep     movsb
+        cmp     dword [home_present], 0
+        je      .prompt_done
+        xor     r8d, r8d                ; the entry index
+        xor     r9d, r9d                ; items shown
+.prompt_entry:
+        cmp     r9d, APP_CHOICES_SHOWN
+        jae     .prompt_done
+        lea     rax, [home_valid]
+        cmp     byte [rax + r8], 0
+        je      .prompt_next
+        mov     eax, '   '              ; three spaces between items
+        stosw
+        mov     al, ' '
+        stosb
+        mov     al, '!'
+        stosb
+        mov     al, ' '
+        stosb
+        lea     rsi, [home_table]
+        mov     eax, r8d
+        shl     eax, 8
+        add     rsi, rax
+        mov     ecx, APP_NAME_MAX
+.prompt_name:
+        lodsb
+        test    al, al
+        jz      .prompt_named
+        stosb
+        dec     ecx
+        jnz     .prompt_name
+.prompt_named:
+        inc     r9d
+.prompt_next:
+        inc     r8d
+        cmp     r8d, HOME_ENTRIES
+        jb      .prompt_entry
+.prompt_done:
+        lea     rsi, [choices_line]
+        mov     rcx, rdi
+        sub     rcx, rsi
         call    choices_set
         ret
 .running:
@@ -6592,6 +6833,7 @@ msg_nb_fmt:     db      'S6: notebook formatted', 13, 10, 0
 msg_home:       db      'S6: home ', 0
 msg_apps:       db      ' apps', 13, 10, 0
 msg_install_word: db    'install'                       ; 7 bytes, compared
+msg_undo_word:  db      'undo install '                 ; 13 bytes, compared
 msg_installed:  db      'installed ', 0                 ; HOME.md's console lines
 msg_home_full:  db      'home image full: ', 0
 msg_no_home:    db      'no home image: ', 0
@@ -6945,7 +7187,10 @@ disk_sectors:   resd    1               ; the capacity, in 512-byte sectors
 home_present:   resd    1
 home_count:     resd    1
 home_next:      resd    1
+launch_home:    resd    1               ; 1 while run_app serves a home launch
 home_valid:     resb    HOME_ENTRIES
+        alignb  16
+name_buf:       resb    APP_NAME_MAX    ; a typed name, NUL-padded, for the lookups
         alignb  512
 home_table:     resb    HOME_TABLE_SECTORS * 512
 
