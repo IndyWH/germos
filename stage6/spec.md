@@ -130,10 +130,12 @@ Read at ring 6b; frozen once you approve it. The tests are what the twin runs.
 
 ## Intent
 A four-function calculator for whole numbers. The panel shows a single line: the
-number being typed, or the result of the last sum. Digits 0 to 9 type a number.
-The keys + - * / choose an operation. = shows the result, which may be negative. c clears everything.
-Division is whole-number division; dividing by zero shows the word error and
-then clears. Numbers larger than nine digits show error. Nothing else is drawn.
+number being typed, or the result of the last sum; it shows 0 before anything is
+typed and after c clears. Digits 0 to 9 type a number. The keys + - * / choose
+an operation. = shows the result, which may be negative. c clears everything.
+Division is whole-number division; dividing by zero shows the word error until
+the next key, which clears it. Numbers larger than nine digits show error the
+same way. Nothing else is drawn.
 
 ## Choices
 = result

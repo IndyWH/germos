@@ -880,6 +880,15 @@ medium effort implements**, to be compared with Opus at high (Stages 0 and
 as every ring. Item 0 (this record and the plan's commit) is done; the
 items follow one commit each, exactly as the plan says.
 
+**The one edit to `stage6/spec.md` (item 2, amendment A2):** the owner
+approved, at the 6b plan gate, two changes to the calculator's intent in
+the appendix — the line shows `0` before anything is typed and after `c`
+clears; dividing by zero shows `error` until the next key, which clears
+it, and numbers over nine digits show `error` the same way. The appendix
+was edited to say so and `plans/calculator.md` copied from it byte for
+byte; the choices and the five tests are exactly as the spec first wrote
+them.
+
 ## Next action
 
 **Ring 6b is in progress** (see above). Before it opened — **ring 6a is

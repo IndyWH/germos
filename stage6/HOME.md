@@ -157,16 +157,25 @@ A fresh 16 MB image after its first boot, sector 0:
 empty entries, `S6: home 0 apps`.
 
 The entry for `echo` after `! install echo` (the committed
-`stage6/echo.bin`, ITEM2_SIZE bytes, one sector at sector 9), entry 0 at
+`stage6/echo.bin`, 121 bytes, one sector at sector 9), entry 0 at
 sector 1 offset 0:
 
 ```
-ITEM2_ENTRY
+00000200: 6563 686f 0000 0000 0000 0000 0000 0000  echo............
+00000210: 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00000220: 7900 0000 0900 0000 0100 0000 0000 0000  y...............
+00000230: f127 1761 69e7 1815 1a7e 1df1 1a43 3ef6  .'.ai....~...C>.
+00000240: 0897 4653 3517 e45d 31aa c11c e2f4 07d3  ..FS5..]1.......
+00000250: 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00000260: 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00000270: 0000 0000 0000 0000 0000 0000 0000 0000  ................
+... (zeros to 000002f0)
+000002f0: 0000 0000 0000 0000 0000 0000 0000 0000  ................
 ```
 
 After `! install echo, but big` (the same build padded to 4096 bytes, 8
 sectors at sector 10): the current build is the padded one, the previous
-is the first (sector 9, ITEM2_SIZE bytes, the same hash as above). After
+is the first (sector 9, 121 bytes, the same hash as above). After
 `! undo install echo` the two are swapped back — the first build current
 at sector 9, the padded one previous at sector 10 — and `! echo` runs the
 first. Both blobs stay on the disk; the next free sector is 18.

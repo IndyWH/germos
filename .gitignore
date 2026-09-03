@@ -9,6 +9,9 @@
 !stage6/app.bin
 !stage6/hog.bin
 !stage6/escapee.bin
+# ...and the two committed, frozen fixtures of ring 6b
+!stage6/echo.bin
+!stage6/liar.bin
 *.o
 *.elf
 *.lst
