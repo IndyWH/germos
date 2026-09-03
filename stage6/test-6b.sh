@@ -456,7 +456,58 @@ else
 fi
 echo
 
-# TEST_4
+# --------------------------------------------- test 4: the store keeps its word
+# Two halves. First this harness inspects its OWN cage and display strings,
+# and the checker inspects its own QEMU argv and the twin's as
+# broker/plans.py builds it (the cage, the 1920x1080 device, three drives
+# under stage6/out/). Then three boots at -smp 8: A installs echo with the
+# mock; B reboots the same home image with NO broker listening - "S6: home
+# 1 apps", "! echo" on the choices row, "! echo" run from disk with the
+# wire counters unchanged between a read after ready and a read after the
+# launch, an undo with nothing to undo refused; C, with the mock and the
+# germline kept - "! install liar" refused naming its failed test, "!
+# install echo, but big" replacing the build, "! install echo" served from
+# the germline and replacing again, "! undo install echo" swapping the
+# previous build back, "! echo" running it - the home image parsed from the
+# host with both extents hash-checked, the record, the germline, the strip
+# against the page. The work is in stage6/checkplans.py --store.
+
+echo "Test 4 - The store keeps its word: a reboot with no broker, the launch from disk, the liar refused, the undo"
+cage_probs=()
+case "$CAGE_NETDEV" in
+  user,*) : ;;
+  *) cage_probs+=("the netdev is not slirp user mode: $CAGE_NETDEV") ;;
+esac
+case ",$CAGE_NETDEV," in
+  *,restrict=on,*) : ;;
+  *) cage_probs+=("the netdev lacks restrict=on: $CAGE_NETDEV") ;;
+esac
+n_fwd=$(printf '%s' "$CAGE_NETDEV" | grep -o 'guestfwd=' | wc -l)
+[ "$n_fwd" -eq 1 ] || cage_probs+=("expected exactly one guestfwd, found $n_fwd: $CAGE_NETDEV")
+printf '%s' "$CAGE_NETDEV" | grep -qE 'guestfwd=tcp:10\.0\.2\.4:9999-cmd:nc -N 127\.0\.0\.1 9999(,|$)' || \
+  cage_probs+=("the guestfwd is not tcp:10.0.2.4:9999 via 'nc -N 127.0.0.1 9999': $CAGE_NETDEV")
+case "$CAGE_NETDEV" in
+  *hostfwd*) cage_probs+=("the netdev opens a hostfwd: $CAGE_NETDEV") ;;
+esac
+[ "$CAGE_DEVICE" = "virtio-net-pci,netdev=n0,mac=$MAC" ] || \
+  cage_probs+=("the device is not a virtio-net-pci on netdev n0 with the harness's MAC: $CAGE_DEVICE")
+[ "$DISPLAY" = "-vga none -device VGA,edid=on,xres=1920,yres=1080" ] || \
+  cage_probs+=("the display is not the standard VGA device with the 1920x1080 EDID: $DISPLAY")
+
+if [ "${#cage_probs[@]}" -ne 0 ]; then
+  fail "test 4: this harness's own cage or display string is not the cage"
+  for p in "${cage_probs[@]}"; do echo "    - $p"; done
+else
+  echo "    the harness's own -netdev carries restrict=on and the single guestfwd to 10.0.2.4:9999 via nc to 127.0.0.1:9999; the display is the VGA device with the 1920x1080 EDID"
+  if [ ! -f "$ESP" ]; then
+    fail "test 4: no image was built"
+  elif python3 "$REPO/stage6/checkplans.py" --store; then
+    pass "test 4: the store kept its word - launched with no broker, the liar refused, the undo hash-checked"
+  else
+    fail "test 4: the store did not keep its word (see above)"
+  fi
+fi
+echo
 
 # ------------------------------------------------------------- summary -------
 

@@ -745,10 +745,280 @@ def run_install(smp):
 
 # ------------------------------------------------------------------- store --
 
+def check_argv(argv, port, want_mac, want_drives):
+    """A QEMU command inspected for the cage and THIS ring's display: slirp
+    user mode, restrict=on, one guestfwd from 10.0.2.4:9999 by nc to
+    127.0.0.1 on the given port, no hostfwd, one virtio-net-pci on n0 (with
+    the MAC when wanted), -vga none and the one VGA device with the
+    1920x1080 EDID, exactly want_drives drives, every one a file under
+    stage6/out/."""
+    problems = check_cage_argv(argv, port, want_mac)
+    problems = [p for p in problems if "the display is not" not in p]      # 6a's check wants 1440x1440
+    devices = [argv[i + 1] for i, a in enumerate(argv) if a == "-device"]
+    vgas = [d for d in devices if d.startswith("VGA")]
+    if vgas != [DISPLAY[3]]:
+        problems.append("the display is not %r: %r" % (DISPLAY[3], vgas))
+    drives = [argv[i + 1] for i, a in enumerate(argv) if a == "-drive"]
+    if len(drives) != want_drives:
+        problems.append("expected exactly %d drives, found %d: %r" % (want_drives, len(drives), drives))
+    return problems
+
+
 def run_store():
-    """Test 4: the store keeps its word (item 7)."""
-    say("--store is not written yet (item 7)")
-    return 1
+    """Test 4: the store keeps its word, at -smp 8."""
+    smp = 8
+    argv = qemu_argv(smp, NOTES, HOME_IMG, os.path.join(OUT, "x"))
+    problems = check_argv(argv, BROKER_PORT, MAC, 3)
+    if plans.DISPLAY != DISPLAY or twin.VGA_ARGS != DISPLAY:
+        problems.append("the broker module's display %r or the twin's %r is not the harness's %r"
+                        % (plans.DISPLAY, twin.VGA_ARGS, DISPLAY))
+    if not report("the harness's own QEMU command is not the cage with this ring's display", problems):
+        return 1
+    say("the checker's QEMU command carries restrict=on, the single guestfwd via nc to 127.0.0.1:%d, the 1920x1080 device and three drives under stage6/out/" % BROKER_PORT)
+
+    rargv = twin.qemu_argv(ESP, os.path.join(TWIN_WORKDIR, "notes.img"), os.path.join(TWIN_WORKDIR, "serial.txt"),
+                           REHEARSAL_PORT, extra_args=twin_extra_args())
+    problems = check_argv(rargv, REHEARSAL_PORT, None, 3)
+    if not TWIN_HOME.startswith(OUT + os.sep):
+        problems.append("the twin's home image %r is not under stage6/out/" % TWIN_HOME)
+    if twin.DEFAULT_PORT != REHEARSAL_PORT:
+        problems.append("the twin's default port is %d, not %d" % (twin.DEFAULT_PORT, REHEARSAL_PORT))
+    if not report("the twin's QEMU command, as broker/plans.py builds it, is not the cage with this ring's display", problems):
+        return 1
+    say("the twin's command carries the same cage on 127.0.0.1:%d, the same display, and the home drive %s"
+        % (REHEARSAL_PORT, os.path.relpath(TWIN_HOME, REPO)))
+
+    blobs = {}
+    for name in ("echo", "liar"):
+        blob, problems = fixture_self_check(name)
+        if not report("the %s fixture is not what the repository says" % name, problems):
+            return 1
+        blobs[name] = blob
+    echo, liar = blobs["echo"], blobs["liar"]
+    big = echo + bytes(PAD_BIG - len(echo))
+    problems = []
+    for name, ntests, choices in (("echo", 5, []), ("liar", 5, []), ("calculator", 10, [(ord("="), b"result"), (ord("c"), b"clear")])):
+        try:
+            _, p = plan_of(name)
+        except (OSError, ValueError) as exc:
+            problems.append("plans/%s.md does not parse: %s" % (name, exc))
+            continue
+        if len(p["tests"]) != ntests or p["choices"] != choices:
+            problems.append("plans/%s.md has %d tests and choices %r, want %d and %r" % (name, len(p["tests"]), p["choices"], ntests, choices))
+    if not report("the committed plans are not what the spec wrote", problems):
+        return 1
+    say("the three plans parse: echo and liar with five tests, the calculator with ten and two choices")
+
+    # ---------------------------------------------------------- boot A ----
+    record_a = os.path.join(OUT, "broker.store.a.jsonl")
+    mock, err = start_mock(record_a)
+    if err:
+        say(err)
+        return 1
+    say("boot A: mock up, germline wiped; '! install echo'")
+    try:
+        fresh_disk(NOTES)
+        fresh_disk(HOME_IMG)
+        steps = [
+            ("type", "! install echo\n"), ("wait_record", record_a, 1, 150.0), ("sleep", 3.0),
+            ("type", "\x1b"), ("sleep", 1.0),
+        ]
+        capture, reads, err = drive(smp, NOTES, HOME_IMG, steps, os.path.join(OUT, "serial.store.a.txt"))
+    finally:
+        stop_mock(mock)
+    if err:
+        say(err)
+        if capture:
+            dump_capture(capture)
+        return 1
+    ok = True
+    problems, geometry = check_boot_lines(capture, smp, "formatted", 0)
+    problems += check_echo(capture, b"! install echo\r\n")
+    entries, more = read_record(record_a)
+    problems += more
+    if entries is not None:
+        if len(entries) != 1:
+            problems.append("boot A: the broker saw %d connection(s), want 1" % len(entries))
+        if entries:
+            problems += check_install_entry(1, entries[0], "install echo", "generated", 1, ["pass"], "app",
+                                            app_frame(echo, b"echo", [], 0, installed=1), plan="echo", tests=ECHO_TESTS_OK)
+    more, home_a = check_home(HOME_IMG, {"echo": {"current": (echo, DATA_FIRST), "previous": None, "choices": []}}, "boot A")
+    problems += more
+    ok &= report("boot A did not install echo", problems, capture)
+    if not problems:
+        say("boot A: echo installed at sector %d, the record and the home image as PLANS.md and HOME.md say" % DATA_FIRST)
+    shutil.copyfile(HOME_IMG, os.path.join(OUT, "home.after-a.img"))
+    if None in geometry:
+        return 1
+    regs = regions(geometry[2], geometry[3])
+    conv = regs["conversation"]
+
+    # ---------------------------------------------------------- boot B ----
+    if port_state(BROKER_PORT) == "open":
+        say("boot B: something is listening on 127.0.0.1:%d - the no-broker boot cannot run" % BROKER_PORT)
+        return 1
+    say("boot B: NO broker (127.0.0.1:%d closed); the same home image; '! echo' from disk" % BROKER_PORT)
+    shots = {k: os.path.join(OUT, "screen.store.%s.ppm" % k) for k in ("p", "l", "u", "e", "d")}
+    fresh_disk(NOTES)
+    steps = [
+        ("obs", "r"), ("shot", shots["p"]),
+        ("type", "! echo\n"), ("sleep", 2.0),
+        ("type", "b"), ("sleep", 1.0),
+        ("shot", shots["l"]), ("obs", "l"),
+        ("type", "\x1b"), ("sleep", 1.0),
+        ("type", "! undo install echo\n"), ("sleep", 1.5),
+        ("shot", shots["u"]), ("obs", "u"),
+    ]
+    capture, reads, err = drive(smp, NOTES, HOME_IMG, steps, os.path.join(OUT, "serial.store.b.txt"))
+    if err:
+        say(err)
+        if capture:
+            dump_capture(capture)
+        return 1
+    problems, _ = check_boot_lines(capture, smp, "formatted", 1)
+    problems += check_echo(capture, b"! echo\r\n! undo install echo\r\n")
+    ok &= report("boot B's serial log is not what the spec asks for", problems, capture)
+    if not problems:
+        say("boot B: seventeen lines, 'S6: home 1 apps'; the serial echo exactly the two typed lines")
+    problems = check_choices(shots["p"], geometry, CHOICES_PROMPT_ECHO)
+    problems += check_one_cell_panel(shots["l"], geometry, "b")
+    problems += check_mode_field(shots["l"], geometry, "running echo")
+    problems += check_choices(shots["l"], geometry, CHOICES_ECHO_RUNNING)
+    if "r" not in reads or "l" not in reads or "u" not in reads:
+        problems.append("the obs page could not be read around the launch")
+    else:
+        r, l = reads["r"], reads["l"]
+        problems += check_counts(l, {"mode": 3, "name": "echo", "focus": 1, "wire_conns": 0, "requests": 0,
+                                     "grows_generated": 0, "grows_served": 0, "errors": 0,
+                                     "bytes_in": r["bytes_in"], "bytes_out": r["bytes_out"]}, "the launch")
+        problems += check_counts(reads["u"], {"mode": 0, "errors": 1, "wire_conns": 0}, "the undo")
+    problems += check_region_rows(shots["u"], geometry, conv, ["> ! echo", "> ! undo install echo", "echo has no previous build", PROMPT])
+    problems += check_app_panel_blank(shots["u"], geometry)
+    problems += check_image(NOTES, [])
+    if open(HOME_IMG, "rb").read() != open(os.path.join(OUT, "home.after-a.img"), "rb").read():
+        problems.append("the home image changed during boot B - a launch or a refused undo must not write it")
+    ok &= report("boot B did not launch echo from disk with nothing on the wire", problems)
+    if not problems:
+        say("boot B: '! echo' on the choices row; the app ran from disk showing 'b'; wire_conns 0 and bytes in/out unchanged "
+            "(%d/%d) between the read after ready and the read after the launch; 'echo has no previous build' counted; the image untouched"
+            % (reads["r"]["bytes_in"], reads["r"]["bytes_out"]))
+
+    # ---------------------------------------------------------- boot C ----
+    record_c = os.path.join(OUT, "broker.store.c.jsonl")
+    mock, err = start_mock(record_c, wipe_germline=False)
+    if err:
+        say(err)
+        return 1
+    say("boot C: mock up, germline kept; the liar, the amended re-install, the germline re-install, the undo, the launch")
+    try:
+        fresh_disk(NOTES)
+        steps = [
+            ("type", "! install liar\n"), ("wait_record", record_c, 1, 240.0), ("sleep", SETTLE),
+            ("type", "! install echo, but big\n"), ("wait_record", record_c, 2, 150.0), ("sleep", 3.0),
+            ("type", "\x1b"), ("sleep", 1.0),
+            ("type", "! install echo\n"), ("wait_record", record_c, 3, 20.0), ("sleep", 3.0),
+            ("type", "\x1b"), ("sleep", 1.0),
+            ("type", "! undo install echo\n"), ("sleep", 1.5),
+            ("type", "! echo\n"), ("sleep", 2.0),
+            ("type", "c"), ("sleep", 1.0),
+            ("shot", shots["e"]),
+            ("type", "\x1b"), ("sleep", 1.0),
+            ("type", "last\n"), ("sleep", 1.5),
+            ("surfaces", "d"), ("shot", shots["d"]), ("obs", "d2"),
+        ]
+        capture, reads, err = drive(smp, NOTES, HOME_IMG, steps, os.path.join(OUT, "serial.store.c.txt"))
+    finally:
+        stop_mock(mock)
+    if err:
+        say(err)
+        if capture:
+            dump_capture(capture)
+        return 1
+    keys_typed = sum(len(s[1]) for s in steps if s[0] == "type")
+    problems, _ = check_boot_lines(capture, smp, "formatted", 1)
+    problems += check_echo(capture, b"! install liar\r\n! install echo, but big\r\n! install echo\r\n"
+                                    b"! undo install echo\r\n! echo\r\nlast\r\n")
+    ok &= report("boot C's serial log is not what the spec asks for", problems, capture)
+    if not problems:
+        say("boot C: seventeen lines, 'home 1 apps'; the echo exactly the six typed lines")
+
+    entries, problems = read_record(record_c)
+    if entries is not None:
+        if len(entries) != 3:
+            problems.append("boot C: the broker saw %d connection(s), want 3" % len(entries))
+        checks = [
+            lambda e: check_install_entry(1, e, "install liar", "refused", 3, ['fail: expect "a"'] * 2, "refusal",
+                                          refusal_frame(REFUSAL_LIAR.encode()), REFUSAL_LIAR, plan="liar", tests=LIAR_TESTS),
+            lambda e: check_install_entry(2, e, "install echo, but big", "generated", 4, ["pass"], "app",
+                                          app_frame(big, b"echo", [], 0, installed=1), plan="echo", amendment="but big",
+                                          tests=ECHO_TESTS_OK),
+            lambda e: check_install_entry(3, e, "install echo", "germline", 4, [], "app",
+                                          app_frame(echo, b"echo", [], 1, installed=1), plan="echo", tests=[]),
+        ]
+        for check, entry in zip(checks, entries):
+            problems += check(entry)
+    ok &= report("boot C's record is not what PLANS.md asks for", problems)
+    if not problems:
+        say("the record: the liar refused naming its failed test after two rehearsals (calls 3); "
+            "'echo, but big' generated (4) as a 4096-byte build with installed 1; 'install echo' served from the germline (still 4) with source 1 and installed 1")
+
+    problems = check_install_germline(GERMLINE, "echo", echo, tests=ECHO_TESTS_OK)
+    problems += check_install_germline(GERMLINE, "echo", big, amendment="but big", tests=ECHO_TESTS_OK)
+    names = germline_entries(GERMLINE)
+    if len(names) != 2:
+        problems.append("the germline holds %d entries %r, want exactly 2 (the liar never lands)" % (len(names), names))
+    ok &= report("the germline is not what PLANS.md asks for", problems)
+    if not problems:
+        say("the germline holds exactly two entries - echo, and echo with its amendment - and no liar")
+
+    # The sequence: A put echo at 9; "echo, but big" put the padded build
+    # at 10-17 (echo at 9 became the previous); the germline re-install put
+    # echo at 18 (the padded build became the previous, sector 9 abandoned);
+    # the undo swapped them back: the padded build current, echo at 18
+    # previous. Both extents still hold their builds, hash-checked.
+    problems, home_c = check_home(HOME_IMG, {"echo": {"current": (big, DATA_FIRST + 1), "previous": (echo, DATA_FIRST + 9),
+                                                      "choices": []}}, "boot C")
+    if home_c and home_c["next_free"] != DATA_FIRST + 10:
+        problems.append("boot C: the next free sector is %d, want %d" % (home_c["next_free"], DATA_FIRST + 10))
+    ok &= report("the home image after the re-installs and the undo is not what HOME.md asks for", problems)
+    if not problems:
+        say("the home image: echo's current build is the padded one at sector %d and its previous the first build at sector %d - "
+            "the undo swapped them, both extents hash-checked from the host" % (DATA_FIRST + 1, DATA_FIRST + 9))
+
+    problems = check_image(NOTES, ["last"])
+    ok &= report("the notebook is not what it should be", problems)
+
+    problems = check_one_cell_panel(shots["e"], geometry, "c")
+    problems += check_mode_field(shots["e"], geometry, "running echo")
+    ok &= report("screen E does not show the restored build running", problems)
+    if not problems:
+        say("screen E: the restored build ran from disk and took 'c'")
+
+    problems = []
+    if "d" not in reads or "d2" not in reads:
+        problems.append("the obs page or the surfaces could not be read at the end")
+    else:
+        problems += check_strip(shots["d"], geometry, reads["d"]["obs"], reads["d2"], "screen D")
+        problems += check_surfaces(shots["d"], reads["d"], "screen D")
+        problems += check_counts(reads["d"]["obs"], {"mode": 0, "name": "", "focus": 0, "keys": keys_typed,
+                                                    "questions": 0, "requests": 3, "notes": 1, "errors": 1,
+                                                    "grows_generated": 1, "grows_served": 1, "wire_conns": 3}, "screen D")
+        problems += check_mode_field(shots["d"], geometry, "prompt")
+        problems += check_choices(shots["d"], geometry, CHOICES_PROMPT_ECHO)
+        problems += check_app_panel_blank(shots["d"], geometry)
+        problems += check_region_rows(shots["d"], geometry, conv, [
+            "> ! install liar", REFUSAL_LIAR,
+            "> ! install echo, but big", "installed echo",
+            "> ! install echo", "installed echo",
+            "> ! undo install echo", "echo: previous build restored",
+            "> ! echo", "> last", PROMPT])
+    ok &= report("screen D is not the truth", problems)
+    if not problems:
+        say("screen D: the strip is the obs page (err 001, g 001/001), every region its surface, '! echo' still on the choices row, "
+            "the whole conversation from the liar's refusal to the restored build")
+
+    say("the store: %s" % ("kept its word" if ok else "did not keep its word"))
+    return 0 if ok else 1
 
 
 def main(argv):
