@@ -947,20 +947,20 @@ def run_store():
         if len(entries) != 3:
             problems.append("boot C: the broker saw %d connection(s), want 3" % len(entries))
         checks = [
-            lambda e: check_install_entry(1, e, "install liar", "refused", 3, ['fail: expect "a"'] * 2, "refusal",
+            lambda e: check_install_entry(1, e, "install liar", "refused", 2, ['fail: expect "a"'] * 2, "refusal",
                                           refusal_frame(REFUSAL_LIAR.encode()), REFUSAL_LIAR, plan="liar", tests=LIAR_TESTS),
-            lambda e: check_install_entry(2, e, "install echo, but big", "generated", 4, ["pass"], "app",
+            lambda e: check_install_entry(2, e, "install echo, but big", "generated", 3, ["pass"], "app",
                                           app_frame(big, b"echo", [], 0, installed=1), plan="echo", amendment="but big",
                                           tests=ECHO_TESTS_OK),
-            lambda e: check_install_entry(3, e, "install echo", "germline", 4, [], "app",
+            lambda e: check_install_entry(3, e, "install echo", "germline", 3, [], "app",
                                           app_frame(echo, b"echo", [], 1, installed=1), plan="echo", tests=[]),
         ]
         for check, entry in zip(checks, entries):
             problems += check(entry)
     ok &= report("boot C's record is not what PLANS.md asks for", problems)
     if not problems:
-        say("the record: the liar refused naming its failed test after two rehearsals (calls 3); "
-            "'echo, but big' generated (4) as a 4096-byte build with installed 1; 'install echo' served from the germline (still 4) with source 1 and installed 1")
+        say("the record: the liar refused naming its failed test after two rehearsals (calls 2 - the mock is restarted between boots); "
+            "'echo, but big' generated (3) as a 4096-byte build with installed 1; 'install echo' served from the germline (still 3) with source 1 and installed 1")
 
     problems = check_install_germline(GERMLINE, "echo", echo, tests=ECHO_TESTS_OK)
     problems += check_install_germline(GERMLINE, "echo", big, amendment="but big", tests=ECHO_TESTS_OK)

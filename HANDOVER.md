@@ -934,11 +934,16 @@ the way: `home_lookup_name` clobbered RSI and ECX, so an unknown `!`
 body reached the broker as an empty one (`nothing to grow`) — fixed by
 preserving both.
 
-**For the owner:** review and apply `stage6/out/checkplans.fix.patch`
-by your own hand (`git apply stage6/out/checkplans.fix.patch` at the
-repo root), as at Stage 5 item 8b and ring 6a item 12b. The next session
-(or this one, told to continue) then commits item 11 with all four tests
-green plus the regressions, and goes on to item 12.
+**The freeze opened once — item 10b, 3 September 2026.** Cowork
+verified the diff against the frozen checker: the counts 2, 3, 3 are
+what a fresh mock truthfully records for boot C, and no criterion is
+weakened. **The owner applied it by his own hand with `git apply` at the
+repo root**, and item 10b commits it with the payload table re-run
+(1072, 0 wrong). The freeze was opened for exactly that change and
+nothing else — the third such opening in the project's history, after
+Stage 5 item 8b and ring 6a item 12b. The diff, for the record: the
+three `generation_calls` expectations in `run_store`'s boot C (3 → 2,
+4 → 3, 4 → 3) and the message line that reports them.
 
 ## Next action
 
