@@ -37,20 +37,47 @@ nasm -f bin stage0/stage0.asm -o stage0/out/stage0.img
                        # run ending in a console message not a hang. Refuses to
                        # start if anything listens on 9999. Five QEMU boots.
 
-# The mock broker (what the gate talks to; never spends a token)
-python3 broker/broker.py --mock --port 9999
+# Stage 5
+./stage5/mkimage.sh    # assemble stage5.asm, pack the FAT image (not frozen)
+./stage5/test.sh       # acceptance tests 1-4: the grow request, the component
+                       # rehearsed in the twin, the germline; needs 9999 and
+                       # 9998 free. Five boots plus six rehearsals, ~8 min.
+
+# Stage 6 ring 6a - the glass
+./stage6/mkimage.sh    # assemble stage6.asm, pack the FAT image (not frozen)
+./stage6/test.sh       # acceptance tests 1-4 at 1440x1440 with ONE virtio disk:
+                       # sixteen lines, the app in its panel, the truth on the
+                       # strip. ~14 min. Still the regression for ring 6b: the
+                       # same binary without a home image is ring 6a's.
+
+# Stage 6 ring 6b - the store of plans
+./stage6/test-6b.sh    # acceptance tests 1-4 at 1920x1080 with TWO virtio disks
+                       # (notes and home): seventeen lines, "! install echo"
+                       # rehearsed against the plan's tests, the launch with no
+                       # broker, the liar refused, the undo. ~12 min.
+
+# The mock brokers (what the gates talk to; never spend a token)
+python3 broker/broker.py --mock --port 9999     # Stage 4
+python3 broker/plans.py --mock                  # Stage 6 (answers, apps, installs)
 
 # The hook's payload table - every freeze and bodyguard case, 0 wrong or exit 1
 python3 .claude/hooks/payloads.py
 ```
 
-Windowed, for the oracle test (Stage 3 shape; earlier stages drop the second
-drive and point at their own `esp.img`):
+Windowed, for the oracle test (Stage 6 ring 6b shape, with the real broker
+`python3 broker/plans.py` in another terminal; earlier stages drop the
+drives, the display and the cage they did not have and point at their own
+`esp.img` — see README.md):
 
 ```bash
+truncate -s 16M stage6/out/home.img
 qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
-  -drive format=raw,file=stage3/out/esp.img \
-  -drive format=raw,file=stage3/out/notes.img,if=virtio -serial stdio
+  -vga none -device VGA,edid=on,xres=1920,yres=1080 \
+  -drive format=raw,file=stage6/out/esp.img \
+  -drive format=raw,file=stage6/out/notes.img,if=virtio \
+  -drive format=raw,file=stage6/out/home.img,if=virtio \
+  -netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9999' \
+  -device virtio-net-pci,netdev=n0 -serial stdio
 ```
 
 Each stage's `test.sh` is its gate. It must be green before every commit that
@@ -242,6 +269,17 @@ test in the twin.
   `ph` worst at 99.9 for the session — the strip telling an untruth
   about the human path while `w` already held the wire's wait. Mark at
   the moment the key's echo lands in the surface (ring 6a item 14b).
+- **A counter lives in the process that holds it.** The mock's
+  `generation_calls` restarts when the checker restarts the mock between
+  boots; a frozen test that expected the count to carry across boots
+  cost a freeze opening (ring 6b item 10b). Count per process, and
+  write the expectation from a run, never from arithmetic.
+- **A lookup that copies its argument must give the argument back.** A
+  `rep movsb` into a scratch name buffer left RSI and ECX at the end of
+  the copy, so the fall-through path to the broker sent an empty body
+  (`nothing to grow`). Push what the caller still needs (ring 6b item 11).
+- **`lodsb` sets AL only.** Index with the whole register afterwards and
+  the stale high bytes go along; `xor eax, eax` first, or `movzx`.
 
 ## Working with the hooks
 

@@ -24,7 +24,7 @@ The pictures in `history/` are the machine's own screendumps, taken by each stag
 
 ![The first grown component — asked for a clock at the GermOS prompt, Claude wrote one in machine code; it was rehearsed in the twin, then it ran](history/2026-09-01-first-grown-clock.png)
 
-Next: **Stage 6 — growth.** A simple compositor and GUI shaped by the human-factors constitution rather than by existing desktops, more devices, and the store of plans: install an application from a plan file.
+Next: **Stage 6 — growth**, ring by ring. Ring 6a, the glass, is closed. Ring 6b, **the store of plans** — an application distributed as an architect's plan (intent in English plus acceptance tests), grown at install time, rehearsed in the twin against the plan's own tests, kept on the machine, and launched after a reboot with the broker gone — is built and green on its automated gate; its oracle is the calculator in [`plans/calculator.md`](plans/calculator.md). Ring 6c, the pointer, follows.
 
 ## Running it
 
@@ -123,6 +123,27 @@ qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
 ```
 
 Type `! make me a clock`: the strip says `growing` while Claude writes and the twin rehearses, then the clock ticks in the app panel with `running make me a` on the strip. **Tab** gives the keys to the prompt — type a note beside the running clock — and **Tab** gives them back; **Esc** closes the app. The choices row always says what the keys do. The Stage 5 clock in `germline/` is an ABI 1 entry: ring 6a keys its germline `abi2`, so the first request regenerates. The automated gate (`./stage6/test.sh`) speaks only to the mock and its canned apps, and spends no token.
+
+**Stage 6, ring 6b — the store of plans.** An app is a file: [`plans/<name>.md`](plans/) — its name, an **Intent** in plain English, up to four **Choices** for the choices row, and **Tests** in five verbs (`press`, `wait`, `expect "…"`, `expect not "…"`, `expect changed`) that the twin runs against the build before it is delivered ([`stage6/PLANS.md`](stage6/PLANS.md)). `! install <name>` grows it from the intent, rehearses it against the plan's own tests on top of the safety criteria, and delivers it with the `installed` flag; the machine writes it to a second disk, the **home image** ([`stage6/HOME.md`](stage6/HOME.md): a header, a table of apps with each build's SHA-256 and the previous build kept for undo), and runs it. From then on `! <name>` launches it from disk with nothing on the wire — the choices row names the installed apps — and `! undo install <name>` swaps the previous build back. Windowed runs are 1920x1080; the twin is the same machine. Two terminals:
+
+```
+python3 broker/plans.py
+```
+
+```
+./stage6/mkimage.sh
+truncate -s 16M stage6/out/notes.img
+truncate -s 16M stage6/out/home.img
+qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
+  -vga none -device VGA,edid=on,xres=1920,yres=1080 \
+  -drive format=raw,file=stage6/out/esp.img \
+  -drive format=raw,file=stage6/out/notes.img,if=virtio \
+  -drive format=raw,file=stage6/out/home.img,if=virtio \
+  -netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9999' \
+  -device virtio-net-pci,netdev=n0 -serial stdio
+```
+
+Type `! install calculator`: the strip says `installing` while Claude builds and the twin runs the plan's five tests; `installed calculator` and the calculator in its panel with `= result   c clear   Esc exit   Tab prompt` on the row. Do a sum; Esc. Quit QEMU, stop the broker, boot the same command again: `S6: home 1 apps`, `! calculator` on the choices row, and `! calculator` runs it from disk. An install may be amended at the door — `! install calculator, but big keys` — and a plan whose build fails its own tests is refused naming the test. The automated gate (`./stage6/test-6b.sh`) speaks only to the mock and its two canned plans, `echo` and the `liar`, and spends no token.
 
 ## The team of three
 
