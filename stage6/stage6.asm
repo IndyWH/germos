@@ -122,7 +122,8 @@ org 0                           ; file offsets == RVAs
 %define Q_AVAIL             32          ; u64  available ring
 %define Q_USED              40          ; u64  used ring
 %define VIO_QUEUES          2           ; queue blocks per device block
-%define VIO_BLOCK_SIZE      (VIO_Q + VIO_QUEUES * VQ_BLK)
+%define VIO_SECTORS         (VIO_Q + VIO_QUEUES * VQ_BLK)  ; u32 a disk's capacity (ring 6b)
+%define VIO_BLOCK_SIZE      (VIO_SECTORS + 8)
 
 ; The NIC's receive buffers (plan decision 8): sixteen of 2048 bytes, each
 ; holding the 12-byte virtio-net header and a whole frame, since buffers do
@@ -136,6 +137,26 @@ org 0                           ; file offsets == RVAs
 ; there: what is on screen is exactly what will be on disk.
 %define NOTE_MAX            500
 %define NB_TEXT_OFF         12
+
+; The home image (stage6/HOME.md, ring 6b): the second virtio-blk, by drive
+; order. Sector 0 the header, sectors 1-8 the table of sixteen 256-byte
+; entries, the builds from sector 9. The table lives in RAM from boot.
+%define HOME_TABLE_FIRST    1
+%define HOME_TABLE_SECTORS  8
+%define HOME_DATA_FIRST     9
+%define HOME_ENTRY          256
+%define HOME_ENTRIES        16
+%define HE_NAME             0x00        ; 32 bytes, NUL-padded
+%define HE_CUR              0x20        ; the current build: size, first, sectors, zero, sha256
+%define HE_PREV             0x50        ; the previous build, the same shape
+%define HE_CHOICES          0x80        ; the frame's four 13-byte choice slots
+%define HE_PAD              0xB4        ; zero to the end of the entry
+%define HB_SIZE             0           ; a build's fields, from its start
+%define HB_FIRST            4
+%define HB_SECTORS          8
+%define HB_ZERO             12
+%define HB_SHA              16
+%define HB_BYTES            0x30
 
 ; The component region (stage5/GERMLINE.md, "The component region, and line
 ; twelve"): 0x100040 bytes of our own BSS, page-aligned. A grow response is
@@ -953,6 +974,20 @@ efi_main:
         call    notebook_init
 
         ; -------------------------------------------------------------------
+        ; The home image (ring 6b, HOME.md): the second virtio-blk the same
+        ; scan found, if any - attached, negotiated, its queue up, then
+        ; formatted or scanned. Line twelve, only with a second disk.
+        ; -------------------------------------------------------------------
+        call    home_find
+        cmp     dword [home_dev + VIO_FOUND], 0
+        je      .no_home
+        mov     dword [home_present], 1
+        call    home_negotiate
+        call    home_queue_init
+.no_home:
+        call    home_init
+
+        ; -------------------------------------------------------------------
         ; The NIC - the stage's new organ: found by the same scan, negotiated
         ; on the same interface, its receive buffers posted, its MAC read
         ; from device config. Line eleven. Nothing is sent on the network at
@@ -1700,14 +1735,19 @@ pci_scan:
         shr     eax, 16
         lea     rbp, [disk_dev]
         cmp     ax, PCI_DEV_BLK_TRANS
-        je      .match
+        je      .blk
         cmp     ax, PCI_DEV_BLK_MODERN
-        je      .match
+        je      .blk
         lea     rbp, [nic_dev]
         cmp     ax, PCI_DEV_NET_TRANS
         je      .match
         cmp     ax, PCI_DEV_NET_MODERN
         jne     .next_fn
+        jmp     .match
+.blk:                                   ; the first virtio-blk is the notebook's
+        cmp     dword [rbp + VIO_FOUND], 0      ; disk; the second, by drive
+        je      .match                          ; order, the home image
+        lea     rbp, [home_dev]                 ; (HOME.md, "Two disks")
 .match:
         cmp     dword [rbp + VIO_FOUND], 0
         jne     .next_fn                ; first of each kind wins
@@ -2029,6 +2069,7 @@ disk_negotiate:
         jnz     .too_big
         mov     eax, [rsi]
         mov     [disk_sectors], eax
+        mov     [rbp + VIO_SECTORS], eax
         ret
 .too_big:
         lea     rsi, [err_disk_big]
@@ -2046,10 +2087,28 @@ disk_queue_init:
         call    vio_driver_ok
         ret
 
-; disk_rw - EAX = VBLK_T_IN (read) or VBLK_T_OUT (write), EBX = sector,
-; RDI = a 512-byte buffer. Returns only on success; every failure is a
-; named ERR: line and a halt. Preserves everything.
+; disk_rw / home_rw - EAX = VBLK_T_IN (read) or VBLK_T_OUT (write), EBX =
+; sector, RDI = a 512-byte buffer, on the notebook's disk or the home
+; image. Returns only on success; every failure is a named ERR: line and
+; a halt. Preserves everything. Both are blk_rw on their device block.
 disk_rw:
+        push    rbp
+        lea     rbp, [disk_dev]
+        call    blk_rw
+        pop     rbp
+        ret
+
+home_rw:
+        push    rbp
+        lea     rbp, [home_dev]
+        call    blk_rw
+        pop     rbp
+        ret
+
+; blk_rw - RBP = a virtio-blk device block (its capacity at VIO_SECTORS,
+; its queue 0 the one driven); EAX, EBX, RDI as above. One request in
+; flight at a time, on the shared header and status bytes; BSP only.
+blk_rw:
         push    rax
         push    rbx
         push    rcx
@@ -2059,9 +2118,8 @@ disk_rw:
         push    rbp
         push    r8
         push    r9
-        cmp     ebx, [disk_sectors]
+        cmp     ebx, [rbp + VIO_SECTORS]
         jae     .beyond
-        lea     rbp, [disk_dev]
         lea     r9, [rbp + VIO_Q]       ; queue 0's block
 
         mov     [req_hdr], eax          ; type
@@ -2162,6 +2220,283 @@ disk_rw:
 .failed:
         lea     rsi, [err_disk_failed]
         call    serial_err
+
+; ---------------------------------------------------------------------------
+; The home image - the second virtio-blk (stage6/HOME.md, ring 6b): the
+; same driver on its own device block and rings. Absent, the machine is
+; ring 6a's, line for line. Present, it is formatted or scanned at boot,
+; its table kept in RAM, and line twelve says how many apps it holds.
+; ---------------------------------------------------------------------------
+
+; home_find - the home's block attached, if the scan found a second
+; virtio-blk; nothing otherwise. Called once from efi_main after the
+; notebook, interrupts off; clobbers registers freely.
+home_find:
+        lea     rbp, [home_dev]
+        cmp     dword [rbp + VIO_FOUND], 0
+        je      .none
+        call    vio_attach
+.none:
+        ret
+
+; home_negotiate - VERSION_1 required and alone accepted; the capacity as
+; two halves into the block. Clobbers registers freely.
+home_negotiate:
+        lea     rbp, [home_dev]
+        xor     ecx, ecx
+        mov     edx, VF_VERSION_1_HI
+        call    vio_negotiate
+        mov     rsi, [rbp + VIO_DEVICE]
+        mov     eax, [rsi + 4]
+        test    eax, eax
+        jnz     .too_big
+        mov     eax, [rsi]
+        mov     [rbp + VIO_SECTORS], eax
+        ret
+.too_big:
+        lea     rsi, [err_disk_big]
+        call    serial_err
+
+; home_queue_init - queue 0 on the home's rings, then DRIVER_OK.
+home_queue_init:
+        lea     rbp, [home_dev]
+        xor     ecx, ecx
+        lea     rsi, [home_vq_desc]
+        lea     rdi, [home_vq_avail]
+        lea     r8, [home_vq_used]
+        call    vq_init
+        call    vio_driver_ok
+        ret
+
+; home_init - HOME.md, "The disk": sector 0 recognised (GERMHOME, version
+; 1) or the image formatted (the header written, sectors 1-8 zeroed); the
+; table read into home_table; the entries counted and the next free sector
+; found (home_recount); line twelve. With no second disk, nothing at all.
+; Called once from efi_main; clobbers registers freely.
+home_init:
+        cmp     dword [home_present], 0
+        je      .none
+        mov     eax, VBLK_T_IN
+        xor     ebx, ebx
+        lea     rdi, [sector_buf]
+        call    home_rw
+        mov     rax, 'GERMHOME'
+        cmp     [sector_buf], rax
+        jne     .format
+        cmp     dword [sector_buf + 8], 1
+        jne     .format
+.scan:
+        mov     ebx, HOME_TABLE_FIRST
+        lea     rdi, [home_table]
+.read:
+        mov     eax, VBLK_T_IN
+        call    home_rw
+        add     rdi, 512
+        inc     ebx
+        cmp     ebx, HOME_TABLE_FIRST + HOME_TABLE_SECTORS
+        jb      .read
+        call    home_recount
+        lea     rsi, [msg_home]
+        call    serial_puts
+        mov     eax, [home_count]
+        call    serial_putdec
+        lea     rsi, [msg_apps]
+        call    serial_puts
+.none:
+        ret
+
+.format:
+        lea     rdi, [sector_buf]       ; the header, from a clean sector
+        mov     ecx, 64
+        xor     eax, eax
+        rep     stosq
+        mov     rax, 'GERMHOME'
+        mov     [sector_buf], rax
+        mov     dword [sector_buf + 8], 1               ; version
+        mov     dword [sector_buf + 12], 512            ; sector size
+        mov     qword [sector_buf + 16], HOME_TABLE_FIRST
+        mov     qword [sector_buf + 24], HOME_TABLE_SECTORS
+        mov     qword [sector_buf + 32], HOME_DATA_FIRST
+        mov     eax, [home_dev + VIO_SECTORS]
+        mov     [sector_buf + 40], rax                  ; capacity (RAX high half zero)
+        mov     eax, VBLK_T_OUT
+        xor     ebx, ebx
+        lea     rdi, [sector_buf]
+        call    home_rw
+
+        lea     rdi, [sector_buf]       ; sectors 1-8 zeroed: no stale entry
+        mov     ecx, 64                 ; can survive the format
+        xor     eax, eax
+        rep     stosq
+        mov     ebx, HOME_TABLE_FIRST
+.zero:
+        mov     eax, VBLK_T_OUT
+        lea     rdi, [sector_buf]
+        call    home_rw
+        inc     ebx
+        cmp     ebx, HOME_TABLE_FIRST + HOME_TABLE_SECTORS
+        jb      .zero
+        jmp     .scan                   ; and read it back, as a recognised image is
+
+; home_recount - the table in RAM walked: home_valid[i] = 1 for each valid
+; entry (HOME.md's rule), home_count = how many, home_next = the next free
+; sector (the data's first, or one past the furthest build). Preserves
+; nothing but the callee-saved registers.
+home_recount:
+        push    rbx
+        push    r12
+        push    r13
+        mov     dword [home_count], 0
+        mov     dword [home_next], HOME_DATA_FIRST
+        xor     r12d, r12d              ; the entry index
+.entry:
+        lea     rsi, [home_table]
+        mov     eax, r12d
+        shl     eax, 8
+        add     rsi, rax                ; RSI = the entry
+        lea     rax, [home_valid]
+        mov     byte [rax + r12], 0
+        cmp     byte [rsi], 0
+        je      .next                   ; an empty slot
+        call    home_entry_valid
+        test    eax, eax
+        jz      .next
+        lea     rax, [home_valid]
+        mov     byte [rax + r12], 1
+        inc     dword [home_count]
+        lea     rdi, [rsi + HE_CUR]
+        call    .extend
+        lea     rdi, [rsi + HE_PREV]
+        cmp     dword [rdi + HB_SIZE], 0
+        je      .next
+        call    .extend
+.next:
+        inc     r12d
+        cmp     r12d, HOME_ENTRIES
+        jb      .entry
+        pop     r13
+        pop     r12
+        pop     rbx
+        ret
+.extend:                                ; RDI = a build: home_next past it
+        mov     eax, [rdi + HB_FIRST]
+        add     eax, [rdi + HB_SECTORS]
+        cmp     eax, [home_next]
+        jbe     .no_extend
+        mov     [home_next], eax
+.no_extend:
+        ret
+
+; home_entry_valid - RSI = a 256-byte entry whose first byte is not zero.
+; EAX = 1 if it is valid by HOME.md's rule: a well-formed NUL-padded name,
+; a valid current build, an absent or valid previous build, legal choice
+; slots, zero padding - else 0. Preserves RSI; clobbers RAX, RCX, RDX,
+; RDI, R8-R11.
+home_entry_valid:
+        movzx   eax, byte [rsi]
+        cmp     al, 'a'
+        jb      .no
+        cmp     al, 'z'
+        ja      .no
+        mov     ecx, 1
+.name:
+        cmp     ecx, 32
+        jae     .name_done
+        movzx   eax, byte [rsi + rcx]
+        test    al, al
+        jz      .pad
+        cmp     al, '-'
+        je      .name_ok
+        cmp     al, '0'
+        jb      .no
+        cmp     al, '9'
+        jbe     .name_ok
+        cmp     al, 'a'
+        jb      .no
+        cmp     al, 'z'
+        ja      .no
+.name_ok:
+        inc     ecx
+        jmp     .name
+.pad:
+        inc     ecx
+        cmp     ecx, 32
+        jae     .name_done
+        cmp     byte [rsi + rcx], 0
+        jne     .no
+        jmp     .pad
+.name_done:
+        lea     rdi, [rsi + HE_CUR]
+        mov     r8d, 1                  ; required
+        call    home_build_valid
+        test    eax, eax
+        jz      .no
+        lea     rdi, [rsi + HE_PREV]
+        xor     r8d, r8d                ; may be absent
+        call    home_build_valid
+        test    eax, eax
+        jz      .no
+        lea     rdi, [rsi + HE_CHOICES]
+        call    choices_valid
+        test    eax, eax
+        jz      .no
+        mov     ecx, HE_PAD
+.zero:
+        cmp     byte [rsi + rcx], 0
+        jne     .no
+        inc     ecx
+        cmp     ecx, HOME_ENTRY
+        jb      .zero
+        mov     eax, 1
+        ret
+.no:
+        xor     eax, eax
+        ret
+
+; home_build_valid - RDI = a build's fields (size, first, sectors, zero,
+; hash); R8D = 1 if the build must be present. EAX = 1 if absent (every
+; field zero) when allowed, or present and valid: the size 16 to the cap,
+; the sector count ceil(size / 512), the zero field zero, the extent from
+; the data's first sector and within the capacity. Clobbers RAX, RCX, RDX.
+home_build_valid:
+        mov     eax, [rdi + HB_SIZE]
+        test    eax, eax
+        jnz     .present
+        test    r8d, r8d
+        jnz     .no
+        mov     ecx, 4
+.absent:
+        cmp     dword [rdi + rcx], 0
+        jne     .no
+        add     ecx, 4
+        cmp     ecx, HB_BYTES
+        jb      .absent
+        mov     eax, 1
+        ret
+.present:
+        cmp     eax, BLOB_HDR
+        jb      .no
+        cmp     eax, COMP_BLOB_MAX
+        ja      .no
+        mov     edx, eax
+        add     edx, 511
+        shr     edx, 9                  ; ceil(size / 512)
+        cmp     edx, [rdi + HB_SECTORS]
+        jne     .no
+        cmp     dword [rdi + HB_ZERO], 0
+        jne     .no
+        mov     ecx, [rdi + HB_FIRST]
+        cmp     ecx, HOME_DATA_FIRST
+        jb      .no
+        add     ecx, edx
+        jc      .no
+        cmp     ecx, [home_dev + VIO_SECTORS]
+        ja      .no
+        mov     eax, 1
+        ret
+.no:
+        xor     eax, eax
+        ret
 
 ; ---------------------------------------------------------------------------
 ; The NIC - a virtio-net device on the same plumbing (plan decision 8). Two
@@ -3421,6 +3756,32 @@ app_valid:
         jne     .no
         ; the choices: packed from the first; an empty slot all zero
         lea     rdi, [rsi + APPH_CHOICES]
+        call    choices_valid
+        test    eax, eax
+        jz      .no
+        ; the blob's four offsets, each below L
+        lea     rdi, [rsi + APP_HDR]
+        mov     edx, [rsi + APPH_LEN]
+        mov     r9d, 4
+.offset:
+        mov     eax, [rdi]
+        cmp     eax, edx
+        jae     .no
+        add     rdi, 4
+        dec     r9d
+        jnz     .offset
+        mov     eax, 1
+        ret
+.no:
+        xor     eax, eax
+        ret
+
+; choices_valid - RDI = four 13-byte choice slots (a frame's, or a home
+; entry's): EAX = 1 if each is empty (all zero) or a printable key with a
+; 1..12 byte printable NUL-padded label, packed from the first - else 0.
+; Preserves RDI; clobbers RAX, R8-R11.
+choices_valid:
+        push    rdi
         mov     r9d, APP_CHOICES
         xor     r10d, r10d              ; 1 once an empty slot was seen
 .slot:
@@ -3453,21 +3814,12 @@ app_valid:
         add     rdi, APP_CHOICE_BYTES
         dec     r9d
         jnz     .slot
-        ; the blob's four offsets, each below L
-        lea     rdi, [rsi + APP_HDR]
-        mov     edx, [rsi + APPH_LEN]
-        mov     r9d, 4
-.offset:
-        mov     eax, [rdi]
-        cmp     eax, edx
-        jae     .no
-        add     rdi, 4
-        dec     r9d
-        jnz     .offset
         mov     eax, 1
+        pop     rdi
         ret
 .no:
         xor     eax, eax
+        pop     rdi
         ret
 
 ; padded_text - RDI = a field of R8D bytes: EAX = 1 if it is one or more
@@ -5790,6 +6142,8 @@ msg_sectors:    db      ' sectors', 13, 10, 0
 msg_nb:         db      'S6: notebook ', 0
 msg_notes:      db      ' notes', 13, 10, 0
 msg_nb_fmt:     db      'S6: notebook formatted', 13, 10, 0
+msg_home:       db      'S6: home ', 0
+msg_apps:       db      ' apps', 13, 10, 0
 msg_nic:        db      'S6: nic ', 0
 msg_region:     db      'S6: component region 0x', 0
 msg_region_cap: db      ' 1048576 bytes', 13, 10, 0     ; COMP_BLOB_MAX, spelled
@@ -6110,7 +6464,19 @@ phys_limit:     resq    1               ; 1 << physical address width
 disk_dev:       resb    VIO_BLOCK_SIZE
         alignb  16
 nic_dev:        resb    VIO_BLOCK_SIZE
+        alignb  16
+home_dev:       resb    VIO_BLOCK_SIZE  ; the second virtio-blk (ring 6b)
 disk_sectors:   resd    1               ; the capacity, in 512-byte sectors
+
+; The home image's state (HOME.md): whether there is one, its table in
+; RAM, which entries are valid, how many, and the next free sector.
+        alignb  16
+home_present:   resd    1
+home_count:     resd    1
+home_next:      resd    1
+home_valid:     resb    HOME_ENTRIES
+        alignb  512
+home_table:     resb    HOME_TABLE_SECTORS * 512
 
         alignb  16
 req_hdr:        resb    16              ; type, reserved, sector
@@ -6135,6 +6501,14 @@ disk_vq_desc:   resb    VQ_MAX * 16
 disk_vq_avail:  resb    6 + VQ_MAX * 2
         alignb  4096
 disk_vq_used:   resb    6 + VQ_MAX * 8
+
+; The home image's rings, the same shape.
+        alignb  4096
+home_vq_desc:   resb    VQ_MAX * 16
+        alignb  4096
+home_vq_avail:  resb    6 + VQ_MAX * 2
+        alignb  4096
+home_vq_used:   resb    6 + VQ_MAX * 8
 
 ; The NIC: its address, its two queues' rings, its receive buffers and the
 ; one transmit buffer. Rings 4 KB aligned as the disk's are.
