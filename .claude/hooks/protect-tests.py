@@ -126,6 +126,23 @@ PLAN_MARKER = "PLAN_APPROVED"
 # frozen: stage6/mkimage.sh (the recipe), stage6/stage6.asm (the thing
 # under test), broker/claude_backend.py (never run by the gate) and
 # stage6/plan-6a.md (paperwork).
+#
+# Stage 6 ring 6b (plan decision 13) freezes stage6/PLANS.md and
+# stage6/HOME.md for the GLASS.md reason - the broker parses plans by the
+# one and the assembler and the checker implement and parse the home
+# image by the other, so an editable document would be an editable
+# criterion; the three plans plans/echo.md, plans/liar.md and
+# plans/calculator.md because the twin's tests ARE those files (an edited
+# plan would be an edited test, and the calculator is the owner's approved
+# oracle); the two fixtures' sources AND binaries (stage6/echo.asm and
+# echo.bin - test 3's known picture and the build the home image must
+# hold hash for hash; liar.asm and liar.bin - the build test 4 demands be
+# refused, and a bent liar would be an honest one); broker/plans.py
+# because its dispatch, its key, its mock table and its record are what
+# tests 3 and 4 judge by; and stage6/test-6b.sh and stage6/checkplans.py,
+# the gate itself. Everything ring 6a froze stands. Deliberately NOT
+# frozen: stage6/mkimage.sh, stage6/stage6.asm, broker/claude_backend.py
+# and stage6/plan-6b.md, for the same reasons as before.
 PROTECTED = (
     "stage0/test.sh",
     "stage0/checkpixels.py",
@@ -159,6 +176,18 @@ PROTECTED = (
     "stage6/escapee.bin",
     "broker/glass.py",
     "broker/twin.py",
+    "stage6/PLANS.md",
+    "stage6/HOME.md",
+    "plans/echo.md",
+    "plans/liar.md",
+    "plans/calculator.md",
+    "stage6/echo.asm",
+    "stage6/echo.bin",
+    "stage6/liar.asm",
+    "stage6/liar.bin",
+    "broker/plans.py",
+    "stage6/test-6b.sh",
+    "stage6/checkplans.py",
 )
 
 BASENAMES = sorted({os.path.basename(p) for p in PROTECTED})

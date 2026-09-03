@@ -378,8 +378,9 @@ CASES += [
     (write("stage6/plan-6a.md"), ALLOW, "stage6 freeze allows: the plan is paperwork"),
     (write("stage6/plan-6b.md"), ALLOW, "stage6 freeze allows: the next ring's plan"),
     (write("stage7/test.sh"), ALLOW, "stage6 freeze allows: creating the next stage's test file"),
-    (write("stage6/PLANS.md"), ALLOW, "stage6 freeze allows: a later ring's document"),
-    (write("stage6/HOME.md"), ALLOW, "stage6 freeze allows: a later ring's document"),
+    # Were stage6/PLANS.md and stage6/HOME.md until ring 6b froze them - the
+    # case moves on a ring, as the "later stage's test file" case does.
+    (write("stage6/POINTER.md"), ALLOW, "stage6 freeze allows: a later ring's document"),
     (bash("rm -rf stage6/out/germline stage6/out/rehearsal"), ALLOW, "stage6 freeze allows: clearing the gate's scratch"),
     (bash("git add stage6/GLASS.md broker/glass.py broker/twin.py"), ALLOW, "stage6 freeze allows: git add"),
     (bash("git commit -F msg.txt"), ALLOW, "stage6 freeze allows: commit from a file"),
@@ -401,6 +402,76 @@ CASES += [
      ALLOW, "bodyguard allows: reading the EDID BAR through the monitor"),
     (bash(QEMU + DISPLAY6 + "-drive format=raw,file=/tmp/esp.img " + CAGE6), DENY, "bodyguard: the display does not excuse a bad drive"),
     (bash("echo 'the glass core composites the surfaces from the obs page'"), ALLOW, "bodyguard allows: the ring's words in prose"),
+]
+
+# --- Stage 6 ring 6b: the freeze (plan item 8), the home drive, the twin ----
+# The twelve paths of ring 6b's plan decision 13; the mutation battery on
+# each; the -o side door on each new binary; the allowances measured before
+# the plan - the three-drive gate and oracle lines at 1920x1080, the twin's
+# line with its sibling home image, the truncates, the gate, the checker,
+# the mock and the real broker, reading the plans, the unfrozen four.
+DISPLAY6B = "-vga none -device VGA,edid=on,xres=1920,yres=1080 "
+CAGE6B = "-netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9999' -device virtio-net-pci,netdev=n0,mac=52:54:00:a1:06:02 "
+FROZEN_6B = ["stage6/PLANS.md", "stage6/HOME.md", "plans/echo.md", "plans/liar.md", "plans/calculator.md",
+             "stage6/echo.asm", "stage6/echo.bin", "stage6/liar.asm", "stage6/liar.bin",
+             "broker/plans.py", "stage6/test-6b.sh", "stage6/checkplans.py"]
+CASES += [(c, v, "ring 6b freeze: " + w) for c, v, w in freeze_cases(FROZEN_6B)]
+CASES += [
+    (write("stage6/PLANS.md"), DENY, "ring 6b freeze: the plan document is a criterion"),
+    (write("stage6/HOME.md"), DENY, "ring 6b freeze: the home image's format is a criterion"),
+    (write("plans/calculator.md"), DENY, "ring 6b freeze: the owner's approved plan"),
+    (write("plans/echo.md"), DENY, "ring 6b freeze: the twin's tests are the plan"),
+    (write("broker/plans.py"), DENY, "ring 6b freeze: the dispatch, the key, the mock table and the record"),
+    (write("stage6/checkplans.py"), DENY, "ring 6b freeze: the checker"),
+    (write("stage6/test-6b.sh"), DENY, "ring 6b freeze: the gate"),
+    (bash("nasm -f bin stage6/echo.asm -o stage6/echo.bin"), DENY, "ring 6b freeze: -o over the frozen echo"),
+    (bash("nasm -f bin stage6/liar.asm -o stage6/liar.bin"), DENY, "ring 6b freeze: -o over the frozen liar"),
+    (bash("python3 - <<'EOF'\nopen('plans/echo.md','w').write('x')\nEOF"), DENY, "ring 6b freeze: python writing a plan"),
+    (bash("sed -i 's/expect/expect not/' plans/liar.md"), DENY, "ring 6b freeze: sed -i on a plan"),
+    (bash("nasm -f bin stage6/echo.asm -o stage6/out/echo.check.bin"), ALLOW, "ring 6b freeze allows: the checker's self-check to out/"),
+    (bash("nasm -f bin stage6/liar.asm -o stage6/out/liar.check.bin"), ALLOW, "ring 6b freeze allows: the liar's self-check to out/"),
+    (bash("./stage6/test-6b.sh"), ALLOW, "ring 6b freeze allows: running the gate"),
+    (bash("./stage6/test-6b.sh > stage6/out/gate6b.log 2>&1"), ALLOW, "ring 6b freeze allows: gate output redirected"),
+    (bash("./stage6/test.sh"), ALLOW, "ring 6b freeze allows: ring 6a's gate as the regression"),
+    (bash("python3 stage6/checkplans.py --install 2"), ALLOW, "ring 6b freeze allows: the checker"),
+    (bash("python3 stage6/checkplans.py --store"), ALLOW, "ring 6b freeze allows: the checker"),
+    (bash("python3 broker/plans.py --mock --port 9999 --germline stage6/out/germline --image stage6/out/esp.img "
+          "--workdir stage6/out/rehearsal/twin --record stage6/out/broker.install.2.jsonl --plans plans"),
+     ALLOW, "ring 6b freeze allows: the mock with the gate's germline"),
+    (bash("python3 broker/plans.py"), ALLOW, "ring 6b freeze allows: the real broker"),
+    (bash("python3 broker/plans.py --rehearse stage6/echo.bin plans/echo.md --lines 16"), ALLOW, "ring 6b freeze allows: a hand rehearsal against a plan"),
+    (bash("cat plans/calculator.md"), ALLOW, "ring 6b freeze allows: reading a plan"),
+    (bash("cat stage6/PLANS.md stage6/HOME.md"), ALLOW, "ring 6b freeze allows: reading the documents"),
+    (bash("grep -n home stage6/HOME.md broker/plans.py stage6/checkplans.py"), ALLOW, "ring 6b freeze allows: grepping"),
+    (bash("sha256sum stage6/echo.bin stage6/liar.bin plans/calculator.md"), ALLOW, "ring 6b freeze allows: hashing"),
+    (bash("objdump -D -b binary -m i386:x86-64 stage6/liar.bin"), ALLOW, "ring 6b freeze allows: disassembling a fixture"),
+    (write("stage6/stage6.asm"), ALLOW, "ring 6b freeze allows: Write the implementation"),
+    (write("stage6/mkimage.sh"), ALLOW, "ring 6b freeze allows: the builder is not frozen"),
+    (write("broker/claude_backend.py"), ALLOW, "ring 6b freeze allows: the Claude backend is not frozen"),
+    (write("stage6/plan-6b.md"), ALLOW, "ring 6b freeze allows: the plan is paperwork"),
+    (write("stage6/plan-6c.md"), ALLOW, "ring 6b freeze allows: the next ring's plan"),
+    (write("plans/clock.md"), ALLOW, "ring 6b freeze allows: a new plan is not a frozen one"),
+    (write("stage6/POINTER.md"), ALLOW, "ring 6b freeze allows: a later ring's document"),
+    (bash("rm -rf stage6/out/germline stage6/out/rehearsal"), ALLOW, "ring 6b freeze allows: clearing the gate's scratch"),
+    (bash("truncate -s 16M stage6/out/home.img"), ALLOW, "bodyguard allows: the home image under out/"),
+    (bash("truncate -s 16M stage6/out/rehearsal/home.img"), ALLOW, "bodyguard allows: the twin's home image under out/"),
+    (bash("cp stage6/out/esp.img stage6/out/rehearsal/twin/esp.img"), ALLOW, "bodyguard allows: the twin's copy, out/ to out/"),
+    (bash("git add stage6/PLANS.md stage6/HOME.md plans/echo.md plans/liar.md plans/calculator.md broker/plans.py"), ALLOW, "ring 6b freeze allows: git add"),
+    (bash(QEMU + DISPLAY6B + "-drive format=raw,file=stage6/out/esp.img -drive format=raw,file=stage6/out/notes.img,if=virtio "
+          "-drive format=raw,file=stage6/out/home.img,if=virtio " + CAGE6B + "-serial stdio"),
+     ALLOW, "bodyguard allows: the oracle's ring 6b command with three drives"),
+    (bash(QEMU + DISPLAY6B + "-drive format=raw,file=stage6/out/esp.img -drive format=raw,file=stage6/out/notes.img,if=virtio "
+          "-drive format=raw,file=stage6/out/home.img,if=virtio " + CAGE6B
+          + "-display none -serial file:stage6/out/serial.store.b.txt -monitor stdio"),
+     ALLOW, "bodyguard allows: the checker's ring 6b command"),
+    (bash("qemu-system-x86_64 -machine q35 -m 256M -smp 2 -bios /usr/share/ovmf/OVMF.fd " + DISPLAY6B
+          + "-drive format=raw,file=stage6/out/rehearsal/twin/esp.img -drive format=raw,file=stage6/out/rehearsal/twin/notes.img,if=virtio "
+          "-drive format=raw,file=stage6/out/rehearsal/home.img,if=virtio " + TWIN_CAGE
+          + "-display none -serial file:stage6/out/rehearsal/twin/serial.txt -monitor stdio"),
+     ALLOW, "bodyguard allows: the twin's command with its sibling home image"),
+    (bash(QEMU + DISPLAY6B + "-drive format=raw,file=stage6/out/esp.img -drive format=raw,file=/home/indy/home.img,if=virtio " + CAGE6B),
+     DENY, "bodyguard: a home image outside out/ is denied like any other drive"),
+    (bash("echo 'the store of plans keeps the previous build for undo'"), ALLOW, "bodyguard allows: the ring's words in prose"),
 ]
 
 
