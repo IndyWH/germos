@@ -889,9 +889,62 @@ was edited to say so and `plans/calculator.md` copied from it byte for
 byte; the choices and the five tests are exactly as the spec first wrote
 them.
 
+### Ring 6b — the build so far, and the stop at the scope guard
+
+Part 1 is done and frozen: `stage6/PLANS.md` and `stage6/HOME.md` (item
+1), the three plans and the echo and liar fixtures (item 2 — the
+calculator copied from the spec's appendix after the owner's A2 edit),
+`broker/plans.py` and the backend's plan brief (item 3 — both fixtures
+rehearsed for real in the twin before the freeze, echo passing all nine
+criteria and five verbs, liar failing at `expect "a"`), `stage6/test-6b.sh`
+and `stage6/checkplans.py` with tests 1–4 written red (items 4–7), the
+freeze of twelve paths with the payload table at **1072 payloads, 0
+wrong** (item 8). Part 2: item 9 (the second disk by drive order,
+`blk_rw` on a device block, HOME.md's format-or-scan, line twelve —
+tests 1 and 2 green, ring 6a's gate and Stages 0–5 green); item 10
+(SHA-256 verified on the host against `sha256sum` for nine inputs before
+it ran in the guest, the install write, `installing` on the strip — tests
+1 and 2 green, test 3 green but for the choices row, ring 6a and Stages
+0–5 green).
+
+**Item 11 is written and working but not committed — stopped at the
+scope guard, 3 September 2026.** The `!` dispatch (`undo install
+<name>`, a launch from the home image with the hash checked and a
+synthesised header, else the broker), the choices row with up to three
+installed apps, `run_app` leaving the grows counters alone on a launch.
+With it, `./stage6/checkplans.py --install 2` passes whole, and
+`--store` passes **every check but three numbers**: boot C's record
+expects `generation_calls` 3, 4, 4 for the liar, the amended re-install
+and the germline re-install, but the checker itself stops the mock after
+boot A and starts a fresh one for boot C, so the counter restarts and
+the broker truthfully records 2, 3, 3. The frozen checker is wrong by my
+own hand (the plan's decision 12 counted across boots as if one broker
+served them); the guest is right. Per the plan's scope guard the frozen
+file is not edited: the fix is written unapplied at
+**`stage6/out/checkplans.fix.patch`** (three counts and one message
+line; `git apply --check` passes), and a scratch copy of the checker with
+that patch applied was run against the guest: **`the store: kept its
+word`** — every other assertion of test 4 (the no-broker launch with
+the wire counters unchanged, the liar refused `rehearsal failed: expect
+"a"`, the amended re-install, the germline re-install, the undo
+hash-checked from the host, the strip against the page) passes as
+written. Item 11's guest diff is in the working tree and copied to
+`stage6/out/item11.diff` (312 lines). One defect was found and fixed on
+the way: `home_lookup_name` clobbered RSI and ECX, so an unknown `!`
+body reached the broker as an empty one (`nothing to grow`) — fixed by
+preserving both.
+
+**For the owner:** review and apply `stage6/out/checkplans.fix.patch`
+by your own hand (`git apply stage6/out/checkplans.fix.patch` at the
+repo root), as at Stage 5 item 8b and ring 6a item 12b. The next session
+(or this one, told to continue) then commits item 11 with all four tests
+green plus the regressions, and goes on to item 12.
+
 ## Next action
 
-**Ring 6b is in progress** (see above). Before it opened — **ring 6a is
+**Ring 6b is at the scope guard** (see above): the owner applies the
+checker's three-number fix, then item 11 commits and item 12 closes the
+build. Earlier — Before it opened — **ring 6a is
 closed.** Ring 6b's shape, per
 `stage6/spec.md`: `plans/<name>.md` in the format a new frozen
 `stage6/PLANS.md` defines (intent, choices, the five-verb tests),
