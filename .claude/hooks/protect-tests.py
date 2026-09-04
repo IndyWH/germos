@@ -143,6 +143,18 @@ PLAN_MARKER = "PLAN_APPROVED"
 # the gate itself. Everything ring 6a froze stands. Deliberately NOT
 # frozen: stage6/mkimage.sh, stage6/stage6.asm, broker/claude_backend.py
 # and stage6/plan-6b.md, for the same reasons as before.
+#
+# Stage 6 ring 6c (plan decision 14) freezes the point app's source AND
+# binary (stage6/pointer.asm and pointer.bin - test 3's known picture, the
+# one five-callback fixture, and a bent one would be a passing one);
+# broker/pointer.py because its mock row, its refusal of a bad point
+# offset and the ring 6c section's Python it carries verbatim are what
+# tests 2 to 4 judge by; and stage6/test-6c.sh and stage6/checkpointer.py,
+# the gate itself. stage6/GLASS.md was frozen at ring 6a and stays so: its
+# ring 6c section went in by the owner's own hand. Everything rings 6a and
+# 6b froze stands. Deliberately NOT frozen: stage6/mkimage.sh,
+# stage6/stage6.asm, broker/claude_backend.py, stage6/plan-6c.md and the
+# section's draft under stage6/out/, for the same reasons as before.
 PROTECTED = (
     "stage0/test.sh",
     "stage0/checkpixels.py",
@@ -188,6 +200,11 @@ PROTECTED = (
     "broker/plans.py",
     "stage6/test-6b.sh",
     "stage6/checkplans.py",
+    "stage6/pointer.asm",
+    "stage6/pointer.bin",
+    "broker/pointer.py",
+    "stage6/test-6c.sh",
+    "stage6/checkpointer.py",
 )
 
 BASENAMES = sorted({os.path.basename(p) for p in PROTECTED})

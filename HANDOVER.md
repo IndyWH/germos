@@ -82,7 +82,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | | |
 |---|---|
 | Stage | 6 — Growth: ring 6a closed 2 September 2026; ring 6b closed 3 September 2026 (Stages 0–5 closed); **ring 6c — the pointer — OPEN**, 4 September 2026, the last ring of the stage |
-| Status | Ring 6c: `stage6/plan-6c.md` **approved** 4 September 2026 (Cowork's A1–A3 and nits adopted, eleven deviations accepted); items 0–5 done (the GLASS.md section appended by the owner, the fixture and `broker/pointer.py` rehearsed in both twins, the gate and the checker with tests 1–4, tests 2–4 red on the ring 6b binary); the freeze next, then the guest code, one commit per item. Ring 6b: all five tests PASS (test 5 confirmed 3 September 2026). |
+| Status | Ring 6c: `stage6/plan-6c.md` **approved** 4 September 2026 (Cowork's A1–A3 and nits adopted, eleven deviations accepted); items 0–5 done (the GLASS.md section appended by the owner, the fixture and `broker/pointer.py` rehearsed in both twins, the gate and the checker with tests 1–4, tests 2–4 red on the ring 6b binary, the freeze at 1206 payloads 0 wrong); the guest code next: items 9–12, one commit per item. Ring 6b: all five tests PASS (test 5 confirmed 3 September 2026). |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.252 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
@@ -1177,10 +1177,19 @@ counters unchanged); screen D with the strip's field against the page. The
 6c checker's own germline check for a plain grow expects the twin's
 seventeen lines (the frozen 6a helper expects sixteen). Red on the ring 6b
 binary as it must be. `stage6/test-6c.sh` now runs all four tests.
+**Item 8** — the freeze: `PROTECTED` grows `stage6/pointer.asm`,
+`stage6/pointer.bin`, `broker/pointer.py`, `stage6/test-6c.sh` and
+`stage6/checkpointer.py` (GLASS.md was frozen at 6a; its 6c section went in
+by the owner's hand); `payloads.py` gains the ring 6c group — the battery on
+each path, the `-o` side door, the owner's append denied, the measured
+allowances — **1206 payloads, 839 denied, 367 allowed, 0 wrong**; the
+freeze demonstrated live with one denied append. Part 1 is done: tests 1–4
+exist, tests 2–4 are red on the ring 6b binary, and every criterion is
+frozen. Part 2, the guest code, begins at item 9.
 
 ## Next action
 
-**Ring 6c is at item 7.** Next: item 1 — GLASS.md's ring 6c section
+**Ring 6c is at item 8; Part 2 next.** Next: item 1 — GLASS.md's ring 6c section
 written to `stage6/out/glass-6c-section.md`, appended by the owner's own
 hand with one `cat … >>` command at the repo root (spelled in the plan's
 decision 13), the first 777 lines proven byte-identical, committed. Then

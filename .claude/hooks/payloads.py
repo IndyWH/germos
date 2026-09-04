@@ -451,7 +451,9 @@ CASES += [
     (write("stage6/plan-6b.md"), ALLOW, "ring 6b freeze allows: the plan is paperwork"),
     (write("stage6/plan-6c.md"), ALLOW, "ring 6b freeze allows: the next ring's plan"),
     (write("plans/clock.md"), ALLOW, "ring 6b freeze allows: a new plan is not a frozen one"),
-    (write("stage6/POINTER.md"), ALLOW, "ring 6b freeze allows: a later ring's document"),
+    # Was stage6/POINTER.md until ring 6c put its document into GLASS.md by
+    # the owner's hand - the case moves on a stage.
+    (write("stage7/GLASS.md"), ALLOW, "ring 6b freeze allows: a later stage's document"),
     (bash("rm -rf stage6/out/germline stage6/out/rehearsal"), ALLOW, "ring 6b freeze allows: clearing the gate's scratch"),
     (bash("truncate -s 16M stage6/out/home.img"), ALLOW, "bodyguard allows: the home image under out/"),
     (bash("truncate -s 16M stage6/out/rehearsal/home.img"), ALLOW, "bodyguard allows: the twin's home image under out/"),
@@ -472,6 +474,74 @@ CASES += [
     (bash(QEMU + DISPLAY6B + "-drive format=raw,file=stage6/out/esp.img -drive format=raw,file=/home/indy/home.img,if=virtio " + CAGE6B),
      DENY, "bodyguard: a home image outside out/ is denied like any other drive"),
     (bash("echo 'the store of plans keeps the previous build for undo'"), ALLOW, "bodyguard allows: the ring's words in prose"),
+]
+
+
+# --- Stage 6 ring 6c: the freeze (plan item 8), the mouse, the owner's append --
+# The five paths of ring 6c's plan decision 14; the mutation battery on
+# each; the -o side door on the new binary; the allowances measured before
+# the plan - the 6c gate, oracle and checker lines with this ring's MAC, the
+# mock and the real broker, the hand rehearsal, the three checker modes, the
+# read-only proofs of GLASS.md's old text and git add on it, the probe's
+# mouse line - and the denials: the append into GLASS.md is the owner's.
+CAGE6C = "-netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9999' -device virtio-net-pci,netdev=n0,mac=52:54:00:a1:06:03 "
+FROZEN_6C = ["stage6/pointer.asm", "stage6/pointer.bin", "broker/pointer.py", "stage6/test-6c.sh", "stage6/checkpointer.py"]
+CASES += [(c, v, "ring 6c freeze: " + w) for c, v, w in freeze_cases(FROZEN_6C)]
+CASES += [
+    (write("stage6/pointer.asm"), DENY, "ring 6c freeze: the point app's source"),
+    (write("stage6/pointer.bin"), DENY, "ring 6c freeze: the point app's binary"),
+    (write("broker/pointer.py"), DENY, "ring 6c freeze: the mock row, the refusal and the section's Python"),
+    (write("stage6/checkpointer.py"), DENY, "ring 6c freeze: the checker"),
+    (write("stage6/test-6c.sh"), DENY, "ring 6c freeze: the gate"),
+    (write("stage6/GLASS.md"), DENY, "ring 6c freeze: the glass document, its 6c section included"),
+    (bash("nasm -f bin stage6/pointer.asm -o stage6/pointer.bin"), DENY, "ring 6c freeze: -o over the frozen point app"),
+    (bash("cat stage6/out/glass-6c-section.md >> stage6/GLASS.md"), DENY, "ring 6c freeze: the append is the owner's hand, never this session's"),
+    (bash("python3 - <<'EOF'\nopen('broker/pointer.py','w').write('x')\nEOF"), DENY, "ring 6c freeze: python writing the broker module"),
+    (bash("sed -i 's/hit/miss/' stage6/checkpointer.py"), DENY, "ring 6c freeze: sed -i on the checker"),
+    (bash("nasm -f bin stage6/pointer.asm -o stage6/out/pointer.check.bin"), ALLOW, "ring 6c freeze allows: the checker's self-check to out/"),
+    (bash("./stage6/test-6c.sh"), ALLOW, "ring 6c freeze allows: running the gate"),
+    (bash("./stage6/test-6c.sh > stage6/out/gate6c.log 2>&1"), ALLOW, "ring 6c freeze allows: gate output redirected"),
+    (bash("./stage6/test.sh && ./stage6/test-6b.sh"), ALLOW, "ring 6c freeze allows: the two earlier ring gates as regressions"),
+    (bash("python3 stage6/checkpointer.py --serial 8"), ALLOW, "ring 6c freeze allows: the checker"),
+    (bash("python3 stage6/checkpointer.py --point 2"), ALLOW, "ring 6c freeze allows: the checker"),
+    (bash("python3 stage6/checkpointer.py --truth"), ALLOW, "ring 6c freeze allows: the checker"),
+    (bash("python3 broker/pointer.py --mock --port 9999 --germline stage6/out/germline --image stage6/out/esp.img "
+          "--workdir stage6/out/rehearsal/twin --record stage6/out/broker.point.2.jsonl --plans plans"),
+     ALLOW, "ring 6c freeze allows: the mock with the gate's germline"),
+    (bash("python3 broker/pointer.py"), ALLOW, "ring 6c freeze allows: the real broker"),
+    (bash("python3 broker/pointer.py --rehearse-app stage6/pointer.bin 'point app'"), ALLOW, "ring 6c freeze allows: a hand rehearsal in this ring's twin"),
+    (bash("python3 broker/twin.py stage6/pointer.bin 'point app'"), ALLOW, "ring 6c freeze allows: a hand rehearsal in the 6a twin"),
+    (bash("cat stage6/out/glass-6c-section.md"), ALLOW, "ring 6c freeze allows: reading the section's draft"),
+    (bash("head -n 777 stage6/GLASS.md | sha256sum"), ALLOW, "ring 6c freeze allows: hashing the old text"),
+    (bash("git show HEAD:stage6/GLASS.md | sha256sum"), ALLOW, "ring 6c freeze allows: hashing the committed text"),
+    (bash("cmp <(head -n 777 stage6/GLASS.md) <(git show HEAD:stage6/GLASS.md)"), ALLOW, "ring 6c freeze allows: proving the old text byte-identical"),
+    (bash("git diff --stat stage6/GLASS.md"), ALLOW, "ring 6c freeze allows: the diff of the owner's append"),
+    (bash("git add stage6/GLASS.md stage6/plan-6c.md"), ALLOW, "ring 6c freeze allows: git add after the owner's append"),
+    (bash("grep -n POINTER2 stage6/GLASS.md broker/pointer.py stage6/checkpointer.py"), ALLOW, "ring 6c freeze allows: grepping"),
+    (bash("sha256sum stage6/pointer.bin stage6/app.bin"), ALLOW, "ring 6c freeze allows: hashing the fixtures"),
+    (bash("objdump -D -b binary -m i386:x86-64 stage6/pointer.bin"), ALLOW, "ring 6c freeze allows: disassembling the fixture"),
+    (write("stage6/stage6.asm"), ALLOW, "ring 6c freeze allows: Write the implementation"),
+    (write("stage6/mkimage.sh"), ALLOW, "ring 6c freeze allows: the builder is not frozen"),
+    (write("broker/claude_backend.py"), ALLOW, "ring 6c freeze allows: the Claude backend is not frozen"),
+    (write("stage6/plan-6c.md"), ALLOW, "ring 6c freeze allows: the plan is paperwork"),
+    (write("stage6/out/glass-6c-section.md"), ALLOW, "ring 6c freeze allows: the section's draft under out/"),
+    (write("stage7/test.sh"), ALLOW, "ring 6c freeze allows: creating the next stage's test file"),
+    (write("stage7/pointer.py"), ALLOW, "ring 6c freeze allows: a later stage's file of the same name"),
+    (bash("rm -rf stage6/out/germline stage6/out/rehearsal stage6/out/probe6c"), ALLOW, "ring 6c freeze allows: clearing the gate's scratch and the probe"),
+    (bash("git add stage6/pointer.asm stage6/pointer.bin broker/pointer.py stage6/test-6c.sh stage6/checkpointer.py"), ALLOW, "ring 6c freeze allows: git add"),
+    (bash(QEMU + DISPLAY6B + "-drive format=raw,file=stage6/out/esp.img -drive format=raw,file=stage6/out/notes.img,if=virtio "
+          "-drive format=raw,file=stage6/out/home.img,if=virtio " + CAGE6C + "-serial stdio"),
+     ALLOW, "bodyguard allows: the oracle's ring 6c command with three drives"),
+    (bash(QEMU + DISPLAY6B + "-drive format=raw,file=stage6/out/esp.img -drive format=raw,file=stage6/out/notes.img,if=virtio "
+          "-drive format=raw,file=stage6/out/home.img,if=virtio " + CAGE6C
+          + "-display none -serial file:stage6/out/serial.point.2.txt -monitor stdio"),
+     ALLOW, "bodyguard allows: the checker's ring 6c command"),
+    (bash("printf 'mouse_move 10 20\\nmouse_button 1\\nmouse_button 0\\nquit\\n' | " + QEMU
+          + "-drive format=raw,file=stage6/out/probe6c/mouse.img -display none -monitor stdio"),
+     ALLOW, "bodyguard allows: the mouse probe under out/, driven through the monitor"),
+    (bash(QEMU + DISPLAY6B + "-drive format=raw,file=stage6/out/esp.img -drive format=raw,file=/home/indy/mouse.img,if=virtio " + CAGE6C),
+     DENY, "bodyguard: a drive outside out/ is denied whatever the ring"),
+    (bash("echo 'the pointer clicks the choices row and the strip says pt'"), ALLOW, "bodyguard allows: the ring's words in prose"),
 ]
 
 
