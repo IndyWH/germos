@@ -221,7 +221,45 @@ echo
 # packets counted equal packets sent; the buttons on an empty spot; the
 # install and the launch by click, with text on the line and without; the
 # strip's field against the page. The work is in stage6/checkpointer.py.
-# (Added at item 7.)
+# First this harness inspects its OWN cage and display strings; the checker
+# inspects its own QEMU argv and the twin's as broker/pointer.py inherits it.
+
+echo "Test 4 - The truth about the pointer: 6a's glass before the first packet, the sweep, packets counted equal packets sent, the launch by click"
+cage_probs=()
+case "$CAGE_NETDEV" in
+  user,*) : ;;
+  *) cage_probs+=("the netdev is not slirp user mode: $CAGE_NETDEV") ;;
+esac
+case ",$CAGE_NETDEV," in
+  *,restrict=on,*) : ;;
+  *) cage_probs+=("the netdev lacks restrict=on: $CAGE_NETDEV") ;;
+esac
+n_fwd=$(printf '%s' "$CAGE_NETDEV" | grep -o 'guestfwd=' | wc -l)
+[ "$n_fwd" -eq 1 ] || cage_probs+=("expected exactly one guestfwd, found $n_fwd: $CAGE_NETDEV")
+printf '%s' "$CAGE_NETDEV" | grep -qE 'guestfwd=tcp:10\.0\.2\.4:9999-cmd:nc -N 127\.0\.0\.1 9999(,|$)' || \
+  cage_probs+=("the guestfwd is not tcp:10.0.2.4:9999 via 'nc -N 127.0.0.1 9999': $CAGE_NETDEV")
+case "$CAGE_NETDEV" in
+  *hostfwd*) cage_probs+=("the netdev opens a hostfwd: $CAGE_NETDEV") ;;
+esac
+[ "$CAGE_DEVICE" = "virtio-net-pci,netdev=n0,mac=$MAC" ] || \
+  cage_probs+=("the device is not a virtio-net-pci on netdev n0 with the harness's MAC: $CAGE_DEVICE")
+[ "$DISPLAY" = "-vga none -device VGA,edid=on,xres=1920,yres=1080" ] || \
+  cage_probs+=("the display is not the standard VGA device with the 1920x1080 EDID: $DISPLAY")
+
+if [ "${#cage_probs[@]}" -ne 0 ]; then
+  fail "test 4: this harness's own cage or display string is not the cage"
+  for p in "${cage_probs[@]}"; do echo "    - $p"; done
+else
+  echo "    the harness's own -netdev carries restrict=on and the single guestfwd to 10.0.2.4:9999 via nc to 127.0.0.1:9999; the display is the VGA device with the 1920x1080 EDID"
+  if [ ! -f "$ESP" ]; then
+    fail "test 4: no image was built"
+  elif python3 "$REPO/stage6/checkpointer.py" --truth; then
+    pass "test 4: the truth about the pointer - packets counted equal packets sent, the cursor where the page says, the launch by click on an empty line only"
+  else
+    fail "test 4: the truth is not told (see above)"
+  fi
+fi
+echo
 
 # ------------------------------------------------------------- summary -------
 

@@ -1133,9 +1133,269 @@ def run_point(smp):
     return 0 if ok else 1
 
 
+# ----------------------------------------------------------------- truth ----
+
+def check_one_arrow(shot, geometry, row, col, label):
+    """Exactly one cell of the screen renders as the arrow, and it is this one."""
+    try:
+        width, height, pixels, cols, rows, font = open_shot(shot, geometry)
+    except (OSError, ValueError) as exc:
+        return [str(exc)]
+    want = arrow_rows()
+    where = [(r, c) for r in range(rows) for c in range(cols) if cell_matches(pixels, width, r, c, want)]
+    if where != [(row, col)]:
+        return ["%s: the arrow is at %r, want exactly [(%d, %d)] - the page's cell" % (label, where, row, col)]
+    return []
+
+
+def run_truth():
+    """Test 4: the truth about the pointer, at -smp 8."""
+    smp = 8
+    argv = qemu_argv(smp, NOTES, HOME_IMG, os.path.join(OUT, "x"))
+    problems = check_argv(argv, BROKER_PORT, MAC, 3)
+    if plans.DISPLAY != DISPLAY or twin.VGA_ARGS != DISPLAY:
+        problems.append("the broker module's display %r or the twin's %r is not the harness's %r"
+                        % (plans.DISPLAY, twin.VGA_ARGS, DISPLAY))
+    if not report("the harness's own QEMU command is not the cage with this ring's display", problems):
+        return 1
+    say("the checker's QEMU command carries restrict=on, the single guestfwd via nc to 127.0.0.1:%d, the 1920x1080 device and three drives under stage6/out/" % BROKER_PORT)
+
+    rargv = twin.qemu_argv(ESP, os.path.join(TWIN_WORKDIR, "notes.img"), os.path.join(TWIN_WORKDIR, "serial.txt"),
+                           REHEARSAL_PORT, extra_args=twin_extra_args())
+    problems = check_argv(rargv, REHEARSAL_PORT, None, 3)
+    if not TWIN_HOME.startswith(OUT + os.sep):
+        problems.append("the twin's home image %r is not under stage6/out/" % TWIN_HOME)
+    if twin.DEFAULT_PORT != REHEARSAL_PORT:
+        problems.append("the twin's default port is %d, not %d" % (twin.DEFAULT_PORT, REHEARSAL_PORT))
+    if not report("the twin's QEMU command, as broker/pointer.py inherits it, is not the cage with this ring's display", problems):
+        return 1
+    say("the twin's command carries the same cage on 127.0.0.1:%d, the same display, and the home drive %s"
+        % (REHEARSAL_PORT, os.path.relpath(TWIN_HOME, REPO)))
+
+    blobs = {}
+    problems = []
+    for name in ("pointer", "app", "echo", "liar", "hog", "escapee"):
+        blob, more = fixture_self_check(name)
+        if more:
+            problems += more
+            continue
+        blobs[name] = blob
+        try:
+            off = point_offset(blob)
+        except ValueError as exc:
+            problems.append("%s: %s" % (name, exc))
+            continue
+        if name == "pointer" and off is None:
+            problems.append("the point app does not announce point")
+        if name != "pointer" and off is not None:
+            problems.append("the %s fixture announces point at %d - only the point app may" % (name, off))
+    if not report("the fixtures are not what the repository and the section say", problems):
+        return 1
+    say("the six fixtures reproduce their binaries; only the point app carries POINTER2, its point at %d" % point_offset(blobs["pointer"]))
+    echo = blobs["echo"]
+
+    W, H = 1920, 1080
+    cols, rows = W // CELL, H // CELL
+    regs = regions(cols, rows)
+    crow = regs["choices"][0]
+    park = park_cell((W, H, cols, rows))
+    t_echo = choice_targets(False, 0, [], ["echo"])
+    launch_col = target_col(t_echo, "launch", "echo")
+
+    record = os.path.join(OUT, "broker.truth6c.jsonl")
+    serial = os.path.join(OUT, "serial.truth6c.txt")
+    sweep_shots = [os.path.join(OUT, "screen.truth6c.s%d.ppm" % i) for i in range(9)]
+    shots = {k: os.path.join(OUT, "screen.truth6c.%s.ppm" % k) for k in ("z", "l00", "l", "d")}
+    mock, err = start_mock(record)
+    if err:
+        say(err)
+        return 1
+    say("mock broker listening on 127.0.0.1:%d, germline wiped" % BROKER_PORT)
+    try:
+        fresh_disk(NOTES)
+        fresh_disk(HOME_IMG)
+        steps = [
+            ("obs", "z0"), ("surfaces", "z"), ("shot", shots["z"]), ("obs", "z0b"),
+        ]
+        # The sweep: a rectangle through the empty app panel, each move one
+        # packet, a screendump and a page read after every fourth move.
+        legs = [(40, 0)] * 12 + [(0, 25)] * 12 + [(-40, -25)] * 12
+        for i, (dx, dy) in enumerate(legs):
+            steps += [("mouse", dx, dy), ("sleep", FRAME_SETTLE)]
+            if (i + 1) % 4 == 0:
+                k = (i + 1) // 4 - 1
+                steps += [("shot", sweep_shots[k]), ("obs", "s%d" % k)]
+        steps += [
+            ("button", 1), ("button", 0), ("button", 2), ("button", 0), ("button", 4), ("button", 0),   # an empty spot
+            ("sleep", 0.5), ("obs", "k"),
+            ("type", "! install echo\n"), ("wait_record", record, 1, 150.0), ("sleep", 3.0),
+            ("type", "\x1b"), ("sleep", 1.0),
+            ("type", "x"), ("sleep", 0.5),                                          # text on the line (A3)
+            ("moveto", crow, launch_col), ("button", 1), ("button", 0), ("sleep", 1.0),   # a click, no hit, nothing typed
+            ("obs", "l00"),
+            ("moveto", park[0], park[1]), ("sleep", 0.3), ("shot", shots["l00"]),
+            ("type", "\b"), ("sleep", 0.5),                                          # the line empty again
+            ("obs", "l0"),
+            ("moveto", crow, launch_col), ("button", 1, "hit"), ("button", 0), ("sleep", 2.0),   # the launch
+            ("type", "b"), ("sleep", 1.0),
+            ("moveto", park[0], park[1]), ("sleep", 0.5),
+            ("shot", shots["l"]), ("obs", "l"),
+            ("type", "\x1b"), ("sleep", 1.0),
+            ("type", "last\n"), ("sleep", 1.5),
+            ("surfaces", "d"), ("shot", shots["d"]), ("obs", "d2"),
+        ]
+        capture, reads, events, err = drive(smp, NOTES, HOME_IMG, steps, serial)
+    finally:
+        stop_mock(mock)
+    if err:
+        say(err)
+        if capture:
+            dump_capture(capture)
+        return 1
+
+    ok = True
+    problems, stripped = strip_mouse_line(capture)
+    more, geometry = check_boot_lines(stripped, smp, "formatted", 0)
+    problems += more
+    problems += check_echo(stripped, b"! install echo\r\nx\x08! echo\r\nlast\r\n")
+    ok &= report("the serial log is not what the section asks for", problems, capture)
+    if not problems:
+        say("eighteen boot lines with '%s' after the first move; the echo after ready: the install typed, the x and its "
+            "Backspace, '! echo' typed by the click, 'last'" % MOUSE_LINE)
+    if None in geometry or geometry[:2] != (W, H):
+        say("the guest's mode %r is not the display's %dx%d - the cells this test computed do not apply" % (geometry, W, H))
+        return 1
+    conv = regs["conversation"]
+
+    # Before the first packet: ring 6a's glass, judged by ring 6a's own checks.
+    problems = []
+    if "z0" not in reads or "z0b" not in reads or "z" not in reads:
+        problems.append("the obs page or the surfaces could not be read before the sweep")
+    else:
+        problems += check_strip(shots["z"], geometry, reads["z0"], reads["z0b"], "screen Z")
+        problems += check_surfaces(shots["z"], reads["z"], "screen Z")
+        problems += check_no_arrow(shots["z"], geometry, "screen Z")
+        problems += check_pointer_counts(reads["z0"], reads["counts"]["z0"], "before the sweep", mouse_id=1, buttons=0)
+        problems += check_i8042(reads["z0"], "before the sweep")
+    ok &= report("before the first packet the screen is not ring 6a's", problems)
+    if not problems:
+        say("before the sweep: the frozen check_strip and check_surfaces pass on this binary's screen, no arrow anywhere, no packet")
+
+    # The sweep.
+    problems = []
+    prev = None
+    for k in range(9):
+        label = "s%d" % k
+        if label not in reads:
+            problems.append("the obs page could not be read at sweep screendump %d" % k)
+            continue
+        o = reads[label]
+        row, col = reads["model"][label]
+        if (o["ptr_row"], o["ptr_col"]) != (row, col):
+            problems.append("sweep %d: the page's cell is (%d, %d), the model says (%d, %d)" % (k, o["ptr_row"], o["ptr_col"], row, col))
+        problems += check_one_arrow(sweep_shots[k], geometry, row, col, "sweep %d" % k)
+        if prev is not None and prev != (row, col):
+            problems += check_cell_restored(sweep_shots[k], geometry, reads["z"], prev, "sweep %d" % k)
+        problems += check_pointer_counts(o, reads["counts"][label], "sweep %d" % k, resyncs=0)
+        t = max(o["tsc_per_ms"], 1)
+        if o["pointer_worst"] / t > POINTER_BUDGET_MS:
+            problems.append("sweep %d: pointer input-to-photon's worst is %.1f ms, over %.1f" % (k, o["pointer_worst"] / t, POINTER_BUDGET_MS))
+        prev = (row, col)
+    ok &= report("the sweep did not keep the cursor where the page says", problems)
+    if not problems:
+        o = reads["s8"]
+        t = max(o["tsc_per_ms"], 1)
+        say("the sweep: %d moves, %d packets counted, the arrow at the page's cell and the cell it left restored at every "
+            "one of nine screendumps; pt worst %.1f ms" % (len(legs), o["packets"], o["pointer_worst"] / t))
+
+    problems = []
+    if "k" not in reads:
+        problems.append("the obs page could not be read after the buttons")
+    else:
+        problems += check_counts(reads["k"], {"mode": 0, "buttons": 0}, "obs K")
+        problems += check_pointer_counts(reads["k"], reads["counts"]["k"], "obs K")
+    ok &= report("three buttons on an empty spot were not counted as clicks without hits", problems)
+    if not problems:
+        say("obs K: three presses on the empty app panel - %d clicks, %d hits" % (reads["k"]["clicks"], reads["k"]["hits"]))
+
+    # The install, then the launch item clicked with text on the line and without.
+    entries, problems = read_record(record)
+    if entries is not None:
+        if len(entries) != 1:
+            problems.append("the broker saw %d connection(s), want 1 - the launch by click must put nothing on the wire" % len(entries))
+        if entries:
+            problems += check_install_entry(1, entries[0], "install echo", "generated", 1, ["pass"], "app",
+                                            app_frame(echo, b"echo", [], 0, installed=1), plan="echo", tests=ECHO_TESTS_OK)
+    problems += check_install_germline(GERMLINE, "echo", echo, tests=ECHO_TESTS_OK)
+    names = germline_entries(GERMLINE)
+    if len(names) != 1:
+        problems.append("the germline holds %d entries %r, want exactly 1" % (len(names), names))
+    more, _ = check_home(HOME_IMG, {"echo": {"current": (echo, DATA_FIRST), "previous": None, "choices": []}}, "the home image")
+    problems += more
+    problems += check_image(NOTES, ["last"])
+    ok &= report("the install did not leave the record, the germline, the home image and the notebook as the documents say", problems)
+    if not problems:
+        say("one connection: 'install echo' rehearsed against its plan and kept at sector %d; the notebook holds 'last' alone" % DATA_FIRST)
+
+    problems = []
+    if "l00" not in reads or "l0" not in reads or "l" not in reads:
+        problems.append("the obs page could not be read around the launch")
+    else:
+        l00, l0, l = reads["l00"], reads["l0"], reads["l"]
+        problems += check_counts(l00, {"mode": 0, "focus": 0, "name": ""}, "obs L00")
+        problems += check_pointer_counts(l00, reads["counts"]["l00"], "obs L00")
+        problems += check_typing_row(shots["l00"], geometry, conv, "installed echo", "> x", "screen L00")
+        problems += check_choices(shots["l00"], geometry, CHOICES_PROMPT_ECHO)
+        problems += check_counts(l0, {"mode": 0}, "obs L0")
+        problems += check_counts(l, {"mode": 3, "name": "echo", "focus": 1, "wire_conns": l0["wire_conns"],
+                                     "bytes_in": l0["bytes_in"], "bytes_out": l0["bytes_out"], "requests": 1,
+                                     "grows_generated": 1, "grows_served": 0, "errors": 0}, "the launch")
+        problems += check_pointer_counts(l, reads["counts"]["l"], "the launch")
+        problems += check_one_cell_panel(shots["l"], geometry, "b")
+        problems += check_mode_field(shots["l"], geometry, "running echo")
+        problems += check_choices(shots["l"], geometry, choices_row(True, 1, []))
+    ok &= report("the launch item did not obey the empty-line rule", problems)
+    if not problems:
+        say("'! echo' clicked with 'x' on the line: a click, no hit, nothing typed ('> x' still being typed); Backspace; clicked "
+            "again: the launch from disk, the wire counters unchanged, 'b' shown - %d clicks, %d hits" % (reads["l"]["clicks"], reads["l"]["hits"]))
+
+    problems = []
+    if "d" not in reads or "d2" not in reads:
+        problems.append("the obs page or the surfaces could not be read at the end")
+    else:
+        d = reads["d"]["obs"]
+        problems += check_strip_6c(shots["d"], geometry, d, reads["d2"], "screen D")
+        problems += check_surfaces_except(shots["d"], reads["d"], park, "screen D")
+        problems += check_arrow_at(shots["d"], geometry, park[0], park[1], "screen D")
+        problems += check_mode_field(shots["d"], geometry, "prompt")
+        problems += check_choices(shots["d"], geometry, CHOICES_PROMPT_ECHO)
+        problems += check_app_panel_blank(shots["d"], geometry)
+        problems += check_region_rows(shots["d"], geometry, conv,
+                                      ["> ! install echo", "installed echo", "> ! echo", "> last", PROMPT])
+        problems += check_counts(d, {"mode": 0, "name": "", "focus": 0, "wire_conns": 1, "requests": 1, "questions": 0,
+                                     "notes": 1, "errors": 0, "grows_generated": 1, "grows_served": 0, "resyncs": 0},
+                                 "screen D")
+        problems += check_pointer_counts(d, reads["counts"]["d"], "screen D")
+        if d["mouse_hw"] > 64:
+            problems.append("screen D: the mouse ring's high-water is %d, above its 64 entries" % d["mouse_hw"])
+    ok &= report("screen D is not the truth", problems)
+    if not problems:
+        d = reads["d"]["obs"]
+        t = max(d["tsc_per_ms"], 1)
+        say("screen D: the strip's third field is the page - pk %04d cl %03d, pt worst %.1f ms - every region its surface's bar "
+            "the arrow, the conversation whole; %d packets for %d mouse and button commands, %d bytes, %d resyncs, ring high-water %d"
+            % (d["packets"], d["clicks"], d["pointer_worst"] / t, d["packets"], reads["counts"]["d"]["packets"],
+               d["mouse_bytes"], d["resyncs"], d["mouse_hw"]))
+
+    say("the truth about the pointer: %s" % ("told - the strip is the page, the page is what the mouse did" if ok else "not told"))
+    return 0 if ok else 1
+
+
 # ---------------------------------------------------------------- main -----
 
 def main(argv):
+    if argv == ["--truth"]:
+        return run_truth()
     if len(argv) == 2 and argv[0] in ("--serial", "--point"):
         try:
             return (run_serial if argv[0] == "--serial" else run_point)(int(argv[1]))

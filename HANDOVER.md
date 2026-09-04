@@ -82,7 +82,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | | |
 |---|---|
 | Stage | 6 — Growth: ring 6a closed 2 September 2026; ring 6b closed 3 September 2026 (Stages 0–5 closed); **ring 6c — the pointer — OPEN**, 4 September 2026, the last ring of the stage |
-| Status | Ring 6c: `stage6/plan-6c.md` **approved** 4 September 2026 (Cowork's A1–A3 and nits adopted, eleven deviations accepted); items 0–5 done (the GLASS.md section appended by the owner, the fixture and `broker/pointer.py` rehearsed in both twins, the gate with test 1, the checker with tests 2 and 3 red); test 4 red and the freeze next, one commit per item. Ring 6b: all five tests PASS (test 5 confirmed 3 September 2026). |
+| Status | Ring 6c: `stage6/plan-6c.md` **approved** 4 September 2026 (Cowork's A1–A3 and nits adopted, eleven deviations accepted); items 0–5 done (the GLASS.md section appended by the owner, the fixture and `broker/pointer.py` rehearsed in both twins, the gate and the checker with tests 1–4, tests 2–4 red on the ring 6b binary); the freeze next, then the guest code, one commit per item. Ring 6b: all five tests PASS (test 5 confirmed 3 September 2026). |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.252 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
@@ -1164,10 +1164,23 @@ germline with two entries, screen D with the strip's field; every target
 column from the section's `choice_targets`, every count from
 `expected_counts`. Red on the ring 6b binary: no mouse line, the `?` never
 typed (the line became the note ` ping`), no digits, the counters zero.
+**Item 7** — `--truth` (test 4): the argv assertions on the checker's and
+the twin's commands; the six fixtures reproduce their binaries and only the
+point app carries the magic; the pre-packet screen judged by the **frozen**
+`check_strip` and `check_surfaces` (they pass on the ring 6b binary, as
+deviation 4 predicted); a 36-move sweep through the empty app panel with
+nine screendumps — the arrow at the page's cell, exactly one arrow, the cell
+it left restored, `pt` under budget; three buttons on an empty spot; `!
+install echo`; the launch item clicked with `x` on the line (a click, no
+hit, nothing typed — A3), Backspace, clicked again (the launch, the wire
+counters unchanged); screen D with the strip's field against the page. The
+6c checker's own germline check for a plain grow expects the twin's
+seventeen lines (the frozen 6a helper expects sixteen). Red on the ring 6b
+binary as it must be. `stage6/test-6c.sh` now runs all four tests.
 
 ## Next action
 
-**Ring 6c is at item 6.** Next: item 1 — GLASS.md's ring 6c section
+**Ring 6c is at item 7.** Next: item 1 — GLASS.md's ring 6c section
 written to `stage6/out/glass-6c-section.md`, appended by the owner's own
 hand with one `cat … >>` command at the repo root (spelled in the plan's
 decision 13), the first 777 lines proven byte-identical, committed. Then
