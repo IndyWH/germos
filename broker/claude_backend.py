@@ -180,6 +180,14 @@ def glass_sections():
             continue
         j = doc.find("\n## ", i + 1)
         out.append(doc[i:j if j > 0 else None].strip())
+    # Ring 6c: the fifth callback's contract, from the section the owner
+    # appended - a "###" heading, so it ends at the next heading of either
+    # depth.
+    heading = "### An app is five callbacks, when it says so"
+    i = doc.find(heading)
+    if i >= 0:
+        ends = [k for k in (doc.find("\n### ", i + 1), doc.find("\n## ", i + 1)) if k > 0]
+        out.append(doc[i:min(ends) if ends else None].strip())
     return "\n\n".join(out)
 
 
@@ -237,6 +245,16 @@ PLAN_RULE = (
     "key fails rehearsal before the tests run.\n\n"
 )
 
+POINT_RULE = (
+    "- Ring 6c, optional: an app may take clicks. If it does, its header is 28 bytes, "
+    "not 16: `dd init, step, key, exit` then `db 'POINTER2'` then `dd point`, and "
+    "point(row, col, button) is called with RDI = the row and RSI = the column of the "
+    "clicked cell relative to the panel and RDX = the button (1 left, 2 right, 3 "
+    "middle), once per press. An app that does not need clicks keeps the 16-byte "
+    "header and is clicked on harmlessly. The service table is unchanged: four "
+    "services, 40 bytes.\n\n"
+)
+
 
 def plan_brief(plan, amendment=None):
     """Ring 6b: the plan's intent, choices and tests as the brief's last
@@ -274,7 +292,7 @@ def grow(request, failure=None, timeout=120.0, model=None, abi=1, plan=None):
     6b, a parsed plans/<name>.md, optionally with an amendment under
     plan["amendment"]): the plan brief, the plan's name and choices."""
     if abi == 2:
-        brief = APP_BRIEF + (PLAN_RULE if plan else "") + glass_sections()
+        brief = APP_BRIEF + (PLAN_RULE if plan else "") + POINT_RULE + glass_sections()
         if plan:
             brief += plan_brief(plan, plan.get("amendment"))
         result = _grow(request, failure, timeout, model, brief, True)

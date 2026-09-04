@@ -82,7 +82,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | | |
 |---|---|
 | Stage | 6 — Growth: ring 6a closed 2 September 2026; ring 6b closed 3 September 2026 (Stages 0–5 closed); **ring 6c — the pointer — OPEN**, 4 September 2026, the last ring of the stage |
-| Status | Ring 6c: `stage6/plan-6c.md` **approved** 4 September 2026 (Cowork's A1–A3 and nits adopted, eleven deviations accepted); items 0–2 done (the GLASS.md section appended by the owner, the fixture rehearsed in the twin); `broker/pointer.py`, tests 1–4 red and the freeze next, one commit per item. Ring 6b: all five tests PASS (test 5 confirmed 3 September 2026). |
+| Status | Ring 6c: `stage6/plan-6c.md` **approved** 4 September 2026 (Cowork's A1–A3 and nits adopted, eleven deviations accepted); items 0–3 done (the GLASS.md section appended by the owner, the fixture and `broker/pointer.py` rehearsed in both twins); tests 1–4 red and the freeze next, one commit per item. Ring 6b: all five tests PASS (test 5 confirmed 3 September 2026). |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.252 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
@@ -1129,11 +1129,24 @@ in `stage6/plan-6c.md`. **Item 2** — the fixture `stage6/pointer.asm` and
 round-trips through the frozen `parse_response`; **rehearsed for real in
 the frozen twin** at 1440x1440 with one disk on the committed ring 6b
 image: all nine criteria pass in 14 s (`steps 325`, `step_worst 0.0 ms`,
-`frame_worst 3.1 ms`).
+`frame_worst 3.1 ms`). **Item 3** — `broker/pointer.py`: `Pointer(Installer)`
+with the section's Python verbatim, the one new canned request `point app`,
+`rehearse_point` refusing a five-callback blob whose offset lies outside
+`[28, L)` before any twin boot (`rehearsal failed: the point offset lies
+beyond the blob`), `--rehearse-app`; the backend's ABI 2 brief gains
+`POINT_RULE` and the section's "five callbacks" text lifted from GLASS.md.
+Proven on the host with no guest and no call (the display seam, the
+helpers, a stub rehearsal delivering GLASS.md's frame and the germline
+serving it with `source` 1, the bad offset refused with no boot, the mock
+over the wire on a throwaway port: `ping`/`pong`, `x` refused, `install
+nothing` refused with no call, `point app` twice into a twin with no image),
+then **rehearsed for real through this module's twin** — 1920x1080, the
+home drive, seventeen lines, the committed ring 6b image — all nine
+criteria in 14.3 s. The twin never moves the mouse.
 
 ## Next action
 
-**Ring 6c is at item 2.** Next: item 1 — GLASS.md's ring 6c section
+**Ring 6c is at item 3.** Next: item 1 — GLASS.md's ring 6c section
 written to `stage6/out/glass-6c-section.md`, appended by the owner's own
 hand with one `cat … >>` command at the repo root (spelled in the plan's
 decision 13), the first 777 lines proven byte-identical, committed. Then
