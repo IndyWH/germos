@@ -60,6 +60,7 @@ Exit 0 on pass, 1 otherwise.
 """
 
 import hashlib
+import json
 import os
 import re
 import select
@@ -84,7 +85,7 @@ OVMF = "/usr/share/ovmf/OVMF.fd"
 sys.path.insert(0, os.path.join(REPO, "broker"))
 sys.path.insert(0, os.path.join(REPO, "stage6"))
 from glass import (app_frame, refusal_frame, regions, choices_row, strip_rows, fmt_ms, fmt_n,  # noqa: E402
-                   germline_key, TEST_CHOICES)
+                   germline_key, TEST_CHOICES, MACHINE, ABI)
 import twin  # noqa: E402
 from twin import Driver, keyname  # noqa: E402
 import plans  # noqa: E402
@@ -98,7 +99,7 @@ from checkglass import (check_echo, dump_capture, read_record, record_count, che
                         cell_census, check_colour_discipline, check_choices, check_mode_field, check_app_panel,
                         check_app_panel_blank, check_strip, check_surfaces, check_counts, germline_entries,
                         fixture_self_check, check_cage_argv, check_grow_entry, check_question_entry,
-                        check_germline_entry, read_cells, STRIP0, KEY_GAP, SETTLE, CANNED)
+                        read_cells, STRIP0, KEY_GAP, SETTLE, CANNED)
 from checkplans import (BOOT_PATTERNS, check_home, check_one_cell_panel, check_install_entry,  # noqa: E402
                         check_install_germline, check_argv, CHOICES_PROMPT_ECHO, ECHO_TESTS_OK, DATA_FIRST,
                         SECTOR)
@@ -758,12 +759,386 @@ def run_serial(smp):
     return 0 if ok else 1
 
 
+# ------------------------------------------------------------ the germline --
+
+def check_grow_germline(root, want, blob, name, choices, model="mock"):
+    """checkglass.check_germline_entry for a plain grow rehearsed in THIS
+    ring's twin: the same provenance rules, a rehearsal log of seventeen
+    S6: lines (two disks) and no ERR: line."""
+    problems = []
+    key = germline_key(want)
+    d = os.path.join(root, key)
+    if not os.path.isdir(d):
+        return ["no germline entry %s for %r" % (key, want)]
+    try:
+        got = open(os.path.join(d, "component.bin"), "rb").read()
+    except OSError as exc:
+        return ["entry %s: %s" % (key, exc)]
+    if got != blob:
+        problems.append("entry %s: component.bin is %d bytes, not the %d-byte blob the mock serves" % (key, len(got), len(blob)))
+    try:
+        prov = json.load(open(os.path.join(d, "provenance.json")))
+    except (OSError, ValueError) as exc:
+        return problems + ["entry %s: provenance.json: %s" % (key, exc)]
+    want_fields = {"request": want, "normalised": want, "key": key, "abi": ABI, "machine": MACHINE,
+                   "model": model, "sha256": hashlib.sha256(blob).hexdigest(), "size": len(blob),
+                   "name": name, "choices": [[chr(k), l.decode()] for k, l in choices]}
+    for k, v in want_fields.items():
+        if prov.get(k) != v:
+            problems.append("entry %s: provenance %s is %r, want %r" % (key, k, prov.get(k), v))
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", str(prov.get("date", ""))):
+        problems.append("entry %s: provenance date %r is not ISO-8601 UTC" % (key, prov.get("date")))
+    if not isinstance(prov.get("tries"), int) or prov["tries"] < 1:
+        problems.append("entry %s: provenance tries is %r" % (key, prov.get("tries")))
+    reh = prov.get("rehearsal") or {}
+    if reh.get("passed") is not True or reh.get("phrases") != [] or not isinstance(reh.get("seconds"), (int, float)):
+        problems.append("entry %s: provenance rehearsal is %r, want passed with no phrases and a time" % (key, reh))
+    try:
+        rlog = open(os.path.join(d, "rehearsal.log")).read()
+    except OSError as exc:
+        return problems + ["entry %s: rehearsal.log: %s" % (key, exc)]
+    if len(re.findall(r"^S6: ", rlog, re.M)) != LINES:
+        problems.append("entry %s: rehearsal.log does not hold the twin's seventeen S6: lines" % key)
+    if MOUSE_LINE in rlog:
+        problems.append("entry %s: the twin's rehearsal log carries '%s' - the twin must never move the mouse" % (key, MOUSE_LINE))
+    if "ERR:" in rlog:
+        problems.append("entry %s: rehearsal.log carries an ERR: line" % key)
+    return problems
+
+
+# --------------------------------------------------------------- pictures ---
+
+def check_panel_cells(shot, geometry, cells, label):
+    """Exactly these app-panel cells (panel-relative (row, col) -> glyph)
+    hold their glyphs; every other panel cell is blank; two colours."""
+    try:
+        width, height, pixels, cols, rows, font = open_shot(shot, geometry)
+    except (OSError, ValueError) as exc:
+        return [str(exc)]
+    row0, col0, prows, pcols = regions(cols, rows)["app"]
+    problems = []
+    for (r, c), ch in sorted(cells.items()):
+        if not cell_matches(pixels, width, row0 + r, col0 + c, render_cell(font, ch)):
+            problems.append("%s: app panel cell (%d, %d) is not %r - %s" % (label, r, c, ch, cell_census(pixels, width, row0 + r, col0 + c)))
+    strays = [(r, c) for r in range(prows) for c in range(pcols)
+              if (r, c) not in cells and not cell_matches(pixels, width, row0 + r, col0 + c, blank_cell())]
+    if strays:
+        problems.append("%s: %d other app-panel cell(s) are not blank, the first at %r - %s"
+                        % (label, len(strays), strays[0], cell_census(pixels, width, row0 + strays[0][0], col0 + strays[0][1])))
+    stray = check_colour_discipline(pixels, width, height)
+    if stray:
+        problems.append(stray)
+    return problems
+
+
+def title_cells(text, row=0, col=0):
+    return {(row, col + i): ch for i, ch in enumerate(text)}
+
+
+def check_typing_row(shot, geometry, region, after, text, label):
+    """The conversation row right below the row `after` reads `text` from
+    column 0 with the block cursor in the cell after it: a line being typed
+    (here, the marker a click typed)."""
+    try:
+        width, height, pixels, cols, rows, font = open_shot(shot, geometry)
+    except (OSError, ValueError) as exc:
+        return [str(exc)]
+    row0, col0, nrows, ncols = region
+    hits = [r for r in range(nrows) if all(cell_matches(pixels, width, row0 + r, col0 + c, render_cell(font, ch))
+                                           for c, ch in enumerate(after))
+            and cell_matches(pixels, width, row0 + r, col0 + len(after), blank_cell())]
+    if len(hits) != 1:
+        return ["%s: the row %r appears %d times in the conversation, want exactly once" % (label, after, len(hits))]
+    r = hits[0] + 1
+    problems = []
+    for c, ch in enumerate(text):
+        if not cell_matches(pixels, width, row0 + r, col0 + c, render_cell(font, ch)):
+            problems.append("%s: conversation row %d, column %d is not %r - %s" % (label, r, c, ch, cell_census(pixels, width, row0 + r, col0 + c)))
+            break
+    if not cell_matches(pixels, width, row0 + r, col0 + len(text), cursor_cell()):
+        problems.append("%s: conversation row %d, column %d is not the block cursor after %r - %s"
+                        % (label, r, len(text), text, cell_census(pixels, width, row0 + r, col0 + len(text))))
+    return problems
+
+
+def target_col(targets, kind, arg):
+    """The middle column of a choices-row target, from the section's
+    choice_targets - never arithmetic."""
+    for first, last, k, a in targets:
+        if (k, a) == (kind, arg):
+            return (first + last) // 2
+    raise ValueError("no target %r %r in %r" % (kind, arg, targets))
+
+
+def gap_col(targets):
+    """A column in the first three-space gap of the row."""
+    return targets[0][1] + 2
+
+
+def park_cell(geometry):
+    """Where the cursor rests for a screendump: the conversation panel's
+    last row, last column - a cell no frozen helper reads."""
+    regs = regions(geometry[2], geometry[3])
+    row0, col0, nrows, ncols = regs["conversation"]
+    return row0 + nrows - 1, col0 + ncols - 1
+
+
+# ----------------------------------------------------------------- point ----
+
+def run_point(smp):
+    """Test 3 at one -smp value: the pointer, driven by the monitor."""
+    blob, problems = fixture_self_check("pointer")
+    if not report("the point app is not what the repository says", problems):
+        return 1
+    try:
+        pt = point_offset(blob)
+    except ValueError as exc:
+        say("stage6/pointer.bin: %s" % exc)
+        return 1
+    if pt is None:
+        say("stage6/pointer.bin does not announce point")
+        return 1
+    say("stage6/pointer.asm reproduces stage6/pointer.bin: %d bytes, sha256 %s, point at %d"
+        % (len(blob), hashlib.sha256(blob).hexdigest()[:16], pt))
+    app, problems = fixture_self_check("app")
+    if not report("the test app is not what the repository says", problems):
+        return 1
+    if point_offset(app) is not None:
+        say("the test app announces point - it must not")
+        return 1
+
+    # The geometry this ring's tests run at is read from the guest's own log
+    # at boot; the driver's moveto steps take screen cells, so the cells are
+    # spelled here in terms of the mode the display states (GLASS.md:
+    # 1920x1080 is 120x67 cells) and the log is required to agree before
+    # anything is judged.
+    W, H = 1920, 1080
+    cols, rows = W // CELL, H // CELL
+    regs = regions(cols, rows)
+    crow = regs["choices"][0]
+    prow0, pcol0 = regs["app"][0], regs["app"][1]
+    park = park_cell((W, H, cols, rows))
+    t_prompt = choice_targets(False, 0, [])
+    t_app = choice_targets(True, 1, POINT_CHOICES)
+    t_papp = choice_targets(True, 0, POINT_CHOICES)
+    marks = {(5, 7): 1, (9, 12): 2, (12, 3): 4}          # panel cell -> the monitor's button mask
+
+    record = os.path.join(OUT, "broker.point.%d.jsonl" % smp)
+    serial = os.path.join(OUT, "serial.point.%d.txt" % smp)
+    shots = {k: os.path.join(OUT, "screen.point.%d.%s.ppm" % (smp, k)) for k in ("a", "b", "c", "f0", "t", "d")}
+    mock, err = start_mock(record)
+    if err:
+        say(err)
+        return 1
+    say("mock broker listening on 127.0.0.1:%d, germline wiped at %s" % (BROKER_PORT, os.path.relpath(GERMLINE, REPO)))
+    try:
+        fresh_disk(NOTES)
+        fresh_disk(HOME_IMG)
+        steps = [
+            ("type", "before\n"), ("sleep", 1.5),
+            ("mouse", 1, 0), ("sleep", 0.5),                                   # the cursor appears
+            ("moveto", crow, target_col(t_prompt, "key", ord("?"))),
+            ("button", 1, "hit"), ("button", 0), ("sleep", 1.0),              # "? ask" clicked: types ?
+            ("moveto", park[0], park[1]), ("sleep", 0.3),
+            ("shot", shots["a"]),
+            ("type", " ping\n"), ("wait_record", record, 1, 20.0), ("sleep", SETTLE),
+            ("type", "! point app\n"), ("wait_record", record, 2, 150.0), ("sleep", 3.0),
+            ("obs", "p"),
+        ]
+        for (r, c), mask in sorted(marks.items()):
+            steps += [("moveto", prow0 + r, pcol0 + c), ("button", mask, "hit"), ("button", 0), ("sleep", 0.3)]
+        steps += [
+            ("moveto", park[0], park[1]), ("sleep", 1.0),
+            ("shot", shots["b"]), ("obs", "b"),
+            ("moveto", crow, target_col(t_app, "key", ord("c"))),
+            ("button", 1, "hit"), ("button", 0), ("sleep", 0.5),              # "c clear" clicked
+            ("moveto", park[0], park[1]), ("sleep", 0.5),
+            ("shot", shots["c"]),
+            ("moveto", crow, target_col(t_app, "key", 9)),
+            ("button", 1, "hit"), ("button", 0), ("sleep", 1.0),              # "Tab prompt" clicked
+            ("obs", "f0"),
+            ("moveto", park[0], park[1]), ("sleep", 0.3),
+            ("shot", shots["f0"]),
+            ("type", "mid\n"), ("sleep", 1.5),
+            ("moveto", crow, target_col(t_papp, "key", 9)),
+            ("button", 1, "hit"), ("button", 0), ("sleep", 1.0),              # "Tab app" clicked
+            ("obs", "f1"),
+            ("moveto", crow, gap_col(t_app)),
+            ("button", 1), ("button", 0), ("sleep", 0.5),                     # a gap: nothing
+            ("obs", "g"),
+            ("moveto", crow, target_col(t_app, "key", 0x1B)),
+            ("button", 1, "hit"), ("button", 0), ("sleep", 2.0),              # "Esc exit" clicked
+            ("obs", "x"),
+            ("type", "! test app\n"), ("wait_record", record, 3, 150.0), ("sleep", 3.0),
+            ("moveto", prow0 + 5, pcol0 + 7),
+            ("button", 1), ("button", 0), ("button", 2), ("button", 0), ("sleep", 0.5),   # harmless
+            ("moveto", park[0], park[1]), ("sleep", 1.0),
+            ("shot", shots["t"]), ("obs", "t"),
+            ("type", "\x1b"), ("sleep", 2.0),
+            ("type", "after\n"), ("sleep", SETTLE),
+            ("shot", shots["d"]), ("surfaces", "d"), ("obs", "d2"),
+        ]
+        capture, reads, events, err = drive(smp, NOTES, HOME_IMG, steps, serial)
+    finally:
+        stop_mock(mock)
+    if err:
+        say(err)
+        if capture:
+            dump_capture(capture)
+        return 1
+
+    ok = True
+    problems, stripped = strip_mouse_line(capture)
+    more, geometry = check_boot_lines(stripped, smp, "formatted", 0)
+    problems += more
+    problems += check_echo(stripped, b"before\r\n? ping\r\n! point app\r\nmid\r\n! test app\r\nafter\r\n")
+    ok &= report("the serial log is not what the section asks for", problems, capture)
+    if not problems:
+        say("eighteen boot lines with '%s' after the first move, nic %s; the echo after ready is the typed lines "
+            "plus the '?' the click typed" % (MOUSE_LINE, MAC))
+    if None in geometry or geometry[:2] != (W, H):
+        say("the guest's mode %r is not the display's %dx%d - the cells this test computed do not apply" % (geometry, W, H))
+        return 1
+    conv = regs["conversation"]
+
+    entries, problems = read_record(record)
+    if entries is not None:
+        if len(entries) != 3:
+            problems.append("the broker saw %d connection(s), want 3 - a click must put nothing on the wire" % len(entries))
+        if len(entries) >= 1:
+            problems += check_question_entry(1, entries[0], "ping")
+        if len(entries) >= 2:
+            problems += check_grow_entry(2, entries[1], "point app", "generated", 1, ["pass"], "app",
+                                         app_frame(blob, POINT_NAME, POINT_CHOICES, 0), name="point app")
+        if len(entries) >= 3:
+            problems += check_grow_entry(3, entries[2], "test app", "generated", 2, ["pass"], "app",
+                                         app_frame(app, b"test app", TEST_CHOICES, 0), name="test app")
+    ok &= report("the broker's record is not what GLASS.md asks for", problems)
+    if not problems:
+        say("the record: 'ping' answered; 'point app' generated once and rehearsed once, the frame GLASS.md gives for "
+            "the point app; 'test app' likewise; nothing else reached the wire")
+
+    problems = check_grow_germline(GERMLINE, "point app", blob, "point app", POINT_CHOICES)
+    problems += check_grow_germline(GERMLINE, "test app", app, "test app", TEST_CHOICES)
+    names = germline_entries(GERMLINE)
+    if len(names) != 2:
+        problems.append("the germline holds %d entries %r, want exactly 2" % (len(names), names))
+    ok &= report("the germline is not what GLASS.md asks for", problems)
+
+    problems = check_image(NOTES, ["before", "mid", "after"])
+    ok &= report("the notebook is not what it should be", problems)
+
+    # Screen A: the click on "? ask" typed the marker.
+    problems = check_region_rows(shots["a"], geometry, conv, ["> before"])
+    problems += check_typing_row(shots["a"], geometry, conv, "> before", "> ?", "screen A")
+    problems += check_choices(shots["a"], geometry, choices_row(False, 0, []))
+    problems += check_mode_field(shots["a"], geometry, "prompt")
+    problems += check_arrow_at(shots["a"], geometry, park[0], park[1], "screen A")
+    ok &= report("screen A does not show the marker the click typed", problems)
+    if not problems:
+        say("screen A: '> ?' with the block cursor after it - the click on '? ask' did what the key does")
+
+    problems = []
+    if "p" not in reads:
+        problems.append("the obs page could not be read after the point app started")
+    else:
+        problems += check_counts(reads["p"], {"mode": 3, "name": "point app", "focus": 1, "grows_generated": 1,
+                                              "grows_served": 0, "questions": 1, "requests": 1, "errors": 0}, "obs P")
+        problems += check_pointer_counts(reads["p"], reads["counts"]["p"], "obs P")
+    ok &= report("the point app did not start as the section asks", problems)
+
+    # Screen B: three buttons in the panel, three digits where they landed.
+    cells = title_cells("point app")
+    for (r, c), mask in marks.items():
+        cells[(r, c)] = str(BUTTON_OF_MASK[mask])
+    problems = check_panel_cells(shots["b"], geometry, cells, "screen B")
+    problems += check_choices(shots["b"], geometry, choices_row(True, 1, POINT_CHOICES))
+    problems += check_mode_field(shots["b"], geometry, "running point app")
+    if "b" in reads:
+        problems += check_pointer_counts(reads["b"], reads["counts"]["b"], "obs B", focus=1)
+    else:
+        problems.append("the obs page could not be read at screen B")
+    ok &= report("screen B does not show point's marks", problems)
+    if not problems:
+        say("screen B: 'point app' and the digits 1, 2, 3 at the three clicked cells - point received row, column and button; "
+            "%d clicks, %d hits so far" % (reads["b"]["clicks"], reads["b"]["hits"]))
+
+    # Screen C: "c clear" clicked - the app's declared key reached key.
+    problems = check_panel_cells(shots["c"], geometry, title_cells("point app"), "screen C")
+    ok &= report("screen C does not show the panel cleared by the clicked choice", problems)
+    if not problems:
+        say("screen C: the panel holds only the title again - the click on 'c clear' delivered c to the app")
+
+    # F0, F1, G, X: the focus items, a gap, Esc.
+    problems = []
+    for label, focus in (("f0", 0), ("f1", 1), ("g", 1)):
+        if label not in reads:
+            problems.append("the obs page could not be read at %s" % label)
+            continue
+        problems += check_counts(reads[label], {"mode": 3, "name": "point app", "focus": focus}, "obs " + label.upper())
+        problems += check_pointer_counts(reads[label], reads["counts"][label], "obs " + label.upper())
+    problems += check_choices(shots["f0"], geometry, choices_row(True, 0, POINT_CHOICES))
+    problems += check_mode_field(shots["f0"], geometry, "running point app")
+    if "x" in reads:
+        problems += check_counts(reads["x"], {"mode": 0, "name": "", "focus": 0}, "obs X")
+        problems += check_pointer_counts(reads["x"], reads["counts"]["x"], "obs X")
+    else:
+        problems.append("the obs page could not be read after the Esc click")
+    ok &= report("the row's Tab, gap and Esc clicks did not do what the keys do", problems)
+    if not problems:
+        say("'Tab prompt' clicked: focus 0 and the prompt's row beside the app; 'Tab app' clicked: focus 1; a gap clicked: "
+            "one more click and no hit; 'Esc exit' clicked: the app closed")
+
+    # Screen T: the frozen test app clicked on harmlessly.
+    problems = check_app_panel(shots["t"], geometry, "-")
+    problems += check_mode_field(shots["t"], geometry, "running test app")
+    problems += check_choices(shots["t"], geometry, choices_row(True, 1, TEST_CHOICES))
+    if "t" in reads:
+        problems += check_counts(reads["t"], {"mode": 3, "name": "test app", "focus": 1}, "obs T")
+        problems += check_pointer_counts(reads["t"], reads["counts"]["t"], "obs T")
+    else:
+        problems.append("the obs page could not be read at screen T")
+    ok &= report("screen T: the four-callback test app was not clicked on harmlessly", problems)
+    if not problems:
+        say("screen T: the test app's known picture untouched by two clicks in its panel - clicks counted, no hit")
+
+    # Screen D: the conversation, the page and the strip at the end.
+    problems = []
+    if "d" not in reads or "d2" not in reads:
+        problems.append("the obs page or the surfaces could not be read at the end")
+    else:
+        d = reads["d"]["obs"]
+        problems += check_mode_field(shots["d"], geometry, "prompt")
+        problems += check_choices(shots["d"], geometry, choices_row(False, 0, []))
+        problems += check_app_panel_blank(shots["d"], geometry)
+        problems += check_region_rows(shots["d"], geometry, conv,
+                                      ["> before", "> ? ping", CANNED["ping"], "> ! point app", "> mid", "> ! test app",
+                                       "> after", PROMPT])
+        problems += check_surfaces_except(shots["d"], reads["d"], park, "screen D")
+        problems += check_arrow_at(shots["d"], geometry, park[0], park[1], "screen D")
+        problems += check_strip_6c(shots["d"], geometry, d, reads["d2"], "screen D")
+        problems += check_counts(d, {"mode": 0, "name": "", "focus": 0, "wire_conns": 3, "questions": 1, "requests": 2,
+                                     "notes": 3, "errors": 0, "grows_generated": 2, "grows_served": 0, "resyncs": 0},
+                                 "screen D")
+        problems += check_pointer_counts(d, reads["counts"]["d"], "screen D")
+    ok &= report("screen D is not the truth", problems)
+    if not problems:
+        d = reads["d"]["obs"]
+        say("screen D: the whole conversation intact, the prompt's row, the panel blank; the strip's third field equal to the "
+            "page (pk %04d cl %03d), every region its surface's bar the arrow; keys %d (clicks not counted), %d clicks, %d hits"
+            % (d["packets"], d["clicks"], d["keys"], d["clicks"], d["hits"]))
+
+    say("-smp %d: %s" % (smp, "the pointer held - a click does what its key does, and point drew the cell it was given" if ok
+                         else "the pointer did not hold"))
+    return 0 if ok else 1
+
+
 # ---------------------------------------------------------------- main -----
 
 def main(argv):
-    if len(argv) == 2 and argv[0] == "--serial":
+    if len(argv) == 2 and argv[0] in ("--serial", "--point"):
         try:
-            return run_serial(int(argv[1]))
+            return (run_serial if argv[0] == "--serial" else run_point)(int(argv[1]))
         except ValueError:
             pass
     say("usage: checkpointer.py --serial <smp> | --point <smp> | --truth")

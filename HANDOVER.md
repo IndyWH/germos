@@ -82,7 +82,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | | |
 |---|---|
 | Stage | 6 — Growth: ring 6a closed 2 September 2026; ring 6b closed 3 September 2026 (Stages 0–5 closed); **ring 6c — the pointer — OPEN**, 4 September 2026, the last ring of the stage |
-| Status | Ring 6c: `stage6/plan-6c.md` **approved** 4 September 2026 (Cowork's A1–A3 and nits adopted, eleven deviations accepted); items 0–5 done (the GLASS.md section appended by the owner, the fixture and `broker/pointer.py` rehearsed in both twins, the gate with test 1, the checker with test 2 red); tests 3–4 red and the freeze next, one commit per item. Ring 6b: all five tests PASS (test 5 confirmed 3 September 2026). |
+| Status | Ring 6c: `stage6/plan-6c.md` **approved** 4 September 2026 (Cowork's A1–A3 and nits adopted, eleven deviations accepted); items 0–5 done (the GLASS.md section appended by the owner, the fixture and `broker/pointer.py` rehearsed in both twins, the gate with test 1, the checker with tests 2 and 3 red); test 4 red and the freeze next, one commit per item. Ring 6b: all five tests PASS (test 5 confirmed 3 September 2026). |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.252 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
@@ -1155,11 +1155,19 @@ count derived from the emitted events, `hits` from the per-step flag),
 (test 2). Red on the ring 6b binary as it must be: before the move the
 frozen `check_strip` and `check_surfaces` pass and the page's `mouse_id` is
 0 (want 1); after one `mouse_move` the lines are still seventeen, no mouse
-line, `packets 0`, no arrow, the strip without its field.
+line, `packets 0`, no arrow, the strip without its field. **Item 6** —
+`--point` (test 3): the click on `? ask` typing the marker, `! point app`
+rehearsed and run, three buttons in its panel drawing their digits, `c
+clear`, `Tab prompt`, `Tab app`, a gap and `Esc exit` clicked, the frozen
+test app clicked on harmlessly, the record with three connections and the
+germline with two entries, screen D with the strip's field; every target
+column from the section's `choice_targets`, every count from
+`expected_counts`. Red on the ring 6b binary: no mouse line, the `?` never
+typed (the line became the note ` ping`), no digits, the counters zero.
 
 ## Next action
 
-**Ring 6c is at item 5.** Next: item 1 — GLASS.md's ring 6c section
+**Ring 6c is at item 6.** Next: item 1 — GLASS.md's ring 6c section
 written to `stage6/out/glass-6c-section.md`, appended by the owner's own
 hand with one `cat … >>` command at the repo root (spelled in the plan's
 decision 13), the first 777 lines proven byte-identical, committed. Then

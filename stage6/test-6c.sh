@@ -199,7 +199,21 @@ echo
 # in its panel reach point and draw their digits; "c clear", "Tab prompt",
 # "Tab app", a gap and "Esc exit" clicked; the frozen test app clicked on
 # harmlessly. At -smp 2 and -smp 8. The work is in stage6/checkpointer.py.
-# (Added at item 6.)
+
+echo "Test 3 - The pointer: a click on '? ask' types the marker; '! point app' rehearsed and run, three buttons reach point; the row clicked; the test app clicked harmlessly"
+if [ ! -f "$ESP" ]; then
+  fail "test 3: no image was built"
+else
+  pointed=0
+  python3 "$REPO/stage6/checkpointer.py" --point 2 || pointed=1
+  python3 "$REPO/stage6/checkpointer.py" --point 8 || pointed=1
+  if [ "$pointed" -eq 0 ]; then
+    pass "test 3: a click does what its key does and point draws the cell it was given, at both -smp 2 and -smp 8"
+  else
+    fail "test 3: the pointer did not hold (see above)"
+  fi
+fi
+echo
 
 # --------------------------------------------- test 4: the truth about the pointer
 # The pre-packet screen judged by the frozen 6a checks; a scripted sweep with
