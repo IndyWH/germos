@@ -775,3 +775,419 @@ def choices_row(app_running, focus, choices):
     items = ["%s %s" % (chr(k), label.decode("ascii")) for k, label in choices[:CHOICES_SHOWN]]
     return "   ".join(items + ["Esc exit", "Tab prompt"])
 ```
+
+## Ring 6c — the pointer
+
+**Stage 6 ring 6c, plan item 1. Appended by the owner's own hand; frozen
+with the rest of this file.** Everything above this heading — the 6a
+document from its first line to the closing fence before this one — stands
+**byte for byte**: the screen, the surfaces and the glass core, the obs page
+to `0x23F`, the strip's two rows of 87 characters, the choices row, the four
+callbacks and the four services, the wire, the rehearsal's nine criteria,
+the germline, the mock's table, the Python. `stage6/HOME.md` and
+`stage6/PLANS.md` stand too. This section adds **the pointer**: the PS/2
+mouse and how the i8042 is configured for it, one serial line, the obs
+page's pointer fields from `0x240`, the cursor, pointer input-to-photon and
+the strip's third field, what a click does on the choices row, a **fifth
+callback** an app may announce inside its blob, and what the mock serves. It
+**supersedes one sentence** of the 6a text: "The rest of the page is zero"
+holds from `0x2C0`, not from `0x240`, from this ring on. The assembler
+implements this section; the broker module, the twin's caller and the
+acceptance checker parse by it. One text, four readers. If it is wrong, that
+is a spec question for the owner, not an edit.
+
+### The device
+
+**The PS/2 mouse on the i8042's auxiliary port.** Stage 2 inherited the
+controller as the firmware left it. This ring configures it, once, in the
+keyboard block, interrupts off, before `S6: keyboard ready`:
+
+1. `AD` and `A7` to port `0x64` — both ports disabled; port `0x60` drained.
+2. `20` to `0x64` — the **command byte** read from `0x60`. Bits 0 and 1 are
+   set (the keyboard's and the auxiliary port's interrupts), bits 4 and 5
+   are cleared (the two ports enabled; bit 5 set means the auxiliary port is
+   *disabled*), every other bit is kept as found — bit 6, translation, in
+   particular: the keyboard map is scancode set 1 and the firmware's
+   translation must survive. `60` to `0x64`, then the byte to `0x60`; read
+   back with `20`. On this machine OVMF leaves `0x67` and the guest writes
+   `0x47`; the values are the firmware's and are recorded, not assumed.
+3. `A8` to `0x64` — the auxiliary port enabled.
+4. To the mouse, each byte as `D4` to `0x64` then the byte to `0x60`, each
+   answer polled from `0x60` with the status byte read first and routed by
+   its bit 5: **`FF`** (reset) → `FA`, `AA`, then the ID byte (`00`, a
+   standard three-byte mouse); **`F6`** (defaults) → `FA`; **`F4`** (enable
+   reporting) → `FA`. Every wait is bounded (the PIT, about half a second a
+   response); a mouse that does not answer costs that and nothing more —
+   `mouse_id` stays 0 and boot goes on.
+5. Port `0x60` drained again.
+
+The **PIC**: master `OCW1` **`0xF9`** (IRQ1 and the cascade IRQ2 open),
+slave **`0xEF`** (IRQ12 open); every other line masked, as Stage 2 left
+them. Gates at `0x21` (IRQ1) and **`0x2C`** (IRQ12) enter one handler body
+with two exits: EOI to the master for IRQ1; EOI to the slave (`0xA0`) then
+the master for IRQ12. A spurious IRQ15 (vector **`0x2F`**) gets EOI to the
+master only; a spurious IRQ7 none, as before.
+
+**The handler** reads the status byte at `0x64` first and, **while bit 0 is
+set**, reads one byte from `0x60` and routes it by **status bit 5**: clear,
+a keyboard byte — into the scancode ring with its stamp, exactly as ring 6a;
+set, a mouse byte — into the packet state machine below. A handler that
+finds the output buffer empty (the other vector's drain took its byte) does
+nothing but EOI. A byte never lands in the wrong ring.
+
+**The packet.** Three bytes: byte 0 has **bit 3 always set**, bits 0–2 the
+buttons held (left, right, middle), bits 4 and 5 the signs of the deltas;
+byte 1 `dx`, byte 2 `dy`, each a signed byte, **`dy` positive upwards**
+(PS/2's convention, so a move down the screen arrives negative). The state
+machine keeps its phase across interrupts; a byte arriving in phase 0
+without bit 3 is dropped and counted in `resyncs`; phase 0 also records the
+TSC as the packet's stamp; the third byte completes the packet:
+`ptr_x += dx` and `ptr_y −= dy`, each clamped to the mode (`0 … W−1`,
+`0 … H−1`), then **`ptr_cell = (y >> 4) << 16 | (x >> 4)` stored as one
+`u64` after the two positions** — the glass reads only the cell word, so it
+never reads a torn position; `buttons` = byte 0 bits 0–2 and the bits newly
+set are the **presses**; `packets += 1`; `ptr_stamp` and `ptr_pending`
+below; and one **entry per packet** — the stamp, the cell word, the buttons,
+the presses, 16 bytes — into **the mouse ring** (64 entries), head written
+by the handler, tail by the boot processor's consumer, dropped when full,
+`mouse_hw` its high-water occupancy: the keyboard ring's discipline, one
+packet per entry instead of one scancode. The overflow bits are ignored;
+there is no acceleration; the pointer starts at the screen's centre pixel
+(`W/2`, `H/2`).
+
+**Measured on this machine, and true of QEMU's i8042 whatever the
+firmware:** one monitor `mouse_move` is one packet while both deltas fit in
+a signed byte and splits above 127 counts per axis, both axes drained
+together; a `mouse_button` change with no move sends one packet; no packet
+follows the enable unasked; every keyboard byte keeps status bit 5 clear
+with the auxiliary port live.
+
+### The eighteenth line
+
+**`S6: mouse ready`** is printed **once, on serial only** — a raw write to
+the UART, never the tee, so it never lands in the conversation — the first
+time the boot processor's main loop finds `packets` above zero. It is not a
+boot line: a machine whose mouse never moves prints exactly the seventeen
+lines of HOME.md (sixteen with one disk) and its echo after `S6: keyboard
+ready` is exactly what was typed; the twin, whose mouse never moves, sees
+the same. After the first packet the serial stream carries the eighteenth
+line wherever that packet fell, between typed lines or inside one. What the
+guest knows at boot — whether the mouse answered its reset — is in the obs
+page from boot: `mouse_id`.
+
+### The obs page, from `0x240`
+
+Every field a `u64`, one writer each, read by anyone through `xp /88xg`.
+"IRQ" is the i8042 handler on the boot processor.
+
+| Offset | Field | Written by | Meaning |
+|---|---|---|---|
+| `0x240` | `ptr_x` | IRQ | the pointer's x in pixels, `0 … W−1`; `W/2` at boot |
+| `0x248` | `ptr_y` | IRQ | y in pixels, `0 … H−1`; `H/2` at boot |
+| `0x250` | `ptr_cell` | IRQ | `row << 16 \| col`, the cell holding the pointer, stored after the two above |
+| `0x258` | `packets` | IRQ | complete three-byte packets received |
+| `0x260` | `buttons` | IRQ | the buttons held after the last packet: bit 0 left, 1 right, 2 middle |
+| `0x268` | `mouse_hw` | IRQ | the mouse ring's high-water occupancy |
+| `0x270` | `ptr_stamp` | IRQ | the TSC at the first byte of the packet awaiting its frame |
+| `0x278` | `ptr_pending` | IRQ sets, glass clears | |
+| `0x280` | `pointer_last` | glass | pointer input-to-photon, ticks |
+| `0x288` | `pointer_worst` | glass | the worst |
+| `0x290` | `clicks` | BSP | button presses the consumer saw |
+| `0x298` | `hits` | BSP | presses that landed on a choices-row target or reached `point` |
+| `0x2A0` | `mouse_bytes` | IRQ | bytes routed to the mouse by status bit 5 |
+| `0x2A8` | `resyncs` | IRQ | bytes dropped while waiting for a packet's first byte |
+| `0x2B0` | `mouse_id` | boot | 0 no mouse answered the reset; else 1 + the ID byte (1 for a standard mouse) |
+| `0x2B8` | `i8042_cmd` | boot | the command byte as read (bits 0–7) and as written (bits 8–15) |
+
+The rest of the page, from `0x2C0`, is zero.
+
+### The cursor
+
+**The arrow** is one cell: an 8x8 glyph doubled to 16x16 like every glyph of
+the shared font (FONT.md: bit 0 of a row byte is the leftmost pixel), in the
+foreground colour on the background — two colours, as everything:
+
+```
+01 03 07 0F 1F 0D 19 30
+
+X.......
+XX......
+XXX.....
+XXXX....
+XXXXX...
+X.XX....
+X..XX...
+....XX..
+```
+
+Its tip is the cell's top-left pixel; the cell is `ptr_cell`. It is painted
+through the glyph painter directly, never through a surface cell byte (a
+cell byte of `0x02` is still background, as the 6a text says).
+
+**The glass core's frame** gains one step and one measurement. Step 1 also
+snapshots `ptr_pending`. After step 3 (the strip), **step 3b:** if `packets`
+is non-zero, read `ptr_cell`; if it differs from the cell the arrow was last
+drawn at, **repaint that old cell from its surface** — the owning surface is
+the first of the four descriptors in the obs page whose `row0`, `col0`,
+`rows`, `cols` contain the cell, the cell byte painted as `surf_render`
+would paint it, the conversation's block cursor overlaid when it sits there
+— then paint the arrow at the new cell and remember it. The arrow is painted
+**every frame**, after everything else (a dirty row may just have repainted
+its cell), so nothing paints over it inside a frame. Step 4 gains: if
+`ptr_pending` was 1 at step 1, `pointer_last = rdtsc − ptr_stamp`,
+`pointer_worst = max`, `ptr_pending = 0`. **No cursor is drawn until the
+first packet** — `packets` is 0 — so a machine whose mouse never moves
+paints exactly what ring 6a painted.
+
+### Pointer input-to-photon, and the strip's third field
+
+The handler stamps a packet at its first byte's interrupt; when the packet
+completes, if no stamp is pending, `ptr_stamp` takes it and `ptr_pending`
+becomes 1 (an older pending stamp is kept — the worst case is measured). The
+glass core reads `ptr_pending` **before** its copies and measures **after**
+them, so the frame credited is one that painted the cursor where that
+packet put it. **`pt` is the time from the interrupt that delivered a
+packet's first byte to the end of the frame copy that drew the cursor after
+it** — not literally a photon, as `ph` is not. A packet that moves the
+cursor to no new cell is still measured, to the next frame's end.
+
+**The strip's row 0**, from **column 88**, **only while `packets` is above
+zero**: `pt LL.L/WW.W pk NNNN cl NNN` — `pointer_last` and `pointer_worst`
+as milliseconds to one decimal in the 6a strip's `%02d.%d` (saturating at
+`99.9`), `packets` four digits, `clicks` three, zero padded, saturating at
+all nines. Columns 87 and beyond are blank until then, so before the mouse
+speaks the strip is the 6a strip to the character; cut at the right edge on
+a narrower screen, as the strip always was (a 90-column screen shows `pt`
+and no more). Row 1 is unchanged.
+
+### The click on the choices row
+
+A **press** is a button's bit going from clear to set in a packet; the boot
+processor's consumer pops the mouse ring, counts every press in `clicks`,
+and acts on its cell:
+
+| The press | What happens |
+|---|---|
+| **button 1 on screen row `R−2`, within an item's text** — from the item's first character to its last, the items being exactly those the row shows (6a's table, HOME.md's extension), separated by three spaces | one in `hits`, and the item acts **as its key would**, by the same path a typed key takes (the stamp of the press is the key's stamp, so `ph` measures the click's echo): **`? ask`** types `?`; **`! grow`** types `!` — whatever the prompt line already holds; **`! <name>`** (an installed app) types `!`, a space, the name and Enter — **only when the prompt line is empty**; with text on the line it is a click and not a hit, and types nothing; **`<k> <label>`** (an app's declared choice, shown while the app has the keys) delivers `<k>` to the app's `key`; **`Esc exit`** is Esc; **`Tab prompt`** and **`Tab app`** are Tab |
+| button 1 on row `R−2` in a gap, on the blank tail, or on row `R−1`; button 2 or 3 anywhere on the row | nothing but the count |
+| any button inside the **app panel** while an app runs | `point(row, col, button)` if the app announces it (below), and one in `hits`; nothing for a four-callback app |
+| anywhere else — the conversation, the strip, the app panel with no app | nothing but the count |
+
+The synthetic keys are not counted in `keys` (the keyboard consumer's
+count); they are the click's, counted in `clicks` and `hits`. A `!` line
+typed by a click takes HOME.md's path: the launch, with nothing on the
+wire. Focus never moves on a click in the app panel: Tab and the row's Tab
+items move it, visibly. `finish_line`'s discard (the keys typed while the
+machine was busy) also empties the mouse ring — presses made then are
+dropped like those keys; the position stands, the cursor is live throughout,
+because the handler keeps it.
+
+### An app is five callbacks, when it says so
+
+The blob's first 16 bytes are the four `u32` offsets of the 6a text. A blob
+whose length is at least 28 and whose **bytes 16–23 are the eight ASCII
+bytes `POINTER2`** announces a fifth: **bytes 24–27, a `u32` offset of
+`point`**, which must be at least 28 and below the blob's length — a blob
+with the magic and an offset outside that range is `bad component frame`,
+as a bad offset among the four is. A blob without the magic is a
+four-callback app and is clicked on without effect: every app that existed
+before this ring is one (measured: none carries the magic by accident).
+
+- **`point`**: `RDI` = the row, `RSI` = the column, **relative to the app
+  panel**, of the cell the press landed on; `RDX` = the button, **1 left,
+  2 right, 3 middle**. Called once per press inside the panel while the app
+  runs, whoever has the keys; releases and moves are not delivered. The
+  calling convention, the stack, the registers and the rules of the other
+  four callbacks apply unchanged.
+
+The **service table is unchanged**: ABI version `2`, size `40`, the four
+services. The frame is unchanged: kind `0x02`, ABI `2`, the 96-byte header;
+the home image's entry is unchanged; a launch from the home image reads the
+blob from disk and finds the magic there or not. The frozen `blob_offsets`
+and `parse_response` see the magic and the fifth offset as bytes of the
+blob, which they are.
+
+### The rehearsal
+
+The nine criteria and the post-delivery hook stand. Two things are added
+around them, neither inside the frozen twin: a candidate blob that carries
+the magic with an offset outside `[28, L)` is refused **before the twin
+boots**, with the phrase **`the point offset lies beyond the blob`**
+(delivered to the guest as `rehearsal failed: the point offset lies beyond
+the blob`); and **the twin never moves the mouse** — its seventh criterion
+compares the conversation and choices regions with their surfaces on
+screendump B, and its eighth demands the echo after ready byte-exact, so no
+cursor and no eighteenth line may appear in a rehearsal. `point` is proven
+on the machine, by the gate's guest.
+
+### The mock's canned table for requests, ring 6c
+
+`python3 broker/pointer.py --mock` answers questions from UMBILICAL.md's
+table, installs from PLANS.md's table, plain requests from the 6a table —
+and one more:
+
+| Body (exact bytes) | Candidate |
+|---|---|
+| `point app` | the bytes of `stage6/pointer.bin`; name `point app`; one choice `c` `clear` |
+
+Every lookup counts as one generation call. The rehearsal still runs, for
+real, in the 6b twin (1920x1080, the home drive, seventeen lines).
+
+**`point app`** (`stage6/pointer.asm`, frozen): `init` draws `point app` at
+panel row 0, column 0; `key` with `c` clears the panel and redraws that
+title, any other key does nothing; `step` and `exit` return; `point(row,
+col, button)` draws the one glyph `'0' + button` — `1`, `2` or `3` — at the
+cell it was given. The row while it has the keys: `c clear   Esc exit   Tab
+prompt`.
+
+### Worked examples
+
+**A packet** `28 0a ec` on a 1920x1080 machine with the pointer at the
+centre (960, 540): byte 0 `0x28` — bit 3 set, bit 5 set (dy negative), no
+buttons; `dx` = `0x0a` = +10; `dy` = `0xec` = −20; the pointer moves to
+(970, **560**) — down the screen — and `ptr_cell` is `35 << 16 | 60` =
+`0x0023003c`, screen row 35, column 60. The monitor command that produced it
+was `mouse_move 10 20`.
+
+**A press**: `09 00 00` — button 1 held, no move — after `08 …` is a left
+press at the current cell; `08 00 00` after it is the release. `0a 00 00` is
+a right press; `0c 00 00` a middle press; `29 03 fc` a move of (+3, −4 →
+down 4) with the left button held.
+
+**The strip's row 0** with the 6a example's page and `pointer_last`
+9,000,000 ticks, `pointer_worst` 48,300,000 (`tsc_per_ms` 3,000,000),
+`packets` 27, `clicks` 3, on a 120-column screen, from column 85:
+
+```
+.1 pt 03.0/16.1 pk 0027 cl 003
+```
+
+— the field occupies columns 88–114; with `packets` 0 columns 87–119 are
+blank and the row is the 6a row exactly.
+
+**The fixture's header**, 28 bytes, for a blob whose `init` is at 28,
+`step` at 40, `key` at 41, `exit` at 60 and `point` at 70:
+
+```
+00000000: 1c00 0000 2800 0000 2900 0000 3c00 0000  ....(...)...<...
+00000010: 504f 494e 5445 5232 4600 0000            POINTER2F...
+```
+
+**The choices row's targets** for `? ask   ! grow   ! echo`: columns 0–4
+(`?`), 8–13 (`!`), 17–22 (launch `echo`); a press at column 6 or 15 does
+nothing; at column 19 with an empty prompt line it types `! echo` and Enter.
+For `c clear   Esc exit   Tab prompt`: 0–6 (`c` to the app), 10–17 (Esc),
+21–30 (Tab). For `? ask   ! grow   Tab app   Esc exit`: 0–4, 8–13, 17–23
+(Tab), 27–34 (Esc).
+
+### Parsing it cold, in Python
+
+The broker module and the checker use this, with the 6a code above, and
+nothing more:
+
+```python
+import struct
+
+OBS_6C = {                       # u64 fields at these byte offsets
+    "ptr_x": 0x240, "ptr_y": 0x248, "ptr_cell": 0x250, "packets": 0x258,
+    "buttons": 0x260, "mouse_hw": 0x268, "ptr_stamp": 0x270, "ptr_pending": 0x278,
+    "pointer_last": 0x280, "pointer_worst": 0x288, "clicks": 0x290, "hits": 0x298,
+    "mouse_bytes": 0x2A0, "resyncs": 0x2A8, "mouse_id": 0x2B0, "i8042_cmd": 0x2B8,
+}
+OBS_PAGE_BYTES_6C = 0x2C0        # what parse_obs_6c needs
+POINT_MAGIC = b"POINTER2"        # blob bytes 16-23 announce the fifth callback
+POINT_HEADER = 28                # four offsets, the magic, the point offset
+POINTER_FIELD_COL = 88           # the strip's third field, row 0
+POINTER_BUDGET_MS = 2 * 1000 / 60   # two frame slots
+MOUSE_LINE = "S6: mouse ready"
+ARROW = bytes([0x01, 0x03, 0x07, 0x0F, 0x1F, 0x0D, 0x19, 0x30])   # bit 0 leftmost
+BUTTON_OF_MASK = {1: 1, 2: 2, 4: 3}  # the monitor's mouse_button mask -> point's button
+KEY_ESC, KEY_TAB, KEY_ENTER = 0x1B, 9, 13
+
+
+def parse_obs_6c(page):
+    """The obs page's bytes (at least 0x2C0): parse_obs plus the pointer's
+    fields, and ptr_row / ptr_col from the cell word."""
+    obs = parse_obs(page)
+    for field, off in OBS_6C.items():
+        obs[field], = struct.unpack_from("<Q", page, off)
+    obs["ptr_row"], obs["ptr_col"] = obs["ptr_cell"] >> 16, obs["ptr_cell"] & 0xFFFF
+    return obs
+
+
+def point_offset(blob):
+    """None for a four-callback blob; the fifth offset for one that announces
+    point; a ValueError when the magic is there with an offset outside [28, L)."""
+    if len(blob) < POINT_HEADER or blob[16:24] != POINT_MAGIC:
+        return None
+    off, = struct.unpack_from("<I", blob, 24)
+    if off < POINT_HEADER or off >= len(blob):
+        raise ValueError("the point offset lies beyond the blob")
+    return off
+
+
+def pointer_cell(x, y):
+    return y // 16, x // 16
+
+
+def pointer_field(obs):
+    t = max(obs["tsc_per_ms"], 1)
+    return "pt %s/%s pk %s cl %s" % (fmt_ms(obs["pointer_last"], t), fmt_ms(obs["pointer_worst"], t),
+                                     fmt_n(obs["packets"], 4), fmt_n(obs["clicks"], 3))
+
+
+def strip_rows_6c(obs, now_ticks):
+    """The two strip rows exactly as the glass core draws them this ring."""
+    row0, row1 = strip_rows(obs, now_ticks)
+    if obs["packets"]:
+        row0 = row0.ljust(POINTER_FIELD_COL) + pointer_field(obs)
+    return row0, row1
+
+
+def render_arrow():
+    """The arrow's 16 pixel rows, as render_cell renders a glyph."""
+    rows = []
+    for b in ARROW:
+        line = b"".join(bytes(FG) * 2 if b >> i & 1 else bytes(BG) * 2 for i in range(8))
+        rows += [line, line]
+    return rows
+
+
+def choice_targets(app_running, focus, choices, installed=()):
+    """The choices row's click targets for the state, (first column, last
+    column, kind, argument): kind "key" with the byte a press types or
+    delivers, or "launch" with the installed app's name. Built from the same
+    items the row shows (6a's choices_row and HOME.md's extension)."""
+    if not app_running:
+        items = [("? ask", "key", ord("?")), ("! grow", "key", ord("!"))]
+        items += [("! " + name, "launch", name) for name in list(installed)[:CHOICES_SHOWN]]
+    elif focus == 0:
+        items = [("? ask", "key", ord("?")), ("! grow", "key", ord("!")),
+                 ("Tab app", "key", KEY_TAB), ("Esc exit", "key", KEY_ESC)]
+    else:
+        items = [("%s %s" % (chr(k), label.decode("ascii")), "key", k) for k, label in choices[:CHOICES_SHOWN]]
+        items += [("Esc exit", "key", KEY_ESC), ("Tab prompt", "key", KEY_TAB)]
+    out = []
+    col = 0
+    for text, kind, arg in items:
+        out.append((col, col + len(text) - 1, kind, arg))
+        col += len(text) + 3
+    return out
+
+
+def click_action(targets, col, line_empty=True):
+    """What a left press at this column of row R-2 does: None for a gap or
+    the tail (and for a launch item while the prompt line holds text);
+    ("key", byte) or ("launch", name) otherwise."""
+    for first, last, kind, arg in targets:
+        if first <= col <= last:
+            if kind == "launch" and not line_empty:
+                return None
+            return kind, arg
+    return None
+
+
+def launch_keys(name):
+    """The bytes a launch item types: "! <name>" and Enter."""
+    return b"! " + name.encode("ascii") + bytes([KEY_ENTER])
+```

@@ -586,8 +586,8 @@ edited by any of them.
       row, last column, where no frozen check looks; sleep 1; **screendump
       B**, `obs6c` **B**; move to (65, 1) — `c clear`; `button 1`, `button
       0`; move to (60, 59); sleep 1; **screendump C**; move to the `Tab
-      prompt` item's middle column (from the row text `c clear   Esc exit
-      Tab prompt`: columns 20–29 → 24); `button 1`, `button 0`; sleep 1;
+      prompt` item's middle column (from `choice_targets`: columns 21–30 →
+      25); `button 1`, `button 0`; sleep 1;
       `obs6c` **F0**; type `mid` ⏎; move to `Tab app`'s middle (the prompt
       row `? ask   ! grow   Tab app   Esc exit`: columns 17–23 → 20);
       `button 1`, `button 0`; sleep 1; `obs6c` **F1**; move to column 8 (the
@@ -666,7 +666,7 @@ edited by any of them.
       0`, `buttons 0`, `packets` the moves plus six; then `! install echo` ⏎
       (`wait_record` 1, 150 s), sleep 3, Esc, sleep 1 — the row `? ask   !
       grow   ! echo`; **the empty-line rule (A3):** type `x` (no Enter);
-      move to `! echo`'s middle (columns 16–21 → 18) on row 65; `button 1`
+      move to `! echo`'s middle (columns 17–22 → 19) on row 65; `button 1`
       (no flag), `button 0`; sleep 1; `obs6c` **L00**: `mode 0`, `clicks`
       one more, `hits` unchanged, the conversation's last row `> x` with the
       block cursor at column 3 (nothing typed by the click); type Backspace
@@ -884,9 +884,10 @@ no twin boot (the rehearse callable returns before `rehearse_plan`);
 `twin.VGA_ARGS` reads 1920x1080 after `import pointer` while
 `checkglass.DISPLAY_EDID` still reads 1440x1440; `strip_rows_6c` with
 `packets 0` equals GLASS.md's `strip_rows`, and with `packets 1` appends the
-field at column 88; `choice_targets("? ask   ! grow   ! echo")` gives the
-three spans `(0, 4)`, `(8, 13)`, `(16, 21)` and `click_action(..., 6)` is
-None.
+field at column 88; `choice_targets(False, 0, [], ["echo"])` gives the
+three spans `(0, 4)`, `(8, 13)`, `(17, 22)` and `click_action(..., 6)` is
+None (every column span in this plan is the section's `choice_targets`,
+never arithmetic — the first draft's 16–21 was off by one).
 
 **Then one real twin run through this module, no token, before anything is
 frozen:** `python3 broker/pointer.py --rehearse-app stage6/pointer.bin
