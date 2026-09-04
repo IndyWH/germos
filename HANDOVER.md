@@ -82,7 +82,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | | |
 |---|---|
 | Stage | 6 — Growth: ring 6a closed 2 September 2026; ring 6b closed 3 September 2026 (Stages 0–5 closed); **ring 6c — the pointer — OPEN**, 4 September 2026, the last ring of the stage |
-| Status | Ring 6c: `stage6/plan-6c.md` **approved** 4 September 2026 (Cowork's A1–A3 and nits adopted, eleven deviations accepted); items 0–3 done (the GLASS.md section appended by the owner, the fixture and `broker/pointer.py` rehearsed in both twins); tests 1–4 red and the freeze next, one commit per item. Ring 6b: all five tests PASS (test 5 confirmed 3 September 2026). |
+| Status | Ring 6c: `stage6/plan-6c.md` **approved** 4 September 2026 (Cowork's A1–A3 and nits adopted, eleven deviations accepted); items 0–5 done (the GLASS.md section appended by the owner, the fixture and `broker/pointer.py` rehearsed in both twins, the gate with test 1, the checker with test 2 red); tests 3–4 red and the freeze next, one commit per item. Ring 6b: all five tests PASS (test 5 confirmed 3 September 2026). |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.252 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
@@ -1142,11 +1142,24 @@ over the wire on a throwaway port: `ping`/`pong`, `x` refused, `install
 nothing` refused with no call, `point app` twice into a twin with no image),
 then **rehearsed for real through this module's twin** — 1920x1080, the
 home drive, seventeen lines, the committed ring 6b image — all nine
-criteria in 14.3 s. The twin never moves the mouse.
+criteria in 14.3 s. The twin never moves the mouse. **Item 4** —
+`stage6/test-6c.sh` with test 1 (the 6c MAC `52:54:00:a1:06:03`, the
+display, the port refusals, the summary with the two commands and the grab
+hint). **Item 5** — `stage6/checkpointer.py`: the driver with `mouse`,
+`button`, `moveto` and `serial` steps and a pointer model (the centre at
+boot, every move within one packet), `expected_counts(events)` (A2: every
+count derived from the emitted events, `hits` from the per-step flag),
+`check_boot_lines` with this ring's MAC, `strip_mouse_line`,
+`check_arrow_at`, `check_no_arrow`, `check_surfaces_except`,
+`check_cell_restored`, `check_strip_6c`, `check_i8042`, and `--serial`
+(test 2). Red on the ring 6b binary as it must be: before the move the
+frozen `check_strip` and `check_surfaces` pass and the page's `mouse_id` is
+0 (want 1); after one `mouse_move` the lines are still seventeen, no mouse
+line, `packets 0`, no arrow, the strip without its field.
 
 ## Next action
 
-**Ring 6c is at item 3.** Next: item 1 — GLASS.md's ring 6c section
+**Ring 6c is at item 5.** Next: item 1 — GLASS.md's ring 6c section
 written to `stage6/out/glass-6c-section.md`, appended by the owner's own
 hand with one `cat … >>` command at the repo root (spelled in the plan's
 decision 13), the first 777 lines proven byte-identical, committed. Then

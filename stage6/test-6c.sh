@@ -177,7 +177,21 @@ echo
 # mouse_move, and EIGHTEEN lines with "S6: mouse ready" eighteenth, the echo
 # after "S6: keyboard ready" exactly that one line, the arrow at the page's
 # cell, the strip's third field. The work is in stage6/checkpointer.py.
-# (Added at item 5.)
+
+echo "Test 2 - Serial: seventeen lines and the 6a glass before any packet; one move, then 'S6: mouse ready' eighteenth, the arrow, the field"
+if [ ! -f "$ESP" ]; then
+  fail "test 2: no image was built"
+else
+  t2=0
+  python3 "$REPO/stage6/checkpointer.py" --serial 8 || t2=1
+  python3 "$REPO/stage6/checkpointer.py" --serial 2 || t2=1
+  if [ "$t2" -eq 0 ]; then
+    pass "test 2: the mouse identified at boot, silent until it speaks, then the eighteenth line, the arrow and the field, at -smp 8 and -smp 2"
+  else
+    fail "test 2: the serial log, the page or the screen is not what the section asks for"
+  fi
+fi
+echo
 
 # ------------------------------------------------- test 3: the pointer ------
 # The soul of the ring, mocked: the cursor appears on the first move; a click
