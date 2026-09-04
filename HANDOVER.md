@@ -3,7 +3,15 @@
 Rolling state of the AI OS project. Read this first, then `ai-os-foundation.md`
 (the single source of truth), then the current stage's `spec.md` and `plan.md`.
 
-**Last updated:** 3 September 2026 — **Stage 6 ring 6b, the store of
+**Last updated:** 4 September 2026 — **Stage 6 ring 6c, the pointer, is
+OPEN** at item 0: `stage6/plan-6c.md` approved with Cowork's three
+amendments and three nits (A1 where test 2 goes green; A2 no count in the
+frozen checker is a literal — every one is derived from the step list;
+A3 a launch item clicked with text on the prompt line does nothing), all
+eleven deviations accepted. **The model note:** ring 6c is implemented on
+**Fable 5.1 at high effort**, the owner's decision, Cowork reviewing to the
+same standard as every ring. The ring's section is below the ring 6b
+build. Earlier — **Stage 6 ring 6b, the store of
 plans, is CLOSED.** Wajira ran test 5 with the real broker:
 `! install calculator` was built by the real backend from
 `plans/calculator.md` and rehearsed against the plan's five tests in one
@@ -73,12 +81,12 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 
 | | |
 |---|---|
-| Stage | 6 — Growth: ring 6a closed 2 September 2026; **ring 6b — the store of plans — CLOSED** 3 September 2026 (Stages 0–5 closed); next ring 6c, the pointer |
-| Status | Ring 6b: all five tests **PASS** (test 5 confirmed by Wajira, 3 September 2026: the calculator installed from its plan, a sum, the reboot with no broker, the launch from disk). Next: ring 6c's plan, in a fresh session, per `stage6/spec.md`. |
+| Stage | 6 — Growth: ring 6a closed 2 September 2026; ring 6b closed 3 September 2026 (Stages 0–5 closed); **ring 6c — the pointer — OPEN**, 4 September 2026, the last ring of the stage |
+| Status | Ring 6c: `stage6/plan-6c.md` **approved** 4 September 2026 (Cowork's A1–A3 and nits adopted, eleven deviations accepted); item 0 done; Part 1 (the GLASS.md section, the fixture, `broker/pointer.py`, tests 1–4 red, the freeze) next, one commit per item. Ring 6b: all five tests PASS (test 5 confirmed 3 September 2026). |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.252 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
-| Model | **Fable 5.1, high effort** — the owner's decision at Stage 6 approval (Fable 5 at high effort built Stages 2–5). **Ring 6b: Fable 5.1 at medium effort, the owner's experiment** — to be compared with Opus at high (Stages 0 and 1) and Fable at high (Stages 2 to 6a); Cowork reviews to the same standard as every ring |
+| Model | **Ring 6c: Fable 5.1 at high effort** — the owner's decision for this ring, recorded at item 0. Stage 6's standing rule is Fable 5.1 at high (6a); ring 6b was Fable 5.1 at medium, the owner's experiment, to be compared with Opus at high (Stages 0 and 1) and Fable at high (Stages 2 to 6a, 6c); Cowork reviews to the same standard as every ring |
 
 ## The project in three lines
 
@@ -1074,9 +1082,51 @@ gate and Stages 0–5 green; item 12 is this handover, README's ring 6b
 section, CLAUDE.md's build block (Stages 5, 6a and 6b) and three
 gotchas, the payload table re-run (1072, 0 wrong).
 
+## Ring 6c — the pointer · opened 4 September 2026
+
+`stage6/plan-6c.md` was approved on 4 September 2026 with Cowork's three
+amendments and three nits (A1 test 1 goes green at item 9, test 2 at item
+10, test 4 at item 11, test 3 at item 12; A2 no count in the frozen checker
+is a hand-written literal — `expected_counts(steps)` derives packets, clicks,
+mouse bytes and keys from the step list and `hits` from a per-step flag
+written beside the press it describes; A3 a click on an installed app's
+`! <name>` acts only on an empty prompt line, else it is a click and not a
+hit and types nothing; the GLASS.md draft opens with a blank line;
+`cell_repaint` reads its bounds from the four surface descriptors; item 0
+removes the review copy) and all eleven deviations accepted. **The model for
+this ring: Fable 5.1 at high effort**, the owner's decision; Cowork reviews
+to the same standard as every ring. Item 0 (this record and the plan's
+commit) is done; the items follow one commit each, exactly as the plan says.
+
+**The shape, from the plan** (its environment table holds the measurements
+behind every choice): `S6: mouse ready` is printed once, serial only, when
+the mouse first speaks — no honest hardware fact can hide a PS/2 mouse from a
+QEMU guest that keeps its keyboard, and the frozen gates count lines exactly
+— while the boot-time identification lives in the obs page (`mouse_id`);
+the fifth callback is announced inside the blob (`POINTER2` at offset 16, a
+`u32` `point` offset at 24; no existing blob carries the magic); the cursor
+and the strip's `pt`/`pk`/`cl` field at column 88 appear only once a packet
+has arrived, so a machine whose mouse never moves is ring 6a's to the pixel;
+the obs page's pointer fields run from `0x240` to `0x2BF`; the i8042 handler
+keeps the position and rings whole packets; a click's synthetic keys take
+the typed key's path through one `handle_key`; a new fixture `point app`
+(`stage6/pointer.asm`) and a new module `broker/pointer.py` subclassing the
+frozen `Installer`; the 6c gate at 1920x1080 with two disks, `-smp 2` and
+`-smp 8`, about eight minutes, mock only.
+
 ## Next action
 
-**Ring 6b is closed.** Next: **ring 6c — the pointer**, per
+**Ring 6c is open at item 0.** Next: item 1 — GLASS.md's ring 6c section
+written to `stage6/out/glass-6c-section.md`, appended by the owner's own
+hand with one `cat … >>` command at the repo root (spelled in the plan's
+decision 13), the first 777 lines proven byte-identical, committed. Then
+items 2–8 (the fixture, `broker/pointer.py`, `stage6/test-6c.sh` and
+`stage6/checkpointer.py` with tests 1–4 red, the freeze), then the guest
+code in items 9–12, the handover at item 13, and test 5 — the owner clicks
+his way through the choices row and into the calculator with
+`python3 broker/pointer.py`.
+
+Earlier — **ring 6b is closed.** Ring 6c's shape as the 6b handover put it, per
 `stage6/spec.md`: the PS/2 mouse on the i8042's auxiliary port (IRQ12,
 three-byte packets into a ring as the keyboard's), the i8042 configured
 for the first time, `S6: mouse ready` as the eighteenth line, the cursor
