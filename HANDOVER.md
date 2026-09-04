@@ -82,7 +82,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | | |
 |---|---|
 | Stage | 6 — Growth: ring 6a closed 2 September 2026; ring 6b closed 3 September 2026 (Stages 0–5 closed); **ring 6c — the pointer — OPEN**, 4 September 2026, the last ring of the stage |
-| Status | Ring 6c: `stage6/plan-6c.md` **approved** 4 September 2026 (Cowork's A1–A3 and nits adopted, eleven deviations accepted); item 0 done; Part 1 (the GLASS.md section, the fixture, `broker/pointer.py`, tests 1–4 red, the freeze) next, one commit per item. Ring 6b: all five tests PASS (test 5 confirmed 3 September 2026). |
+| Status | Ring 6c: `stage6/plan-6c.md` **approved** 4 September 2026 (Cowork's A1–A3 and nits adopted, eleven deviations accepted); items 0–2 done (the GLASS.md section appended by the owner, the fixture rehearsed in the twin); `broker/pointer.py`, tests 1–4 red and the freeze next, one commit per item. Ring 6b: all five tests PASS (test 5 confirmed 3 September 2026). |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.252 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
@@ -1114,9 +1114,26 @@ the typed key's path through one `handle_key`; a new fixture `point app`
 frozen `Installer`; the 6c gate at 1920x1080 with two disks, `-smp 2` and
 `-smp 8`, about eight minutes, mock only.
 
+### Ring 6c — the build, item by item
+
+Part 1 so far: **item 1** — GLASS.md's ring 6c section (416 lines) written
+to `stage6/out/glass-6c-section.md` and appended by the owner's own hand;
+the first 777 lines proven byte-identical (`cmp` against `HEAD`, the same
+SHA-256 `f5f9f092…`, zero lines removed, one hunk of additions from line
+775); the section's Python run from the appended file against the frozen
+6a code. Running it caught two slips in the plan's prose (an item after two
+gaps starts at column 17, not 16; the 6a example row ends `.1`), corrected
+in `stage6/plan-6c.md`. **Item 2** — the fixture `stage6/pointer.asm` and
+`pointer.bin` (186 bytes, SHA-256 `abbcd0a1c99424fd…`; offsets 28, 47, 48,
+98, `POINTER2`, `point` at 99), `.gitignore`'s exception; the frame
+round-trips through the frozen `parse_response`; **rehearsed for real in
+the frozen twin** at 1440x1440 with one disk on the committed ring 6b
+image: all nine criteria pass in 14 s (`steps 325`, `step_worst 0.0 ms`,
+`frame_worst 3.1 ms`).
+
 ## Next action
 
-**Ring 6c is open at item 0.** Next: item 1 — GLASS.md's ring 6c section
+**Ring 6c is at item 2.** Next: item 1 — GLASS.md's ring 6c section
 written to `stage6/out/glass-6c-section.md`, appended by the owner's own
 hand with one `cat … >>` command at the repo root (spelled in the plan's
 decision 13), the first 777 lines proven byte-identical, committed. Then

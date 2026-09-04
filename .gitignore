@@ -34,3 +34,6 @@ __pycache__/
 
 # The germline - the machine's own cache of proven components, never repo content
 germline/
+
+# ...and the committed, frozen point app of ring 6c
+!stage6/pointer.bin
