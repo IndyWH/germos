@@ -83,6 +83,17 @@ org 0                           ; file offsets == RVAs
 ; keystrokes of headroom; a full ring drops bytes rather than overwriting.
 %define KBD_RING_SIZE   0x100
 
+; The mouse ring (ring 6c, GLASS.md "The device"): one entry per complete
+; packet - the stamp, the cell word, the buttons held, the buttons newly
+; pressed - the keyboard ring's discipline. 64 entries, dropped when full.
+%define MSE_RING_SIZE   64
+%define MSE_ENTRY       16
+%define ME_STAMP        0               ; u64  the TSC at the packet's first byte
+%define ME_CELL         8               ; u32  row << 16 | col
+%define ME_BUTTONS      12              ; u8   bits 0-2 held after the packet
+%define ME_PRESSED      13              ; u8   bits newly set by the packet
+%define I8042_WAIT_TRIES 50             ; x 10 ms: the bound on one mouse answer
+
 ; Spare 4 KB page-table pages for map_mmio_2m: a BAR above the identity map
 ; needs a new PDPT and a new PD (and, above 512 GB, a new PML4 entry pointing
 ; at them). Two pages per region beyond the map; eight is room for four such
@@ -227,6 +238,23 @@ org 0                           ; file offsets == RVAs
 %define OBS_SURF_CHOICES    0x180
 %define OBS_SURF_CONV       0x1C0
 %define OBS_SURF_APP        0x200
+; Ring 6c (GLASS.md, "The obs page, from 0x240"): the pointer's fields.
+%define OBS_PTR_X           0x240
+%define OBS_PTR_Y           0x248
+%define OBS_PTR_CELL        0x250
+%define OBS_PACKETS         0x258
+%define OBS_BUTTONS         0x260
+%define OBS_MOUSE_HW        0x268
+%define OBS_PTR_STAMP       0x270
+%define OBS_PTR_PENDING     0x278
+%define OBS_POINTER_LAST    0x280
+%define OBS_POINTER_WORST   0x288
+%define OBS_CLICKS          0x290
+%define OBS_HITS            0x298
+%define OBS_MOUSE_BYTES     0x2A0
+%define OBS_RESYNCS         0x2A8
+%define OBS_MOUSE_ID        0x2B0
+%define OBS_I8042_CMD       0x2B8
 %define SURF_CELLS          0
 %define SURF_DIRTY          8
 %define SURF_ROW0           16
@@ -1060,11 +1088,22 @@ efi_main:
         call    pic_init
 
         lea     rdi, [idt + 0x21*16]    ; IRQ1, remapped
-        lea     rax, [irq1_handler]
+        lea     rax, [irq1_entry]
+        call    idt_set_gate
+        lea     rdi, [idt + 0x2C*16]    ; IRQ12, on the slave (ring 6c)
+        lea     rax, [irq12_entry]
         call    idt_set_gate
         lea     rdi, [idt + 0x27*16]    ; the master's spurious vector
         lea     rax, [irq7_spurious]
         call    idt_set_gate
+        lea     rdi, [idt + 0x2F*16]    ; the slave's spurious vector
+        lea     rax, [irq15_spurious]
+        call    idt_set_gate
+
+        ; The i8042 configured for the first time, and the mouse reset,
+        ; identified and told to report (ring 6c, GLASS.md "The device").
+        ; Still interrupts off, polled; a missing mouse costs a moment.
+        call    mouse_init
 
 .drain:                                 ; stale bytes in the output buffer
         in      al, 0x64                ; would fire the moment we sti
@@ -1092,15 +1131,32 @@ efi_main:
         ; wake instead of letting it fire uselessly before the hlt sleeps.
         ; -------------------------------------------------------------------
 main_loop:
+        ; The eighteenth line (GLASS.md): once, serial only, the first time
+        ; the mouse's packet counter is above zero.
+        cmp     dword [mouse_announced], 0
+        jne     .announced
+        cmp     qword [obs_page + OBS_PACKETS], 0
+        je      .announced
+        mov     dword [mouse_announced], 1
+        lea     rsi, [msg_mouse]
+        call    serial_raw_puts
+.announced:
         cli
         mov     eax, [kbd_tail]
         cmp     eax, [kbd_head]
         jne     .have
+        mov     eax, [mse_tail]
+        cmp     eax, [mse_head]
+        jne     .have_mouse
         cmp     dword [app_running], 0
         jne     .app_turn               ; an app never lets the loop sleep
         sti                             ; the shadow: no interrupt lands
         hlt                             ; between these two instructions
         jmp     main_loop
+.have_mouse:
+        sti
+        call    mouse_next              ; one packet out of the ring (item 11
+        jmp     main_loop               ; acts on its presses)
 .app_turn:
         sti
         call    app_step_maybe          ; its step, if 10 ms have passed
@@ -1431,11 +1487,12 @@ setup_idt:
 ; ---------------------------------------------------------------------------
 ; The PIC and the keyboard interrupt.
 ;
-; Both PICs are remapped - the master to 0x20-0x27, the slave to 0x28-0x2F -
-; even though only the master is used: left at the reset default of 0x08, a
-; spurious or stray IRQ would land on a CPU exception vector and read as a
-; double fault. Every line is masked except IRQ1. The timer stays masked;
-; nothing in this stage wants it.
+; Both PICs are remapped - the master to 0x20-0x27, the slave to 0x28-0x2F:
+; left at the reset default of 0x08, a spurious or stray IRQ would land on a
+; CPU exception vector and read as a double fault. Every line is masked
+; except IRQ1, the cascade IRQ2 and IRQ12 - the keyboard and the mouse, both
+; on the i8042 (ring 6c). The timer stays masked; nothing in this stage
+; wants it.
 ; ---------------------------------------------------------------------------
 
 ; pic_init - the classic two-chip initialisation, with a POST-port breather
@@ -1464,29 +1521,88 @@ pic_init:
         out     0x80, al
         out     0xA1, al
         out     0x80, al
-        mov     al, 0xFD                ; OCW1 master: everything masked but IRQ1
+        mov     al, 0xF9                ; OCW1 master: IRQ1 and the cascade IRQ2 open
         out     0x21, al
-        mov     al, 0xFF                ; OCW1 slave: everything masked
+        mov     al, 0xEF                ; OCW1 slave: IRQ12 open (ring 6c)
         out     0xA1, al
         pop     rax
         ret
 
-; irq1_handler - the keyboard interrupt. It does nothing but read the
-; scancode and store it in the ring: the main loop owns the screen and the
-; serial line, and this handler owns nothing but the ring's head. Single
-; producer, single consumer, one writer per index - no lock (plan decision 7).
-irq1_handler:
+; The i8042 interrupts (ring 6c, GLASS.md "The device"): IRQ1 and IRQ12
+; enter one body, i8042_service, which reads the status byte first and,
+; while the output buffer is full, takes one byte and routes it by status
+; bit 5 - clear, the keyboard's ring; set, the mouse's packet machine. A
+; handler that finds the buffer empty (the other vector's drain took its
+; byte) does nothing but EOI. The handlers own nothing but the rings'
+; heads; the main loop and the glass core own everything else.
+irq1_entry:
         push    rax
         push    rbx
-        push    rdx
         push    rcx
+        push    rdx
+        push    rsi
+        push    rdi
+        push    r8
+        call    i8042_service
+        mov     al, 0x20                ; EOI to the master; IRQ1 is its line
+        out     0x20, al
+        pop     r8
+        pop     rdi
+        pop     rsi
+        pop     rdx
+        pop     rcx
+        pop     rbx
+        pop     rax
+        iretq
+
+irq12_entry:
+        push    rax
+        push    rbx
+        push    rcx
+        push    rdx
+        push    rsi
+        push    rdi
+        push    r8
+        call    i8042_service
+        mov     al, 0x20                ; EOI to the slave, then the master
+        out     0xA0, al
+        out     0x20, al
+        pop     r8
+        pop     rdi
+        pop     rsi
+        pop     rdx
+        pop     rcx
+        pop     rbx
+        pop     rax
+        iretq
+
+i8042_service:
+.next:
+        in      al, 0x64
+        test    al, 1                   ; output buffer full?
+        jz      .done
+        mov     bl, al                  ; the status byte
         in      al, 0x60                ; reading the byte is the acknowledge
+        test    bl, 0x20                ; bit 5: the byte is the mouse's
+        jnz     .mouse
+        call    kbd_push
+        jmp     .next
+.mouse:
+        call    mouse_byte
+        jmp     .next
+.done:
+        ret
+
+; kbd_push - AL = a scancode: into the keyboard ring with its stamp, the
+; ring's high-water kept. Ring 6a's IRQ1 body, unchanged but for its name.
+; Single producer, single consumer, one writer per index - no lock.
+kbd_push:
         mov     ebx, [kbd_head]
         mov     edx, ebx
         inc     edx
         and     edx, KBD_RING_SIZE - 1
         cmp     edx, [kbd_tail]         ; ring full: drop the byte rather than
-        je      .eoi                    ; overwrite what the loop has not read
+        je      .done                   ; overwrite what the loop has not read
         lea     rdx, [kbd_ring]
         mov     [rdx + rbx], al
         ; The stamp beside the scancode (GLASS.md, "Input-to-photon"): the
@@ -1505,21 +1621,352 @@ irq1_handler:
         sub     ebx, [kbd_tail]         ; the ring's occupancy now ...
         and     ebx, KBD_RING_SIZE - 1
         cmp     rbx, [obs_page + OBS_KEYS_HW]
-        jbe     .eoi                    ; ... and its high-water mark
+        jbe     .done                   ; ... and its high-water mark
         mov     [obs_page + OBS_KEYS_HW], rbx
-.eoi:
-        mov     al, 0x20                ; EOI to the master; IRQ1 is its line
-        out     0x20, al
+.done:
+        ret
+
+; mouse_byte - AL = a byte from the mouse: the three-byte packet machine
+; (GLASS.md, "The packet"). Phase 0 wants bit 3 set - a byte without it is
+; dropped and counted in resyncs - and records the packet's stamp; the third
+; byte completes the packet: the deltas applied to the position, clamped to
+; the mode, the cell word stored last as one u64, the buttons and the
+; presses, one packet counted, the stamp made pending if none is, and one
+; entry into the mouse ring. Runs in the handler, so the cursor is live
+; whatever the boot processor is doing.
+mouse_byte:
+        inc     qword [obs_page + OBS_MOUSE_BYTES]
+        mov     ecx, [mse_phase]
+        test    ecx, ecx
+        jnz     .later
+        test    al, 0x08                ; byte 0 always has bit 3 set
+        jnz     .first
+        inc     qword [obs_page + OBS_RESYNCS]
+        ret
+.first:
+        mov     [mse_pkt], al
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        mov     [mse_stamp0], rax
+        mov     dword [mse_phase], 1
+        ret
+.later:
+        lea     rdx, [mse_pkt]          ; lea first: [label + reg] cannot be
+        mov     [rdx + rcx], al         ; RIP-relative (CLAUDE.md)
+        inc     ecx
+        mov     [mse_phase], ecx
+        cmp     ecx, 3
+        jb      .ret
+        mov     dword [mse_phase], 0
+
+        ; dx: byte 1 as a signed byte; x clamped to 0 .. W-1.
+        movsx   rax, byte [mse_pkt + 1]
+        mov     rcx, [obs_page + OBS_PTR_X]
+        add     rcx, rax
+        test    rcx, rcx
+        jns     .x_low_ok
+        xor     ecx, ecx
+.x_low_ok:
+        mov     eax, [fb_width]
+        dec     eax
+        cmp     rcx, rax
+        jbe     .x_ok
+        mov     rcx, rax
+.x_ok:
+        mov     [obs_page + OBS_PTR_X], rcx
+        ; dy: byte 2 as a signed byte, positive upwards; y clamped to 0 .. H-1.
+        movsx   rax, byte [mse_pkt + 2]
+        mov     rdx, [obs_page + OBS_PTR_Y]
+        sub     rdx, rax
+        test    rdx, rdx
+        jns     .y_low_ok
+        xor     edx, edx
+.y_low_ok:
+        mov     eax, [fb_height]
+        dec     eax
+        cmp     rdx, rax
+        jbe     .y_ok
+        mov     rdx, rax
+.y_ok:
+        mov     [obs_page + OBS_PTR_Y], rdx
+        ; The cell word, stored after both positions: the glass reads only it.
+        shr     rdx, 4
+        shl     rdx, 16
+        shr     rcx, 4
+        or      rdx, rcx
+        mov     [obs_page + OBS_PTR_CELL], rdx
+        mov     r8d, edx                ; the cell, for the ring entry
+
+        ; The buttons held, and the presses: bits set now that were clear.
+        movzx   eax, byte [mse_pkt]
+        and     eax, 7
+        mov     ecx, [mse_prev]
+        mov     [mse_prev], eax
+        mov     [obs_page + OBS_BUTTONS], rax
+        not     ecx
+        and     ecx, eax                ; CL = pressed
+        inc     qword [obs_page + OBS_PACKETS]
+
+        ; The stamp awaiting its frame: the first byte's, unless one is pending.
+        cmp     qword [obs_page + OBS_PTR_PENDING], 0
+        jne     .pending
+        mov     rdx, [mse_stamp0]
+        mov     [obs_page + OBS_PTR_STAMP], rdx
+        mov     qword [obs_page + OBS_PTR_PENDING], 1
+.pending:
+        ; The ring entry: dropped when full, the high-water kept.
+        mov     ebx, [mse_head]
+        mov     edx, ebx
+        inc     edx
+        and     edx, MSE_RING_SIZE - 1
+        cmp     edx, [mse_tail]
+        je      .ret
+        shl     ebx, 4                  ; * MSE_ENTRY
+        lea     rsi, [mse_ring]
+        add     rsi, rbx
+        mov     rbx, [mse_stamp0]
+        mov     [rsi + ME_STAMP], rbx
+        mov     [rsi + ME_CELL], r8d
+        mov     [rsi + ME_BUTTONS], al
+        mov     [rsi + ME_PRESSED], cl
+        mov     word [rsi + ME_PRESSED + 1], 0
+        mov     [mse_head], edx
+        sub     edx, [mse_tail]
+        and     edx, MSE_RING_SIZE - 1
+        cmp     rdx, [obs_page + OBS_MOUSE_HW]
+        jbe     .ret
+        mov     [obs_page + OBS_MOUSE_HW], rdx
+.ret:
+        ret
+
+; mouse_next - the boot processor's consumer: pops one entry of the mouse
+; ring into mse_cur and returns AL = 1, or AL = 0 with the ring empty.
+; Preserves everything but RAX.
+mouse_next:
+        push    rsi
+        push    rdi
+        push    rcx
+        mov     eax, [mse_tail]
+        cmp     eax, [mse_head]
+        je      .none
+        mov     ecx, eax
+        shl     ecx, 4
+        lea     rsi, [mse_ring]
+        add     rsi, rcx
+        lea     rdi, [mse_cur]
+        mov     ecx, MSE_ENTRY
+        rep     movsb
+        inc     eax
+        and     eax, MSE_RING_SIZE - 1
+        mov     [mse_tail], eax
+        mov     eax, 1
+        jmp     .out
+.none:
+        xor     eax, eax
+.out:
         pop     rcx
-        pop     rdx
-        pop     rbx
+        pop     rdi
+        pop     rsi
+        ret
+
+; irq7_spurious - a spurious IRQ7 gets no EOI: the PIC does not consider it
+; in service. Only IRQ1 and the cascade are unmasked on the master, so a
+; real IRQ7 cannot occur.
+irq7_spurious:
+        iretq
+
+; irq15_spurious - a spurious IRQ15 on the slave: the cascade was real, so
+; the master gets its EOI and the slave none.
+irq15_spurious:
+        push    rax
+        mov     al, 0x20
+        out     0x20, al
         pop     rax
         iretq
 
-; irq7_spurious - a spurious IRQ7 gets no EOI: the PIC does not consider it
-; in service. Only IRQ1 is unmasked, so a real IRQ7 cannot occur.
-irq7_spurious:
-        iretq
+; ---------------------------------------------------------------------------
+; The i8042 configured, and the mouse (ring 6c, GLASS.md "The device"). All
+; of it polled with interrupts off at boot, before the ready line. Every
+; wait on the controller is bounded: a missing mouse costs half a second per
+; answer and nothing more.
+; ---------------------------------------------------------------------------
+
+; i8042_wait_ibf - spin until the input buffer is empty (bounded).
+i8042_wait_ibf:
+        push    rax
+        push    rcx
+        mov     ecx, 0x10000
+.w:     in      al, 0x64
+        test    al, 2
+        jz      .ok
+        dec     ecx
+        jnz     .w
+.ok:    pop     rcx
+        pop     rax
+        ret
+
+; i8042_cmd - AL = a controller command, to port 0x64.
+i8042_cmd:
+        call    i8042_wait_ibf
+        out     0x64, al
+        ret
+
+; i8042_data - AL = a byte for the controller or the device it addresses.
+i8042_data:
+        call    i8042_wait_ibf
+        out     0x60, al
+        ret
+
+; i8042_read - one byte from the output buffer, waited for up to
+; I8042_WAIT_TRIES x 10 ms: AL = the byte, AH = the status byte it came
+; with, CF clear; or CF set on a timeout. Clobbers RCX.
+i8042_read:
+        mov     ecx, I8042_WAIT_TRIES
+.poll:
+        in      al, 0x64
+        test    al, 1
+        jnz     .got
+        mov     ax, PIT_10MS
+        call    pit_wait
+        dec     ecx
+        jnz     .poll
+        stc
+        ret
+.got:
+        mov     ah, al
+        in      al, 0x60
+        clc
+        ret
+
+; i8042_read_mouse - as i8042_read, but a byte the keyboard sent meanwhile
+; (status bit 5 clear) is dropped and the wait goes on: only the mouse's
+; answer comes back. Clobbers RCX.
+i8042_read_mouse:
+        call    i8042_read
+        jc      .out
+        test    ah, 0x20
+        jz      i8042_read_mouse
+.out:
+        ret
+
+; i8042_drain - read and drop whatever the output buffer holds.
+i8042_drain:
+        in      al, 0x64
+        test    al, 1
+        jz      .done
+        in      al, 0x60
+        jmp     i8042_drain
+.done:
+        ret
+
+; mouse_cmd - AL = a command for the mouse: D4 to 0x64, the byte to 0x60,
+; then the mouse's ACK (FA) awaited. CF set on a timeout or anything but
+; an ACK. Clobbers RAX, RCX.
+mouse_cmd:
+        push    rax
+        mov     al, 0xD4
+        call    i8042_cmd
+        pop     rax
+        call    i8042_data
+        call    i8042_read_mouse
+        jc      .out
+        cmp     al, 0xFA
+        je      .ack
+        stc
+        ret
+.ack:
+        clc
+.out:
+        ret
+
+; mouse_init - the section's sequence: both ports off, drained; the command
+; byte read, bits 0 and 1 set (both interrupts), 4 and 5 cleared (both ports
+; enabled), the rest kept (translation above all), written and read back;
+; the auxiliary port enabled; the mouse reset (FA AA and its ID), defaults,
+; reporting enabled; drained. The pointer starts at the screen's centre.
+; Records i8042_cmd and mouse_id in the obs page. Clobbers RAX, RCX, RDX.
+mouse_init:
+        mov     eax, [fb_width]
+        shr     eax, 1
+        mov     [obs_page + OBS_PTR_X], rax
+        mov     edx, [fb_height]
+        shr     edx, 1
+        mov     [obs_page + OBS_PTR_Y], rdx
+        shr     rdx, 4
+        shl     rdx, 16
+        shr     rax, 4
+        or      rdx, rax
+        mov     [obs_page + OBS_PTR_CELL], rdx
+
+        mov     al, 0xAD                ; the keyboard port off
+        call    i8042_cmd
+        mov     al, 0xA7                ; the auxiliary port off
+        call    i8042_cmd
+        call    i8042_drain
+        mov     al, 0x20                ; read the command byte
+        call    i8042_cmd
+        call    i8042_read
+        jc      .done                   ; no controller answering: leave it be
+        movzx   edx, al                 ; DL = as read
+        or      al, 0x03                ; both interrupts on
+        and     al, 0xCF                ; both ports enabled
+        mov     dh, al                  ; DH = as written
+        push    rdx
+        push    rax
+        mov     al, 0x60                ; write the command byte
+        call    i8042_cmd
+        pop     rax
+        call    i8042_data
+        pop     rdx
+        mov     [obs_page + OBS_I8042_CMD], rdx
+        mov     al, 0xA8                ; the auxiliary port enabled
+        call    i8042_cmd
+
+        mov     al, 0xFF                ; reset: FA, then AA, then the ID
+        call    mouse_cmd
+        jc      .done
+        call    i8042_read_mouse
+        jc      .done
+        cmp     al, 0xAA
+        jne     .done
+        call    i8042_read_mouse
+        jc      .done
+        movzx   eax, al
+        inc     eax                     ; 1 + the ID byte: 1 for a standard mouse
+        mov     [obs_page + OBS_MOUSE_ID], rax
+        mov     al, 0xF6                ; defaults
+        call    mouse_cmd
+        jc      .done
+        mov     al, 0xF4                ; enable reporting
+        call    mouse_cmd
+.done:
+        call    i8042_drain
+        ret
+
+; serial_raw_puts - RSI = a NUL-terminated string, to the UART only: no
+; mirror, no tee. The one line that goes out after the ready line without
+; landing in the conversation (GLASS.md, "The eighteenth line").
+serial_raw_puts:
+        push    rax
+        push    rdx
+        push    rsi
+.next:  lodsb
+        test    al, al
+        jz      .done
+        mov     ah, al
+.wait:  mov     dx, COM1_LSR
+        in      al, dx
+        test    al, 0x20
+        jz      .wait
+        mov     al, ah
+        mov     dx, COM1
+        out     dx, al
+        jmp     .next
+.done:  pop     rsi
+        pop     rdx
+        pop     rax
+        ret
 
 ; ---------------------------------------------------------------------------
 ; Virtio on PCI - two devices now (plan decision 9): the disk from Stage 3
@@ -4773,6 +5220,8 @@ finish_line:
         mov     eax, [kbd_head]
         mov     [kbd_tail], eax
         mov     dword [kbd_e0], 0
+        mov     eax, [mse_head]         ; presses made while the machine was
+        mov     [mse_tail], eax         ; busy are dropped like those keys
         sti
         call    console_prompt
         ret
@@ -6878,6 +7327,7 @@ msg_nothing_grow: db    'nothing to grow', 0
 msg_bad_frame:  db      'bad component frame', 0
 spin_chars:     db      '-', '\', '|', '/'
 msg_kbd:        db      'S6: keyboard ready', 13, 10, 0
+msg_mouse:      db      'S6: mouse ready', 13, 10, 0
 hex_digits:     db      '0123456789abcdef'
 
 msg_err:        db      'ERR: ', 0
@@ -7157,6 +7607,22 @@ kbd_ring:       resb    KBD_RING_SIZE
         alignb  16
 kbd_stamps:     resq    KBD_RING_SIZE   ; the TSC when each scancode arrived
 key_stamp:      resq    1               ; the stamp of the key kbd_next last returned
+
+; The mouse ring (ring 6c): the handler writes head, the main loop writes
+; tail; the packet machine's phase, bytes and stamp; the buttons held by the
+; previous packet; whether the eighteenth line has gone out.
+        alignb  64
+mse_head:       resd    1
+mse_tail:       resd    1
+mse_phase:      resd    1               ; 0, 1 or 2: bytes of the packet so far
+mse_prev:       resd    1               ; the buttons held after the previous packet
+mouse_announced: resd   1
+        alignb  8
+mse_stamp0:     resq    1               ; the TSC at the packet's first byte
+mse_pkt:        resb    4               ; the packet's bytes as they arrive
+        alignb  16
+mse_ring:       resb    MSE_RING_SIZE * MSE_ENTRY
+mse_cur:        resb    MSE_ENTRY       ; the entry mouse_next last popped
 
 ; The display's EDID (GLASS.md, "The screen").
         alignb  16
