@@ -976,7 +976,7 @@ def run_point(smp):
             ("shot", shots["t"]), ("obs", "t"),
             ("type", "\x1b"), ("sleep", 2.0),
             ("type", "after\n"), ("sleep", SETTLE),
-            ("shot", shots["d"]), ("surfaces", "d"), ("obs", "d2"),
+            ("surfaces", "d"), ("shot", shots["d"]), ("obs", "d2"),
         ]
         capture, reads, events, err = drive(smp, NOTES, HOME_IMG, steps, serial)
     finally:

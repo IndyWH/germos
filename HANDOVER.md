@@ -82,7 +82,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | | |
 |---|---|
 | Stage | 6 — Growth: ring 6a closed 2 September 2026; ring 6b closed 3 September 2026 (Stages 0–5 closed); **ring 6c — the pointer — OPEN**, 4 September 2026, the last ring of the stage |
-| Status | Ring 6c: `stage6/plan-6c.md` **approved** 4 September 2026 (Cowork's A1–A3 and nits adopted, eleven deviations accepted); items 0–5 done (the GLASS.md section appended by the owner, the fixture and `broker/pointer.py` rehearsed in both twins, the gate and the checker with tests 1–4, tests 2–4 red on the ring 6b binary, the freeze at 1206 payloads 0 wrong); items 9–11 done (the i8042, IRQ12, the packet ring, the line, the cursor, `pt`, the click on the row; tests 1, 2 and 4 green, every earlier gate green); **stopped at the scope guard**: one line of the frozen checker to reorder by the owner's hand (`stage6/out/checkpointer.fix.patch`), then item 12, one commit per item. Ring 6b: all five tests PASS (test 5 confirmed 3 September 2026). |
+| Status | Ring 6c: `stage6/plan-6c.md` **approved** 4 September 2026 (Cowork's A1–A3 and nits adopted, eleven deviations accepted); items 0–5 done (the GLASS.md section appended by the owner, the fixture and `broker/pointer.py` rehearsed in both twins, the gate and the checker with tests 1–4, tests 2–4 red on the ring 6b binary, the freeze at 1206 payloads 0 wrong); items 9–11 done (the i8042, IRQ12, the packet ring, the line, the cursor, `pt`, the click on the row; tests 1, 2 and 4 green, every earlier gate green); the freeze opened once at item 11b by the owner's hand for one misordered read in the checker; item 12 next, one commit per item. Ring 6b: all five tests PASS (test 5 confirmed 3 September 2026). |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.252 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
@@ -1246,12 +1246,16 @@ frozen checker's own, below.
 showed `up 000069`, `fr 004192` against reads of `000070`/`004220` and
 `004235`). `--serial` and `--truth` have the order the frozen 6a and 6b
 checkers use — surfaces, then the screendump, then the page — and pass.
-Per the scope guard the frozen file is not edited: the one-line reorder is
+Per the scope guard the frozen file is not edited: the one-line reorder was
 written unapplied at **`stage6/out/checkpointer.fix.patch`** (`git apply
---check` passes) and its text is below for the record; a scratch copy of
-the checker with the patch applied is what item 12 is proven against until
-the owner applies it by his own hand. No criterion is weakened: the same
-three reads, in the order every frozen checker takes them.
+--check` passed) and its text is below for the record; a scratch copy of
+the checker with the patch applied proved item 12 meanwhile. No criterion is
+weakened: the same three reads, in the order every frozen checker takes
+them. **The owner applied it by his own hand with `git apply` at the repo
+root, 5 September 2026; item 11b commits it with the payload table re-run
+(1206, 0 wrong)** — the fourth opening of the freeze in the project's
+history, after Stage 5 item 8b, ring 6a item 12b and ring 6b item 10b, each
+for exactly one change.
 
 ```
 -            ("shot", shots["d"]), ("surfaces", "d"), ("obs", "d2"),
@@ -1260,9 +1264,7 @@ three reads, in the order every frozen checker takes them.
 
 ## Next action
 
-**Ring 6c is at item 11; the owner's hand is needed** — at the repo root:
-`git apply stage6/out/checkpointer.fix.patch`; item 11b then commits it with
-the payload table re-run. Item 12 (`point`) follows. Next: item 1 — GLASS.md's ring 6c section
+**Ring 6c is at item 11b; item 12 (`point`) follows on a full green gate.** Next: item 1 — GLASS.md's ring 6c section
 written to `stage6/out/glass-6c-section.md`, appended by the owner's own
 hand with one `cat … >>` command at the repo root (spelled in the plan's
 decision 13), the first 777 lines proven byte-identical, committed. Then
