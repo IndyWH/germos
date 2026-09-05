@@ -56,18 +56,30 @@ nasm -f bin stage0/stage0.asm -o stage0/out/stage0.img
                        # rehearsed against the plan's tests, the launch with no
                        # broker, the liar refused, the undo. ~12 min.
 
+# Stage 6 ring 6c - the pointer
+./stage6/test-6c.sh    # acceptance tests 1-4 at 1920x1080 with two virtio disks,
+                       # the PS/2 mouse driven through the monitor: seventeen
+                       # lines then "S6: mouse ready" on the first packet, the
+                       # arrow and the strip's pt field, a click on the choices
+                       # row doing what its key does, point in the point app's
+                       # panel, packets counted equal packets sent. ~9 min.
+                       # Rings 6a and 6b stay the regressions: the same binary
+                       # with a mouse that never moves is ring 6a's to the pixel.
+
 # The mock brokers (what the gates talk to; never spend a token)
 python3 broker/broker.py --mock --port 9999     # Stage 4
 python3 broker/plans.py --mock                  # Stage 6 (answers, apps, installs)
+python3 broker/pointer.py --mock                # Stage 6 ring 6c (the point app too)
 
 # The hook's payload table - every freeze and bodyguard case, 0 wrong or exit 1
 python3 .claude/hooks/payloads.py
 ```
 
-Windowed, for the oracle test (Stage 6 ring 6b shape, with the real broker
-`python3 broker/plans.py` in another terminal; earlier stages drop the
-drives, the display and the cage they did not have and point at their own
-`esp.img` — see README.md):
+Windowed, for the oracle test (Stage 6 ring 6c shape, with the real broker
+`python3 broker/pointer.py` in another terminal; click in the QEMU window to
+grab the mouse, Ctrl+Alt+G releases it; earlier stages drop the drives, the
+display and the cage they did not have and point at their own `esp.img` —
+see README.md):
 
 ```bash
 truncate -s 16M stage6/out/home.img
@@ -280,6 +292,19 @@ test in the twin.
   (`nothing to grow`). Push what the caller still needs (ring 6b item 11).
 - **`lodsb` sets AL only.** Index with the whole register afterwards and
   the stale high bytes go along; `xor eax, eax` first, or `movzx`.
+- **Surfaces, then the screendump, then the page.** A strip check that
+  wants the screen's counters *between* two page reads needs the
+  screendump between them; a screendump taken before the first read can
+  never satisfy it. One frozen mode had the order wrong and cost a freeze
+  opening (ring 6c item 11b). Copy the order from a mode that passes.
+- **Two devices on one i8042: read the status byte before port 0x60.**
+  Bit 5 says whose byte it is; a handler that reads 0x60 blind puts a
+  mouse byte in the keyboard ring. Command-byte bit 5 set means the aux
+  port is *disabled* (OVMF leaves 0x67), and PS/2 `dy` counts upwards, so
+  the monitor's `mouse_move 10 20` arrives as `28 0a ec` (ring 6c).
+- **A serial line after `keyboard ready` must bypass the tee.** Once the
+  console is up, `serial_putc` draws every byte into the conversation;
+  a status line meant for serial alone goes through a raw UART write.
 
 ## Working with the hooks
 

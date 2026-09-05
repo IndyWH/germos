@@ -19,12 +19,14 @@ The project went live on 31 August 2026 with an empty folder. Every stage is a g
 | **4 — The umbilical** | virtio-net, a minimal TCP/IP stack, and a caged network with one door to a broker that relays to Claude. The booted OS asked Claude its first question and printed the answer. | 1 Sep 2026 | [the first conversation](history/2026-09-01-first-conversation.png) |
 | **5 — The conversation** | The loop closes. A line typed `! ...` goes to Claude and comes back as machine code, **rehearsed in a twin boot before it may run**, then cached in the germline. *"Make me a clock"* produced a running clock — with the date and an exit line nobody asked for. | 1 Sep 2026 | [the first grown clock](history/2026-09-01-first-grown-clock.png) · [the boot log](history/2026-09-01-stage5-boot-log.png) |
 | **6a — The glass** | The screen gets one owner: a glass core composites four regions from surfaces in RAM at sixty frames a second; an obs strip of live counters the harness reads back against the machine's own obs page; an app is four callbacks stepped beside a live conversation. The grown clock ticked in its panel while a note was typed next to it — with two switches Claude added unasked. | 2 Sep 2026 | [the clock in its panel](history/2026-09-02-ring6a-clock-in-panel.png) |
+| **6b — The store of plans** | An app is a plan file: intent in English plus five-verb tests. `! install calculator` was grown from `plans/calculator.md`, rehearsed in the twin against the plan's own tests, kept on a second disk with its SHA-256, and launched after a reboot with the broker gone. | 3 Sep 2026 | [the calculator installed](history/2026-09-03-ring6b-calculator-installed.png) · [launched offline](history/2026-09-03-ring6b-calculator-offline-launch.png) |
+| **6c — The pointer** | The PS/2 mouse on the i8042, the first device configured rather than inherited: a one-cell arrow drawn last in every frame by the glass core, pointer input-to-photon on the strip, a click on the choices row doing what its key does, and an optional fifth callback `point(row, col, button)` for apps that want clicks. | gate green 5 Sep 2026; oracle pending | — |
 
 The pictures in `history/` are the machine's own screendumps, taken by each stage's acceptance harness (Stage 4's and Stage 5's are window captures from the oracle runs).
 
 ![The first grown component — asked for a clock at the GermOS prompt, Claude wrote one in machine code; it was rehearsed in the twin, then it ran](history/2026-09-01-first-grown-clock.png)
 
-Next: **Stage 6 — growth**, ring by ring. Ring 6a, the glass, is closed. Ring 6b, **the store of plans** — an application distributed as an architect's plan (intent in English plus acceptance tests), grown at install time, rehearsed in the twin against the plan's own tests, kept on the machine, and launched after a reboot with the broker gone — is built and green on its automated gate; its oracle is the calculator in [`plans/calculator.md`](plans/calculator.md). Ring 6c, the pointer, follows.
+Next: **Stage 6 — growth** is on its last ring. Rings 6a (the glass) and 6b (the store of plans) are closed. Ring 6c, **the pointer**, is built and green on its automated gate; its oracle is the owner clicking his way through the choices row and into the calculator with the real broker, and his word closes the ring and the stage.
 
 ## Running it
 
@@ -144,6 +146,27 @@ qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
 ```
 
 Type `! install calculator`: the strip says `installing` while Claude builds and the twin runs the plan's five tests; `installed calculator` and the calculator in its panel with `= result   c clear   Esc exit   Tab prompt` on the row. Do a sum; Esc. Quit QEMU, stop the broker, boot the same command again: `S6: home 1 apps`, `! calculator` on the choices row, and `! calculator` runs it from disk. An install may be amended at the door — `! install calculator, but big keys` — and a plan whose build fails its own tests is refused naming the test. The automated gate (`./stage6/test-6b.sh`) speaks only to the mock and its two canned plans, `echo` and the `liar`, and spends no token.
+
+**Stage 6, ring 6c — the pointer.** The PS/2 mouse arrives because the constitution demands it: the choices row has targets on an edge, and Fitts's law is about pointing at them. The i8042 is configured for the first time (the auxiliary port and its interrupt, the mouse reset and told to report — the path Stage 7's metal will have, not a tablet); the glass core draws a one-cell arrow as the last thing in every frame from a position the interrupt handler keeps in the obs page; pointer input-to-photon joins the strip as `pt`, beside the packet and click counts, the moment the mouse first speaks — until then the machine is ring 6a's to the pixel. A click on a choices-row item does what its key does: `? ask` and `! grow` type their marker, `! calculator` launches from disk (on an empty prompt line), an app's declared choices reach the app, `Esc exit` and the Tab items move as the keys do. An app may announce a fifth callback in its blob — `POINTER2` at byte 16, then the offset of `point(row, col, button)` — and every earlier app, the calculator included, is clicked on harmlessly ([`stage6/GLASS.md`](stage6/GLASS.md), "Ring 6c — the pointer"). Two terminals:
+
+```
+python3 broker/pointer.py
+```
+
+```
+./stage6/mkimage.sh
+truncate -s 16M stage6/out/notes.img
+truncate -s 16M stage6/out/home.img
+qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
+  -vga none -device VGA,edid=on,xres=1920,yres=1080 \
+  -drive format=raw,file=stage6/out/esp.img \
+  -drive format=raw,file=stage6/out/notes.img,if=virtio \
+  -drive format=raw,file=stage6/out/home.img,if=virtio \
+  -netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9999' \
+  -device virtio-net-pci,netdev=n0 -serial stdio
+```
+
+Click in the QEMU window to grab the mouse (Ctrl+Alt+G releases it) and move it: the arrow appears, `S6: mouse ready` goes out on serial, and `pt`, `pk` and `cl` join the strip. Click `! grow` and type a request, or `! install calculator` and then click `! calculator` on the row; click into the calculator's panel (nothing happens — it has no `point`), then `= result`, `c clear`, `Tab prompt`, `Tab app`, `Esc exit`. `! point app` from the mock's table is the one app that takes clicks: each button draws its digit where you clicked. The automated gate (`./stage6/test-6c.sh`) drives QEMU's PS/2 mouse through the monitor, speaks only to the mock, and spends no token.
 
 ## The team of three
 
