@@ -82,7 +82,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | | |
 |---|---|
 | Stage | 6 — Growth: ring 6a closed 2 September 2026; ring 6b closed 3 September 2026 (Stages 0–5 closed); **ring 6c — the pointer — OPEN**, 4 September 2026, the last ring of the stage |
-| Status | Ring 6c: `stage6/plan-6c.md` **approved** 4 September 2026 (Cowork's A1–A3 and nits adopted, eleven deviations accepted); items 0–5 done (the GLASS.md section appended by the owner, the fixture and `broker/pointer.py` rehearsed in both twins, the gate and the checker with tests 1–4, tests 2–4 red on the ring 6b binary, the freeze at 1206 payloads 0 wrong); items 9–10 done (the i8042, IRQ12, the packet ring, the line, the cursor, `pt`; tests 1–2 green, every earlier gate green); items 11–12 next, one commit per item. Ring 6b: all five tests PASS (test 5 confirmed 3 September 2026). |
+| Status | Ring 6c: `stage6/plan-6c.md` **approved** 4 September 2026 (Cowork's A1–A3 and nits adopted, eleven deviations accepted); items 0–5 done (the GLASS.md section appended by the owner, the fixture and `broker/pointer.py` rehearsed in both twins, the gate and the checker with tests 1–4, tests 2–4 red on the ring 6b binary, the freeze at 1206 payloads 0 wrong); items 9–11 done (the i8042, IRQ12, the packet ring, the line, the cursor, `pt`, the click on the row; tests 1, 2 and 4 green, every earlier gate green); **stopped at the scope guard**: one line of the frozen checker to reorder by the owner's hand (`stage6/out/checkpointer.fix.patch`), then item 12, one commit per item. Ring 6b: all five tests PASS (test 5 confirmed 3 September 2026). |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.252 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
@@ -1220,11 +1220,49 @@ one move the arrow at the page's cell, every other cell its surface's, `pt`
 3.4 ms and 14.4 ms, the field equal to the page. Test 4's sweep, run for
 information: 36 moves, 36 packets, the arrow at the page's cell and the
 cell it left restored at all nine screendumps, `pt` worst 16.2 ms — one
-frame slot; only the clicks (items 11–12) fail.
+frame slot; only the clicks (items 11–12) fail. **Item 11** — the click:
+`handle_key` lifted out of the main loop (the same instructions, `ret` for
+`jmp main_loop`), so a click's synthetic keys take a typed key's path;
+`click_dispatch` counting every press in `clicks`, a left press on row `R−2`
+searched in the **hit table** (`hit_table`, up to five entries of first
+column, last column, kind, argument, rebuilt by `choices_update` beside the
+row it writes — the markers, the home entries as launches, the app's keys,
+Esc and the Tab items), the press's stamp as the key's stamp, a hit counted
+and its key handled; a launch item typing `! <name>` and Enter **only on an
+empty prompt line** (A3), else a click and no hit; the gaps, the other
+buttons and the other rows nothing; `click_panel` a stub for item 12.
+**Test 4 GREEN**: the frozen 6a checks on the pre-packet screen, the
+36-move sweep, three presses on an empty spot (3 clicks, 0 hits), `! echo`
+clicked with `x` on the line (a click, nothing typed), Backspace, clicked
+again (the launch from disk, the wire counters unchanged), the strip's field
+against the page. Test 3 red on `point` alone — and on one defect of the
+frozen checker's own, below.
+
+**The stop at item 11, 5 September 2026 — a defect in the frozen
+`stage6/checkpointer.py`, my own hand.** `--point`'s final steps read
+`("shot", D), ("surfaces", "d"), ("obs", "d2")`: the screendump is taken
+*before* the first page read, so `check_strip_6c`'s rule that the strip's
+`up` and `frames` lie between the two reads can never hold (the screen
+showed `up 000069`, `fr 004192` against reads of `000070`/`004220` and
+`004235`). `--serial` and `--truth` have the order the frozen 6a and 6b
+checkers use — surfaces, then the screendump, then the page — and pass.
+Per the scope guard the frozen file is not edited: the one-line reorder is
+written unapplied at **`stage6/out/checkpointer.fix.patch`** (`git apply
+--check` passes) and its text is below for the record; a scratch copy of
+the checker with the patch applied is what item 12 is proven against until
+the owner applies it by his own hand. No criterion is weakened: the same
+three reads, in the order every frozen checker takes them.
+
+```
+-            ("shot", shots["d"]), ("surfaces", "d"), ("obs", "d2"),
++            ("surfaces", "d"), ("shot", shots["d"]), ("obs", "d2"),
+```
 
 ## Next action
 
-**Ring 6c is at item 10.** Next: item 1 — GLASS.md's ring 6c section
+**Ring 6c is at item 11; the owner's hand is needed** — at the repo root:
+`git apply stage6/out/checkpointer.fix.patch`; item 11b then commits it with
+the payload table re-run. Item 12 (`point`) follows. Next: item 1 — GLASS.md's ring 6c section
 written to `stage6/out/glass-6c-section.md`, appended by the owner's own
 hand with one `cat … >>` command at the repo root (spelled in the plan's
 decision 13), the first 777 lines proven byte-identical, committed. Then

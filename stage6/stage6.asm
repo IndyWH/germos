@@ -94,6 +94,19 @@ org 0                           ; file offsets == RVAs
 %define ME_PRESSED      13              ; u8   bits newly set by the packet
 %define I8042_WAIT_TRIES 50             ; x 10 ms: the bound on one mouse answer
 
+; The choices row's click targets (ring 6c, GLASS.md "The click on the
+; choices row"): rebuilt by choices_update with the row, one entry per item -
+; its first and last column, what a press does (a key, or the launch of a
+; home entry) and the argument.
+%define HIT_MAX         5
+%define HIT_ENTRY       8
+%define HT_FIRST        0               ; u16
+%define HT_LAST         2               ; u16
+%define HT_KIND         4               ; u8: HIT_KEY or HIT_LAUNCH
+%define HT_ARG          5               ; u8: the key byte, or the home entry's index
+%define HIT_KEY         1
+%define HIT_LAUNCH      2
+
 ; Spare 4 KB page-table pages for map_mmio_2m: a BAR above the identity map
 ; needs a new PDPT and a new PD (and, above 512 GB, a new PML4 entry pointing
 ; at them). Two pages per region beyond the map; eight is room for four such
@@ -1163,8 +1176,11 @@ main_loop:
         jmp     main_loop
 .have_mouse:
         sti
-        call    mouse_next              ; one packet out of the ring (item 11
-        jmp     main_loop               ; acts on its presses)
+        call    mouse_next              ; one packet out of the ring
+        test    al, al
+        jz      main_loop
+        call    click_dispatch          ; its presses, if any (ring 6c)
+        jmp     main_loop
 .app_turn:
         sti
         call    app_step_maybe          ; its step, if 10 ms have passed
@@ -1176,7 +1192,15 @@ main_loop:
         test    al, al
         jz      main_loop
         movzx   ebx, al
+        call    handle_key
+        jmp     main_loop
 
+; handle_key - EBX = one translated key: a printable with Shift applied, 13
+; Enter, 8 Backspace, 9 Tab, 0x1B Esc. Ring 6a's main-loop body, lifted out
+; so that a click's synthetic keys take the identical path a typed key
+; takes (ring 6c, plan decision 7): the tee, the journal, the parse, the
+; app. Returns when the key has been acted on. Clobbers registers freely.
+handle_key:
         ; With an app running (GLASS.md, "Running an app"): Esc closes it
         ; whoever has the keys; Tab moves the keys; with the app in focus
         ; every other key is the app's; with the prompt in focus the key
@@ -1192,16 +1216,16 @@ main_loop:
         mov     edi, ebx
         call    app_key
         call    photon_mark
-        jmp     main_loop
+        ret
 .app_close:
         call    app_close
         call    photon_mark
-        jmp     main_loop
+        ret
 .toggle_focus:
         xor     qword [obs_page + OBS_FOCUS], 1
         call    choices_update
         call    photon_mark
-        jmp     main_loop
+        ret
 
 .prompt_key:
         cmp     bl, 13
@@ -1209,9 +1233,9 @@ main_loop:
         cmp     bl, 8
         je      .backspace
         cmp     bl, 0x1B                ; Esc at the prompt does nothing - it
-        je      main_loop               ; is an app's way home, not ours
+        je      .done                   ; is an app's way home, not ours
         cmp     bl, 9                   ; Tab with no app: nothing
-        je      main_loop
+        je      .done
 
         ; A printable: into the line buffer if there is room (a key beyond
         ; the cap is ignored - not echoed, not drawn - so the screen and the
@@ -1219,7 +1243,7 @@ main_loop:
         ; glyph over the cursor cell; the cursor moves on behind it.
         mov     eax, [line_len]
         cmp     eax, NOTE_MAX
-        jae     main_loop
+        jae     .done
         lea     rdx, [line_buf]
         mov     [rdx + rax], bl
         inc     dword [line_len]
@@ -1227,7 +1251,7 @@ main_loop:
         call    serial_putc
         call    draw_cursor
         call    photon_mark
-        jmp     main_loop
+        ret
 .enter:
         call    erase_cursor            ; the block would linger at line end
         mov     rax, [key_stamp]        ; time-to-done starts here (obs tt)
@@ -1250,17 +1274,17 @@ main_loop:
         je      .request
         call    notebook_append         ; ...the line goes to disk, and only
         call    console_prompt          ; then a new prompt, console-only
-        jmp     main_loop
+        ret
 .question:
         call    ask_question            ; console-only, then the prompt
-        jmp     main_loop
+        ret
 .request:
         call    bang_line               ; undo, a launch, or the broker; then the prompt
-        jmp     main_loop
+        ret
 .backspace:
         mov     eax, [cur_col]          ; only within this line's typed text -
         cmp     eax, [prompt_min]       ; at the prompt there is nothing to
-        jbe     main_loop               ; erase, so the key is not accepted
+        jbe     .done                   ; erase, so the key is not accepted
         cmp     dword [line_len], 0     ; the buffer follows the screen
         je      .bs_draw
         dec     dword [line_len]
@@ -1270,7 +1294,136 @@ main_loop:
         call    serial_putc             ; the tee steps back and erases
         call    draw_cursor
         call    photon_mark
-        jmp     main_loop
+.done:
+        ret
+
+; click_dispatch - mse_cur holds the packet mouse_next popped. Every button
+; newly pressed counts one click; a left press on the choices row within an
+; item's text is a hit and does what the item's key does, through
+; handle_key, with the press's stamp as the key's stamp (GLASS.md, "The
+; click on the choices row"); a launch item acts only on an empty prompt
+; line (A3). A press in the app panel while an app runs is item 12's.
+; Clobbers registers freely.
+click_dispatch:
+        movzx   eax, byte [mse_cur + ME_PRESSED]
+        test    al, al
+        jz      .ret
+        mov     ecx, eax
+.count:                                 ; each pressed bit is one click
+        test    cl, 1
+        jz      .counted
+        inc     qword [obs_page + OBS_CLICKS]
+.counted:
+        shr     ecx, 1
+        jnz     .count
+        mov     rdx, [mse_cur + ME_STAMP]
+        mov     [key_stamp], rdx
+        mov     edx, [mse_cur + ME_CELL]
+        mov     ebx, edx
+        shr     ebx, 16                 ; the row
+        movzx   ecx, dx                 ; the column
+        mov     edx, [scr_rows]
+        sub     edx, 2
+        cmp     ebx, edx
+        jne     .not_row
+        test    al, 1                   ; button 1 clicks the row
+        jz      .ret
+        call    choices_hit             ; EAX = kind or 0, EDX = the argument
+        test    eax, eax
+        jz      .ret
+        cmp     eax, HIT_LAUNCH
+        je      .launch
+        inc     qword [obs_page + OBS_HITS]
+        mov     ebx, edx                ; the item's key, as if typed
+        call    handle_key
+        ret
+.launch:
+        cmp     dword [line_len], 0     ; only on an empty prompt line
+        jne     .ret
+        inc     qword [obs_page + OBS_HITS]
+        mov     r12d, edx               ; the home entry's index
+        mov     ebx, '!'
+        call    handle_key
+        mov     ebx, ' '
+        call    handle_key
+        lea     r13, [home_table]
+        mov     eax, r12d
+        shl     eax, 8
+        add     r13, rax
+        mov     r14d, APP_NAME_MAX
+.name:
+        movzx   ebx, byte [r13]
+        test    ebx, ebx
+        jz      .named
+        call    handle_key
+        inc     r13
+        dec     r14d
+        jnz     .name
+.named:
+        mov     ebx, 13
+        call    handle_key
+        ret
+.not_row:
+        call    click_panel             ; item 12: point, for an app that has it
+.ret:
+        ret
+
+; click_panel - EBX = the row, ECX = the column, AL = the pressed bits: a
+; press in the app panel while an app runs. Nothing this item.
+click_panel:
+        ret
+
+; choices_hit - ECX = a column of row R-2: EAX = the item's kind (HIT_KEY or
+; HIT_LAUNCH) with EDX = its argument, or EAX = 0 for a gap or the tail.
+; Clobbers RSI, R8.
+choices_hit:
+        mov     r8d, [hit_count]
+        lea     rsi, [hit_table]
+.item:
+        test    r8d, r8d
+        jz      .miss
+        movzx   eax, word [rsi + HT_FIRST]
+        cmp     ecx, eax
+        jb      .next
+        movzx   eax, word [rsi + HT_LAST]
+        cmp     ecx, eax
+        ja      .next
+        movzx   eax, byte [rsi + HT_KIND]
+        movzx   edx, byte [rsi + HT_ARG]
+        ret
+.next:
+        add     rsi, HIT_ENTRY
+        dec     r8d
+        jmp     .item
+.miss:
+        xor     eax, eax
+        ret
+
+; hit_reset - an empty table; hit_add - EAX = first column, EDX = last
+; column, CL = kind, CH = argument: one more entry. Preserve everything.
+hit_reset:
+        mov     dword [hit_count], 0
+        ret
+hit_add:
+        push    rsi
+        push    rax
+        cmp     dword [hit_count], HIT_MAX
+        jae     .full
+        lea     rsi, [hit_table]
+        push    rax
+        mov     eax, [hit_count]
+        shl     eax, 3
+        add     rsi, rax
+        pop     rax
+        mov     [rsi + HT_FIRST], ax
+        mov     [rsi + HT_LAST], dx
+        mov     [rsi + HT_KIND], cl
+        mov     [rsi + HT_ARG], ch
+        inc     dword [hit_count]
+.full:
+        pop     rax
+        pop     rsi
+        ret
 
 ; photon_mark - a key has been acted on (GLASS.md, "Input-to-photon"): its
 ; stamp becomes the pending echo unless one is already pending, so the
@@ -5073,6 +5226,7 @@ app_close:
 ; row"): no app; the app with the keys (its first three choices, Esc exit,
 ; Tab prompt); the prompt with the keys beside a running app.
 choices_update:
+        call    hit_reset               ; the click targets follow the row (ring 6c)
         cmp     dword [app_running], 0
         jne     .running
         ; No app: the markers, then up to three installed apps as "! <name>"
@@ -5081,6 +5235,14 @@ choices_update:
         lea     rsi, [msg_choices_prompt]
         mov     ecx, msg_choices_prompt_len
         rep     movsb
+        xor     eax, eax                ; "? ask" at 0-4, "! grow" at 8-13
+        mov     edx, 4
+        mov     ecx, HIT_KEY | '?' << 8
+        call    hit_add
+        mov     eax, 8
+        mov     edx, 13
+        mov     ecx, HIT_KEY | '!' << 8
+        call    hit_add
         cmp     dword [home_present], 0
         je      .prompt_done
         xor     r8d, r8d                ; the entry index
@@ -5095,6 +5257,9 @@ choices_update:
         stosw
         mov     al, ' '
         stosb
+        lea     rax, [choices_line]
+        mov     r10, rdi
+        sub     r10, rax                ; R10 = the item's first column
         mov     al, '!'
         stosb
         mov     al, ' '
@@ -5112,6 +5277,15 @@ choices_update:
         dec     ecx
         jnz     .prompt_name
 .prompt_named:
+        lea     rax, [choices_line]
+        mov     rdx, rdi
+        sub     rdx, rax
+        dec     edx                     ; the item's last column
+        mov     eax, r10d
+        mov     ecx, r8d
+        shl     ecx, 8
+        or      ecx, HIT_LAUNCH         ; the launch of entry R8
+        call    hit_add
         inc     r9d
 .prompt_next:
         inc     r8d
@@ -5129,6 +5303,23 @@ choices_update:
         lea     rsi, [msg_choices_prompt_app]
         mov     ecx, msg_choices_prompt_app_len
         call    choices_set
+        ; "? ask   ! grow   Tab app   Esc exit": 0-4, 8-13, 17-23, 27-34.
+        xor     eax, eax
+        mov     edx, 4
+        mov     ecx, HIT_KEY | '?' << 8
+        call    hit_add
+        mov     eax, 8
+        mov     edx, 13
+        mov     ecx, HIT_KEY | '!' << 8
+        call    hit_add
+        mov     eax, 17
+        mov     edx, 23
+        mov     ecx, HIT_KEY | 9 << 8
+        call    hit_add
+        mov     eax, 27
+        mov     edx, 34
+        mov     ecx, HIT_KEY | 0x1B << 8
+        call    hit_add
         ret
 .app_keys:
         lea     rdi, [choices_line]
@@ -5138,6 +5329,10 @@ choices_update:
         movzx   eax, byte [rsi]
         test    al, al
         jz      .choices_done
+        lea     rdx, [choices_line]
+        mov     r10, rdi
+        sub     r10, rdx                ; R10 = the item's first column
+        mov     r11d, eax               ; R11 = its key
         stosb                           ; the key
         mov     al, ' '
         stosb
@@ -5153,6 +5348,17 @@ choices_update:
         jnz     .label
 .label_done:
         pop     rsi
+        lea     rdx, [choices_line]
+        push    rdi
+        sub     rdi, rdx
+        dec     edi                     ; the item's last column
+        mov     edx, edi
+        pop     rdi
+        mov     eax, r10d
+        mov     ecx, r11d
+        shl     ecx, 8
+        or      ecx, HIT_KEY
+        call    hit_add
         mov     eax, '   '              ; three spaces between items
         stosw
         mov     al, ' '
@@ -5161,6 +5367,18 @@ choices_update:
         dec     r8d
         jnz     .choice
 .choices_done:
+        lea     rdx, [choices_line]
+        mov     rax, rdi
+        sub     rax, rdx                ; the tail's first column: "Esc exit" then "Tab prompt"
+        mov     edx, eax
+        add     edx, 7
+        mov     ecx, HIT_KEY | 0x1B << 8
+        call    hit_add
+        add     eax, 11
+        mov     edx, eax
+        add     edx, 9
+        mov     ecx, HIT_KEY | 9 << 8
+        call    hit_add
         push    rdi
         lea     rsi, [msg_choices_app_tail]
         mov     ecx, msg_choices_app_tail_len
@@ -7778,6 +7996,11 @@ arrow_cell:     resq    1
 arrow_on:       resd    1
 strip_line_len: resd    1
 ptr_pend_snap:  resq    1
+
+; The choices row's click targets (ring 6c), rebuilt with the row.
+        alignb  16
+hit_count:      resd    1
+hit_table:      resb    HIT_MAX * HIT_ENTRY
 
 ; The display's EDID (GLASS.md, "The screen").
         alignb  16
