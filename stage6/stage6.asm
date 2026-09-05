@@ -311,6 +311,9 @@ org 0                           ; file offsets == RVAs
 %define CB_STEP             4
 %define CB_KEY              8
 %define CB_EXIT             12
+%define CB_POINT            24          ; ring 6c: the fifth offset, after the magic
+%define POINT_HDR           28          ; the five-callback header's length
+%define POINT_MAGIC_OFF     16          ; the eight bytes POINTER2
 %define STEP_GAP_MS         10
 %define FOCUS_PROMPT        0
 %define FOCUS_APP           1
@@ -1369,8 +1372,45 @@ click_dispatch:
         ret
 
 ; click_panel - EBX = the row, ECX = the column, AL = the pressed bits: a
-; press in the app panel while an app runs. Nothing this item.
+; press in the app panel while an app runs calls point(row, col, button)
+; for each button newly pressed - 1 left, 2 right, 3 middle - with the row
+; and column relative to the panel, when the app announces point; a
+; four-callback app is clicked on without effect (GLASS.md, "An app is
+; five callbacks, when it says so"). Clobbers registers freely.
 click_panel:
+        cmp     dword [app_running], 0
+        je      .ret
+        cmp     dword [app_has_point], 0
+        je      .ret
+        mov     edx, ebx
+        sub     edx, 2                  ; the panel begins at screen row 2
+        js      .ret
+        cmp     edx, [app_rows]
+        jae     .ret
+        mov     esi, ecx
+        sub     esi, [con_cols]         ; and at the conversation's right edge
+        js      .ret
+        cmp     esi, [app_cols]
+        jae     .ret
+        mov     r12d, edx               ; the panel row
+        mov     r13d, esi               ; the panel column
+        mov     r14d, eax               ; the pressed bits
+        mov     r15d, 1                 ; the button number
+.button:
+        test    r14d, 1
+        jz      .next
+        inc     qword [obs_page + OBS_HITS]
+        mov     edi, r12d
+        mov     esi, r13d
+        mov     edx, r15d
+        mov     eax, CB_POINT
+        call    app_call
+.next:
+        shr     r14d, 1
+        inc     r15d
+        cmp     r15d, 3
+        jbe     .button
+.ret:
         ret
 
 ; choices_hit - ECX = a column of row R-2: EAX = the item's kind (HIT_KEY or
@@ -5020,10 +5060,41 @@ app_valid:
         add     rdi, 4
         dec     r9d
         jnz     .offset
+        ; A blob that announces point (ring 6c, GLASS.md "An app is five
+        ; callbacks, when it says so"): L at least 28, POINTER2 at 16, the
+        ; u32 at 24 in [28, L). Without the magic it is a four-callback app.
+        lea     rdi, [rsi + APP_HDR]
+        call    blob_has_point          ; EAX = 1 with the magic, else 0
+        test    eax, eax
+        jz      .valid
+        mov     eax, [rdi + CB_POINT]
+        cmp     eax, POINT_HDR
+        jb      .no
+        cmp     eax, edx
+        jae     .no
+.valid:
         mov     eax, 1
         ret
 .no:
         xor     eax, eax
+        ret
+
+; blob_has_point - RDI = a blob's first byte, EDX = its length L: EAX = 1
+; when L >= 28 and bytes 16-23 read POINTER2, else 0. Preserves the rest.
+blob_has_point:
+        xor     eax, eax
+        cmp     edx, POINT_HDR
+        jb      .out
+        push    rcx
+        mov     rcx, [rdi + POINT_MAGIC_OFF]
+        push    rdx
+        mov     rdx, 'POINTER2'
+        cmp     rcx, rdx
+        pop     rdx
+        pop     rcx
+        jne     .out
+        mov     eax, 1
+.out:
         ret
 
 ; choices_valid - RDI = four 13-byte choice slots (a frame's, or a home
@@ -5137,6 +5208,14 @@ run_app:
         inc     qword [obs_page + OBS_GROWS_SERVED]
 .counted:
         call    app_clear
+        ; Does the blob announce point? A launch from the home image and a
+        ; delivered frame alike: the blob is in the region either way.
+        push    rsi
+        lea     rdi, [comp_region + APP_BLOB_OFF]
+        mov     edx, [rsi + APPH_LEN]
+        call    blob_has_point
+        mov     [app_has_point], eax
+        pop     rsi
         mov     dword [app_running], 1
         mov     qword [obs_page + OBS_MODE], MODE_RUNNING
         mov     qword [obs_page + OBS_FOCUS], FOCUS_APP
@@ -5150,13 +5229,14 @@ run_app:
         call    app_call
         ret
 
-; app_call - EAX = the callback's slot in the blob's header (0, 4, 8, 12);
-; RDI = its argument. The call into the grown code: RSP 16-aligned, kept
-; in memory because the callback may clobber every register but RSP.
+; app_call - EAX = the callback's slot in the blob's header (0, 4, 8, 12,
+; or 24 for point); RDI, RSI, RDX = its arguments, untouched here. The call
+; into the grown code: RSP 16-aligned, kept in memory because the callback
+; may clobber every register but RSP.
 app_call:
-        lea     rdx, [comp_region + APP_BLOB_OFF]
-        mov     eax, [rdx + rax]        ; the offset
-        add     rax, rdx
+        lea     r11, [comp_region + APP_BLOB_OFF]
+        mov     eax, [r11 + rax]        ; the offset
+        add     rax, r11
         mov     [saved_rsp], rsp
         and     rsp, -16
         call    rax                     ; the grown code runs here
@@ -7950,6 +8030,7 @@ frame_ticks:    resq    1               ; TSC ticks per frame slot
 ; choices row's line buffer.
         alignb  16
 app_running:    resd    1
+app_has_point:  resd    1               ; the running blob announces point (ring 6c)
         alignb  8
 step_begin:     resq    1               ; the TSC when the last step began
 step_gap:       resq    1               ; STEP_GAP_MS in ticks

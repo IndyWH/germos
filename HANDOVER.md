@@ -82,7 +82,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | | |
 |---|---|
 | Stage | 6 — Growth: ring 6a closed 2 September 2026; ring 6b closed 3 September 2026 (Stages 0–5 closed); **ring 6c — the pointer — OPEN**, 4 September 2026, the last ring of the stage |
-| Status | Ring 6c: `stage6/plan-6c.md` **approved** 4 September 2026 (Cowork's A1–A3 and nits adopted, eleven deviations accepted); items 0–5 done (the GLASS.md section appended by the owner, the fixture and `broker/pointer.py` rehearsed in both twins, the gate and the checker with tests 1–4, tests 2–4 red on the ring 6b binary, the freeze at 1206 payloads 0 wrong); items 9–11 done (the i8042, IRQ12, the packet ring, the line, the cursor, `pt`, the click on the row; tests 1, 2 and 4 green, every earlier gate green); the freeze opened once at item 11b by the owner's hand for one misordered read in the checker; item 12 next, one commit per item. Ring 6b: all five tests PASS (test 5 confirmed 3 September 2026). |
+| Status | Ring 6c: `stage6/plan-6c.md` **approved** 4 September 2026 (Cowork's A1–A3 and nits adopted, eleven deviations accepted); items 0–5 done (the GLASS.md section appended by the owner, the fixture and `broker/pointer.py` rehearsed in both twins, the gate and the checker with tests 1–4, tests 2–4 red on the ring 6b binary, the freeze at 1206 payloads 0 wrong); items 9–11 done (the i8042, IRQ12, the packet ring, the line, the cursor, `pt`, the click on the row; tests 1, 2 and 4 green, every earlier gate green); the freeze opened once at item 11b by the owner's hand for one misordered read in the checker; **item 12 done: all four tests green**; item 13 next, then test 5, one commit per item. Ring 6b: all five tests PASS (test 5 confirmed 3 September 2026). |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.252 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
@@ -1262,9 +1262,26 @@ for exactly one change.
 +            ("surfaces", "d"), ("shot", shots["d"]), ("obs", "d2"),
 ```
 
+**Item 12** — `point` and the fifth entry: `app_valid`'s rule for the magic
+and the offset (`bad component frame` outside `[28, L)`), `run_app`
+recording `app_has_point` from the blob in the region (a delivery and a
+home launch alike), `app_call` keeping the callback's three arguments (its
+scratch pointer moved to R11), `click_panel` calling `point(row, col,
+button)` once per button newly pressed inside the panel of an app that
+announces it, one hit each; a four-callback app clicked on without effect.
+**All four automated tests green at `-smp 2` and `-smp 8`** — test 3: the
+click on `? ask` typing the marker, `! point app` rehearsed and run, three
+buttons drawing `1`, `2`, `3` at the clicked cells, `c clear`, `Tab prompt`,
+`Tab app`, a gap and `Esc exit` clicked, the frozen test app clicked on
+harmlessly, screen D with `pk 0107 cl 011`, 47 keys, 11 clicks, 8 hits, every
+count derived from the events; the point app rehearsed by hand through
+`broker/pointer.py` on this image, nine criteria in 14.0 s; Stages 0–5, ring
+6a and ring 6b green on the same binary. The binary is 36,864 bytes.
+
 ## Next action
 
-**Ring 6c is at item 11b; item 12 (`point`) follows on a full green gate.** Next: item 1 — GLASS.md's ring 6c section
+**Ring 6c is at item 12; item 13 (the handover, README, CLAUDE.md, the two
+commands for test 5) follows.** Next: item 1 — GLASS.md's ring 6c section
 written to `stage6/out/glass-6c-section.md`, appended by the owner's own
 hand with one `cat … >>` command at the repo root (spelled in the plan's
 decision 13), the first 777 lines proven byte-identical, committed. Then
