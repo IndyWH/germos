@@ -1327,8 +1327,12 @@ click_dispatch:
         movzx   ecx, dx                 ; the column
         mov     edx, [scr_rows]
         sub     edx, 2
-        cmp     ebx, edx
-        jne     .not_row
+        cmp     ebx, edx                ; the choices row, R-2 ...
+        je      .row
+        inc     edx
+        cmp     ebx, edx                ; ... or its margin, R-1: a press there is
+        jne     .not_row                ; judged by its column as one on R-2
+.row:                                   ; (item 12c - Fitts: the edge hits the target)
         test    al, 1                   ; button 1 clicks the row
         jz      .ret
         call    choices_hit             ; EAX = kind or 0, EDX = the argument
@@ -1874,7 +1878,10 @@ mouse_byte:
         jb      .ret
         mov     dword [mse_phase], 0
 
-        ; dx: byte 1 as a signed byte; x clamped to 0 .. W-1.
+        ; dx: byte 1 as a signed byte; x clamped to the console's cells,
+        ; 0 .. 16C-1 - not the mode: a mode is not a whole number of cells,
+        ; and a cell word naming a column the console lacks would draw past
+        ; the screen and leave ghosts (item 12c, the oracle's finding).
         movsx   rax, byte [mse_pkt + 1]
         mov     rcx, [obs_page + OBS_PTR_X]
         add     rcx, rax
@@ -1882,14 +1889,15 @@ mouse_byte:
         jns     .x_low_ok
         xor     ecx, ecx
 .x_low_ok:
-        mov     eax, [fb_width]
+        mov     eax, [scr_cols]
+        shl     eax, 4
         dec     eax
         cmp     rcx, rax
         jbe     .x_ok
         mov     rcx, rax
 .x_ok:
         mov     [obs_page + OBS_PTR_X], rcx
-        ; dy: byte 2 as a signed byte, positive upwards; y clamped to 0 .. H-1.
+        ; dy: byte 2 as a signed byte, positive upwards; y clamped to 0 .. 16R-1.
         movsx   rax, byte [mse_pkt + 2]
         mov     rdx, [obs_page + OBS_PTR_Y]
         sub     rdx, rax
@@ -1897,7 +1905,8 @@ mouse_byte:
         jns     .y_low_ok
         xor     edx, edx
 .y_low_ok:
-        mov     eax, [fb_height]
+        mov     eax, [scr_rows]
+        shl     eax, 4
         dec     eax
         cmp     rdx, rax
         jbe     .y_ok

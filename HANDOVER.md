@@ -24,7 +24,7 @@ implemented on **Fable 5.1 at high effort**, one session, one commit per
 item, tests red before code; at the plan gate Cowork needed no blocking
 change to the design (A1 an expected-green line, A2 no count a literal, A3
 the empty-line rule), and the freeze was opened once for a misordered read
-in the checker's own screen D (item 11b); Cowork's pre-oracle review found one defect — loop state in R12–R15 across a call into grown code — fixed as item 12b. The ring's section is below the
+in the checker's own screen D (item 11b); Cowork's pre-oracle review found one defect — loop state in R12–R15 across a call into grown code — fixed as item 12b; the oracle's first run found the arrow leaving ghosts along the bottom edge (a mode is not a whole number of cells) — fixed as item 12c with the pointer clamped to the console's cells and row R−1 made the choices row's margin, the fifth freeze opening by the owner's hand. The ring's section is below the
 ring 6b build. Earlier — **Stage 6 ring 6b, the store of
 plans, is CLOSED.** Wajira ran test 5 with the real broker:
 `! install calculator` was built by the real backend from
@@ -96,7 +96,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | | |
 |---|---|
 | Stage | 6 — Growth: ring 6a closed 2 September 2026; ring 6b closed 3 September 2026 (Stages 0–5 closed); **ring 6c — the pointer — OPEN**, 4 September 2026, the last ring of the stage |
-| Status | Ring 6c: tests 1–4 **PASS** at `-smp 2` and `-smp 8` (item 12, 5 September 2026); **test 5 pending — the owner clicks his way through the choices row and into the calculator** with `python3 broker/pointer.py` and the windowed command below. Rings 6a and 6b and Stages 0–5 green on the same binary. |
+| Status | Ring 6c: tests 1–4 **PASS** at `-smp 2` and `-smp 8` (item 12c, 5 September 2026, after Cowork's review fix 12b and the oracle's edge finding 12c); **test 5 again — the owner clicks his way through the choices row and into the calculator, and along the edges** with `python3 broker/pointer.py` and the windowed command below. Rings 6a and 6b and Stages 0–5 green on the same binary. |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.252 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
@@ -1354,6 +1354,41 @@ stack. Verified by hand on a private copy with the mock — five clicks in
 the point app drew `1`, `2`, `3`, `1`, `2` where they landed (5 hits), three
 in the test app left its known picture — then the gate whole and every
 earlier gate, all green (`stage6/out/regress.item12b`).
+
+**Item 12c — the oracle's finding, fixed before the oracle again; the fifth
+freeze opening.** Wajira moved the mouse along the bottom edge of the
+1920x1080 window and fragments of the arrow stayed behind under the choices
+row. Cowork confirmed the cause in the code: 1080 is not a multiple of 16,
+so the console has 67 rows over 1072 pixels and 8 spare rows below;
+`mouse_byte` clamped `ptr_y` to the mode (1079), the cell word named row 67,
+`cursor_draw` painted the arrow half past the screen and `cell_repaint`
+found no surface owning row 67 to repaint. The gate never saw it: its sweep
+stayed inside the app panel. Reproduced on a private copy through the
+monitor: 600 down from the centre gave `ptr_cell` row 67 and 40 foreground
+pixels in rows 1072–1079; a sweep along the edge and back left 200 (five
+ghosts). **The owner's two decisions:** the pointer is clamped to the
+console's cells, `0 … 16C−1` and `0 … 16R−1`, never to the mode; and row
+`R−1`, the blank row under the choices row, is the row's margin — a button-1
+press there is judged by its column exactly as one on row `R−2` (Fitts: a
+slam to the bottom edge hits the target, not a dead row). Both change frozen
+text: **the two patches were written unapplied — `stage6/out/glass-6c-edge.patch`
+(three hunks in the ring 6c section: the clamp sentence, the two obs rows,
+the click table's row for `R−1`; the section's Python is column-based and
+needed no change) and `stage6/out/checkpointer.edge.patch` (the model's
+clamp; in `--truth` eight clamped moves to the corner, the arrow at
+`(R−1, C−1)` and nowhere else, the position the console's last pixel, every
+region its surface's; the two launch clicks moved along the bottom edge to
+row `R−1`) — checked with `git apply --check` and applied by the owner's own
+hand at the repo root, 5 September 2026;** the applied diffs were verified
+equal to the patches line for line. The guest: `mouse_byte` clamps to
+`scr_cols·16−1` and `scr_rows·16−1`; `click_dispatch` takes a button-1 press
+on `scr_rows−1` as one on `scr_rows−2` for the hit test. After the fix, on
+the probe: 600 down gives row 66, zero pixels below the console, zero after
+the edge sweep; a bottom-edge click over `? ask` types the marker and one
+over `! echo` launches it (`mode 3`, `name echo`). Then the gate whole (the
+corner: the pointer at (1919, 1071) in cell (66, 119), the arrow whole there
+and nowhere else), every earlier gate and the payload table, all green
+(`stage6/out/regress.item12c`).
 
 ## Next action
 

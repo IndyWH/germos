@@ -842,8 +842,11 @@ byte 1 `dx`, byte 2 `dy`, each a signed byte, **`dy` positive upwards**
 machine keeps its phase across interrupts; a byte arriving in phase 0
 without bit 3 is dropped and counted in `resyncs`; phase 0 also records the
 TSC as the packet's stamp; the third byte completes the packet:
-`ptr_x += dx` and `ptr_y −= dy`, each clamped to the mode (`0 … W−1`,
-`0 … H−1`), then **`ptr_cell = (y >> 4) << 16 | (x >> 4)` stored as one
+`ptr_x += dx` and `ptr_y −= dy`, each clamped to the console's cells
+(`0 … 16C−1`, `0 … 16R−1`) — not to the mode: a mode is not a whole number
+of cells (1080 is 67 rows and 8 spare pixels), and a pointer clamped to
+the framebuffer could name a row the console lacks, where nothing owns the
+cell and the arrow leaves ghosts — then **`ptr_cell = (y >> 4) << 16 | (x >> 4)` stored as one
 `u64` after the two positions** — the glass reads only the cell word, so it
 never reads a torn position; `buttons` = byte 0 bits 0–2 and the bits newly
 set are the **presses**; `packets += 1`; `ptr_stamp` and `ptr_pending`
@@ -882,8 +885,8 @@ Every field a `u64`, one writer each, read by anyone through `xp /88xg`.
 
 | Offset | Field | Written by | Meaning |
 |---|---|---|---|
-| `0x240` | `ptr_x` | IRQ | the pointer's x in pixels, `0 … W−1`; `W/2` at boot |
-| `0x248` | `ptr_y` | IRQ | y in pixels, `0 … H−1`; `H/2` at boot |
+| `0x240` | `ptr_x` | IRQ | the pointer's x in pixels, `0 … 16C−1` (the console's cells, not the mode); `W/2` at boot |
+| `0x248` | `ptr_y` | IRQ | y in pixels, `0 … 16R−1`; `H/2` at boot |
 | `0x250` | `ptr_cell` | IRQ | `row << 16 \| col`, the cell holding the pointer, stored after the two above |
 | `0x258` | `packets` | IRQ | complete three-byte packets received |
 | `0x260` | `buttons` | IRQ | the buttons held after the last packet: bit 0 left, 1 right, 2 middle |
@@ -969,7 +972,8 @@ and acts on its cell:
 | The press | What happens |
 |---|---|
 | **button 1 on screen row `R−2`, within an item's text** — from the item's first character to its last, the items being exactly those the row shows (6a's table, HOME.md's extension), separated by three spaces | one in `hits`, and the item acts **as its key would**, by the same path a typed key takes (the stamp of the press is the key's stamp, so `ph` measures the click's echo): **`? ask`** types `?`; **`! grow`** types `!` — whatever the prompt line already holds; **`! <name>`** (an installed app) types `!`, a space, the name and Enter — **only when the prompt line is empty**; with text on the line it is a click and not a hit, and types nothing; **`<k> <label>`** (an app's declared choice, shown while the app has the keys) delivers `<k>` to the app's `key`; **`Esc exit`** is Esc; **`Tab prompt`** and **`Tab app`** are Tab |
-| button 1 on row `R−2` in a gap, on the blank tail, or on row `R−1`; button 2 or 3 anywhere on the row | nothing but the count |
+| **button 1 on row `R−1`** — the blank row under the choices row, its margin: a slam to the bottom edge must hit the target, not a dead row (Fitts) | judged by its column exactly as a press on row `R−2`: the same table, the same hit, the same act |
+| button 1 on row `R−2` or `R−1` in a gap or on the blank tail; button 2 or 3 anywhere on either row | nothing but the count |
 | any button inside the **app panel** while an app runs | `point(row, col, button)` if the app announces it (below), and one in `hits`; nothing for a four-callback app |
 | anywhere else — the conversation, the strip, the app panel with no app | nothing but the count |
 

@@ -311,6 +311,16 @@ test in the twin.
   restores RSP from `saved_rsp`), never in R12-R15, whatever the fixture
   happens to preserve. `click_panel`'s button loop passed the gate on the
   point app's courtesy alone (Cowork's pre-oracle review, ring 6c item 12b).
+- **A mode is not a whole number of cells.** 1080 is 67 rows and 8 spare
+  pixel rows; a pointer clamped to the framebuffer names a row the console
+  lacks, the arrow is drawn half off the screen, and nothing owns the cell
+  to repaint it - ghosts along the bottom edge. Clamp a pointer to the
+  console's cells (`16C-1`, `16R-1`), never to the framebuffer (ring 6c
+  item 12c, the oracle's finding).
+- **A sweep that stays in the middle proves nothing about the edges.** The
+  edges are where a human goes first and where Fitts's targets are; the
+  gate's sweep lived inside the app panel and never met the spare pixels.
+  Drive a pointer test into every corner and along every edge.
 
 ## Working with the hooks
 

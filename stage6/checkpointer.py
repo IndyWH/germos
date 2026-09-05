@@ -139,8 +139,8 @@ class Pointer:
         """Apply one mouse_move as the guest will: dx right, dy down the
         screen (the monitor's convention; the packet carries -dy)."""
         assert abs(dx) <= PACKET_MAX and abs(dy) <= PACKET_MAX
-        self.x = max(0, min(self.w - 1, self.x + dx))
-        self.y = max(0, min(self.h - 1, self.y + dy))
+        self.x = max(0, min((self.w // CELL) * CELL - 1, self.x + dx))   # the console's cells,
+        self.y = max(0, min((self.h // CELL) * CELL - 1, self.y + dy))   # not the mode (item 12c)
 
     def cell(self):
         return self.y // CELL, self.x // CELL
@@ -1205,7 +1205,7 @@ def run_truth():
     record = os.path.join(OUT, "broker.truth6c.jsonl")
     serial = os.path.join(OUT, "serial.truth6c.txt")
     sweep_shots = [os.path.join(OUT, "screen.truth6c.s%d.ppm" % i) for i in range(9)]
-    shots = {k: os.path.join(OUT, "screen.truth6c.%s.ppm" % k) for k in ("z", "l00", "l", "d")}
+    shots = {k: os.path.join(OUT, "screen.truth6c.%s.ppm" % k) for k in ("z", "corner", "l00", "l", "d")}
     mock, err = start_mock(record)
     if err:
         say(err)
@@ -1228,15 +1228,21 @@ def run_truth():
         steps += [
             ("button", 1), ("button", 0), ("button", 2), ("button", 0), ("button", 4), ("button", 0),   # an empty spot
             ("sleep", 0.5), ("obs", "k"),
+        ]
+        # The bottom-right corner, with deltas the model clamps (item 12c):
+        # the pointer stops at the console's last cell, never past it.
+        steps += [("mouse", PACKET_MAX, PACKET_MAX)] * 8
+        steps += [
+            ("sleep", FRAME_SETTLE), ("shot", shots["corner"]), ("obs", "corner"),
             ("type", "! install echo\n"), ("wait_record", record, 1, 150.0), ("sleep", 3.0),
             ("type", "\x1b"), ("sleep", 1.0),
             ("type", "x"), ("sleep", 0.5),                                          # text on the line (A3)
-            ("moveto", crow, launch_col), ("button", 1), ("button", 0), ("sleep", 1.0),   # a click, no hit, nothing typed
+            ("moveto", crow + 1, launch_col), ("button", 1), ("button", 0), ("sleep", 1.0),   # along the bottom edge: row R-1, the margin; a click, no hit, nothing typed
             ("obs", "l00"),
             ("moveto", park[0], park[1]), ("sleep", 0.3), ("shot", shots["l00"]),
             ("type", "\b"), ("sleep", 0.5),                                          # the line empty again
             ("obs", "l0"),
-            ("moveto", crow, launch_col), ("button", 1, "hit"), ("button", 0), ("sleep", 2.0),   # the launch
+            ("moveto", crow + 1, launch_col), ("button", 1, "hit"), ("button", 0), ("sleep", 2.0),   # the launch, from row R-1
             ("type", "b"), ("sleep", 1.0),
             ("moveto", park[0], park[1]), ("sleep", 0.5),
             ("shot", shots["l"]), ("obs", "l"),
@@ -1317,6 +1323,29 @@ def run_truth():
     ok &= report("three buttons on an empty spot were not counted as clicks without hits", problems)
     if not problems:
         say("obs K: three presses on the empty app panel - %d clicks, %d hits" % (reads["k"]["clicks"], reads["k"]["hits"]))
+
+    # The corner (item 12c): the pointer clamped to the console's cells, the
+    # arrow whole at the last cell, nothing drawn past the screen.
+    problems = []
+    if "corner" not in reads:
+        problems.append("the obs page could not be read at the corner")
+    else:
+        o = reads["corner"]
+        row, col = reads["model"]["corner"]
+        if (row, col) != (rows - 1, cols - 1):
+            problems.append("the model's corner is (%d, %d), not the console's last cell (%d, %d)" % (row, col, rows - 1, cols - 1))
+        if (o["ptr_row"], o["ptr_col"]) != (row, col):
+            problems.append("the corner: the page's cell is (%d, %d), the model says (%d, %d)" % (o["ptr_row"], o["ptr_col"], row, col))
+        if o["ptr_x"] != cols * CELL - 1 or o["ptr_y"] != rows * CELL - 1:
+            problems.append("the corner: the page's position is (%d, %d), want (%d, %d) - the console's last pixel, not the mode's"
+                            % (o["ptr_x"], o["ptr_y"], cols * CELL - 1, rows * CELL - 1))
+        problems += check_one_arrow(shots["corner"], geometry, row, col, "the corner")
+        problems += check_surfaces_except(shots["corner"], reads["z"], (row, col), "the corner")
+        problems += check_pointer_counts(o, reads["counts"]["corner"], "the corner", resyncs=0)
+    ok &= report("the corner did not hold the pointer inside the console", problems)
+    if not problems:
+        say("the corner: eight clamped moves, the pointer at (%d, %d) in cell (%d, %d), the arrow whole there and nowhere else, "
+            "every region its surface's" % (reads["corner"]["ptr_x"], reads["corner"]["ptr_y"], rows - 1, cols - 1))
 
     # The install, then the launch item clicked with text on the line and without.
     entries, problems = read_record(record)
