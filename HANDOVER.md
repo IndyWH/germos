@@ -4,8 +4,21 @@ Rolling state of the AI OS project. Read this first, then `ai-os-foundation.md`
 (the single source of truth), then the current stage's `spec.md` and `plan.md`.
 
 **Last updated:** 5 September 2026 — **Stage 6 ring 6c, the pointer, is
-GREEN on its automated gate and awaits the owner's test 5.** All four
-tests pass at `-smp 2` and `-smp 8`: the PS/2 mouse on the i8042 —
+CLOSED — and with it STAGE 6.** Wajira ran test 5 twice with the real
+broker. The first run, on the morning of 5 September: the arrow appeared
+on the first move, `! calculator` launched from disk by a click, clicks
+in its panel did nothing, `= result`, `c clear`, `Tab prompt`, `Tab app`
+and `Esc exit` did what their keys do — and he found the defect the gate
+had missed: the arrow left fragments along the bottom edge at 1080
+(fixed as item 12c, below). The second run, after the fix: every edge and
+corner swept clean, `! calculator` launched by a click at the very bottom
+of the window, the sums done, the arrow parked in the bottom-right
+corner. *All above steps were functional as expected.* The screenshots
+are `history/2026-09-05-ring6c-hello-cursor.png` (the first run — "Hello
+cursor. This GUI is unfamiliar. :-)") and
+`history/2026-09-05-ring6c-corner-calculator.png` (the second — the arrow
+in the corner, `pk 9999` saturated, "Hello intuitive GUI!"). All four
+automated tests pass at `-smp 2` and `-smp 8`: the PS/2 mouse on the i8042 —
 configured for the first time — speaks in three-byte packets into a ring of
 its own; the glass core draws a one-cell arrow last in every frame from the
 position the interrupt handler keeps in the obs page; pointer input-to-photon
@@ -17,9 +30,8 @@ Tab move as the keys do; the point app's `point(row, col, button)` draws the
 cell it was given, and every four-callback app is clicked on harmlessly.
 Stages 0–5, ring 6a and ring 6b stay green on the same binary: a mouse that
 never moves leaves the machine ring 6a's to the line and to the pixel.
-**Test 5 is Wajira's** — he clicks his way through the choices row and into
-the calculator with `python3 broker/pointer.py`; his word closes the ring
-and the stage. **The model note, for the owner's comparison:** ring 6c was
+**Test 5 was Wajira's, and his word closed the ring and the stage on
+5 September 2026.** **The model note, for the owner's comparison:** ring 6c was
 implemented on **Fable 5.1 at high effort**, one session, one commit per
 item, tests red before code; at the plan gate Cowork needed no blocking
 change to the design (A1 an expected-green line, A2 no count a literal, A3
@@ -95,11 +107,11 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 
 | | |
 |---|---|
-| Stage | 6 — Growth: ring 6a closed 2 September 2026; ring 6b closed 3 September 2026 (Stages 0–5 closed); **ring 6c — the pointer — OPEN**, 4 September 2026, the last ring of the stage |
-| Status | Ring 6c: tests 1–4 **PASS** at `-smp 2` and `-smp 8` (item 12c, 5 September 2026, after Cowork's review fix 12b and the oracle's edge finding 12c); **test 5 again — the owner clicks his way through the choices row and into the calculator, and along the edges** with `python3 broker/pointer.py` and the windowed command below. Rings 6a and 6b and Stages 0–5 green on the same binary. |
+| Stage | **6 — Growth — CLOSED 5 September 2026**: ring 6a closed 2 September, ring 6b 3 September, ring 6c 5 September (Stages 0–6 closed). Next: **Stage 7 — real hardware**, its spec in a fresh session |
+| Status | Ring 6c: all five tests **PASS** (test 5 confirmed by Wajira, 5 September 2026, twice — the second run after the edge fix, item 12c). Rings 6a and 6b and Stages 0–5 green on the same binary. Next: the Stage 7 spec, with the policy re-check at its gate and the owner's inputs listed under "Next action". |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
-| Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.252 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
+| Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.261 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
 | Model | **Ring 6c: Fable 5.1 at high effort** — the owner's decision for this ring, recorded at item 0. Stage 6's standing rule is Fable 5.1 at high (6a); ring 6b was Fable 5.1 at medium, the owner's experiment, to be compared with Opus at high (Stages 0 and 1) and Fable at high (Stages 2 to 6a, 6c); Cowork reviews to the same standard as every ring |
 
 ## The project in three lines
@@ -1134,7 +1146,7 @@ frozen `Installer`; the 6c gate at 1920x1080 with two disks, `-smp 2` and
 | 2 | Serial — seventeen `S6:` lines and the frozen 6a strip and surface checks passing before any packet, `mouse_id` 1 and the i8042 command byte (`0x77` read, `0x47` written) in the page; one `mouse_move`, then eighteen lines with `S6: mouse ready` eighteenth and nothing else after `keyboard ready`, the arrow at the page's cell, every other cell its surface's, `pt` within budget, the strip's third field equal to the page; at `-smp 8` and `-smp 2` | **PASS** |
 | 3 | The pointer, driven by the monitor — a click on `? ask` types the marker; `! point app` rehearsed and run; three buttons in its panel draw `1`, `2`, `3` where they landed; `c clear`, `Tab prompt`, `Tab app`, a gap and `Esc exit` clicked; the frozen test app clicked on twice harmlessly; the record three connections (a click puts nothing on the wire); every count derived from the events (47 keys, 11 clicks, 8 hits; `pk 0107 cl 011` on the strip); at `-smp 2` and `-smp 8` | **PASS** |
 | 4 | The truth about the pointer — the checker's and the twin's commands inspected; the six fixtures reproduced and only the point app carrying `POINTER2`; the pre-packet screen judged by the **frozen** 6a `check_strip` and `check_surfaces`; a 36-move sweep with the arrow at the page's cell, exactly one arrow, the cell it left restored and `pt` under two frame slots at nine screendumps; three presses on an empty spot (3 clicks, 0 hits); `! install echo`; `! echo` clicked with `x` on the line (a click, nothing typed), Backspace, clicked again (the launch from disk, the wire counters unchanged); the strip's field the page | **PASS** |
-| 5 | **Oracle — Wajira, real broker** — clicks his way through the choices row and into the calculator | **pending** |
+| 5 | **Oracle — Wajira, real broker** — clicks his way through the choices row and into the calculator, along every edge and into the corners | **PASS — confirmed 5 September 2026** (first run found the edge defect, fixed as item 12c; second run clean) |
 
 **On this build** (5 September 2026, `-smp 8`, 1920x1080): the binary is
 36,864 bytes; the i8042 command byte OVMF leaves is `0x67` (read as `0x77`
@@ -1392,8 +1404,35 @@ and nowhere else), every earlier gate and the payload table, all green
 
 ## Next action
 
-**Ring 6c is green and pending the oracle.** Test 5 — two terminals at the
-repo root. The broker (it answers questions, grows requests, installs
+**Ring 6c is closed; Stage 6 is closed.** Next: **the Stage 7 spec — real
+hardware** — in a fresh Cowork session, with the policy re-check the
+foundation requires at the gate. What the owner brings to it:
+
+1. **The Lenovo** (the sacrificial desktop with the laptop board inside,
+   decided 1 September), fetched from Baldock and fitted with a drive it
+   will accept — SATA or NVMe, any size; it will be wiped. Nothing else on
+   it matters; it must be a machine with no data anyone wants.
+2. **Its hardware inventory**, taken from a Linux live USB before the spec
+   is written: `lspci -nn` (the NIC, the disk controller — AHCI or NVMe —
+   the display, the USB controller), `lsusb`, `dmidecode -t bios` (UEFI or
+   legacy, and whether it boots a USB stick), and whether the keyboard
+   and mouse reach it over PS/2 or USB. The spec is written against this
+   list: virtio-blk and virtio-net do not exist on metal, so Stage 7's
+   first work is the drivers the inventory names, each rehearsed first in
+   the twin with QEMU's matching device (`e1000`, `ahci`, `nvme`,
+   `qemu-xhci`) before anything touches the machine.
+3. **A USB stick** to boot GermOS from, and a USB-to-serial adapter if the
+   board has a COM header — the serial log is the observation chart; if
+   there is no serial, the spec decides what replaces it (the screen, or
+   a USB debug path).
+4. **The policy re-check**: does `claude -p` still draw from the
+   subscription with no API keys? Checked at every stage gate since
+   Stage 4.
+5. **The implementing model** for Stage 7, and whether the trials ring
+   (N-of-1, layout A against B on the numbers the obs page has recorded
+   since ring 6a) comes before or after the metal.
+
+To click through again at any time — two terminals at the repo root. The broker (it answers questions, grows requests, installs
 plans, serves the point app from its mock table only in `--mock`; every
 candidate rehearsed in the twin at 1920x1080 with a home drive):
 
@@ -1424,8 +1463,8 @@ choices row: the calculator launches from disk. Click into its panel:
 nothing happens (a four-callback app). Click **`= result`** and **`c
 clear`**, **`Tab prompt`** and **`Tab app`**, then **`Esc exit`**. Click
 **`! grow`**, type a request, Enter — the strip says `growing` while Claude
-writes and the twin rehearses. His word closes the ring and the stage; then
-the Stage 7 gate, where the policy is re-checked as the foundation requires.
+writes and the twin rehearses. His word closed the ring and the stage on
+5 September 2026.
 
 Earlier — **ring 6b is closed.** Ring 6c's shape as the 6b handover put it, per
 `stage6/spec.md`: the PS/2 mouse on the i8042's auxiliary port (IRQ12,
