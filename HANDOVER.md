@@ -82,7 +82,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | | |
 |---|---|
 | Stage | 6 — Growth: ring 6a closed 2 September 2026; ring 6b closed 3 September 2026 (Stages 0–5 closed); **ring 6c — the pointer — OPEN**, 4 September 2026, the last ring of the stage |
-| Status | Ring 6c: `stage6/plan-6c.md` **approved** 4 September 2026 (Cowork's A1–A3 and nits adopted, eleven deviations accepted); items 0–5 done (the GLASS.md section appended by the owner, the fixture and `broker/pointer.py` rehearsed in both twins, the gate and the checker with tests 1–4, tests 2–4 red on the ring 6b binary, the freeze at 1206 payloads 0 wrong); item 9 done (the i8042, IRQ12, the packet ring, the line; every earlier gate green); items 10–12 next, one commit per item. Ring 6b: all five tests PASS (test 5 confirmed 3 September 2026). |
+| Status | Ring 6c: `stage6/plan-6c.md` **approved** 4 September 2026 (Cowork's A1–A3 and nits adopted, eleven deviations accepted); items 0–5 done (the GLASS.md section appended by the owner, the fixture and `broker/pointer.py` rehearsed in both twins, the gate and the checker with tests 1–4, tests 2–4 red on the ring 6b binary, the freeze at 1206 payloads 0 wrong); items 9–10 done (the i8042, IRQ12, the packet ring, the line, the cursor, `pt`; tests 1–2 green, every earlier gate green); items 11–12 next, one commit per item. Ring 6b: all five tests PASS (test 5 confirmed 3 September 2026). |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.252 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
@@ -1207,10 +1207,24 @@ hand on a private copy: seventeen lines then eighteen; `mouse_move 10 20`
 10's assertions (the arrow, the field, the pending stamp). **The regression
 chain on this binary: Stages 0–5, ring 6a (383 s) and ring 6b (395 s) all
 PASS** — a mouse that never moves leaves the machine ring 6a's to the line.
+**Item 10** — the cursor and the pointer's photon: `cursor_draw` as the
+frame's last act (nothing until the first packet; the old cell repainted by
+`cell_repaint` from the surface whose descriptor bounds contain it, the
+conversation's block cursor overlaid; the arrow — `01 03 07 0F 1F 0D 19
+30` through `draw_glyph`, `draw_cell`'s painter with the bytes given — every
+frame); `ptr_pending` snapshotted before the copies and `pointer_last` /
+`pointer_worst` measured after them; the strip's third field ` pt LL.L/WW.W
+pk NNNN cl NNN` from column 87 once `packets` is non-zero, `strip_put_row`
+taking the row's length. **Test 2 green at `-smp 8` and `-smp 2`**: after
+one move the arrow at the page's cell, every other cell its surface's, `pt`
+3.4 ms and 14.4 ms, the field equal to the page. Test 4's sweep, run for
+information: 36 moves, 36 packets, the arrow at the page's cell and the
+cell it left restored at all nine screendumps, `pt` worst 16.2 ms — one
+frame slot; only the clicks (items 11–12) fail.
 
 ## Next action
 
-**Ring 6c is at item 9.** Next: item 1 — GLASS.md's ring 6c section
+**Ring 6c is at item 10.** Next: item 1 — GLASS.md's ring 6c section
 written to `stage6/out/glass-6c-section.md`, appended by the owner's own
 hand with one `cat … >>` command at the repo root (spelled in the plan's
 decision 13), the first 777 lines proven byte-identical, committed. Then

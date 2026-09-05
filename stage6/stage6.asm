@@ -326,6 +326,14 @@ org 0                           ; file offsets == RVAs
 %define STRIP1_WW     64
 %define STRIP1_IN     74
 %define STRIP1_OUT    81
+; Ring 6c: the strip's third field, row 0 from column 88, only once the
+; mouse has spoken (GLASS.md, "Pointer input-to-photon, and the strip's
+; third field"). Column 87 stays blank.
+%define STRIP0_PT     91                ; pt LL.L
+%define STRIP0_PTW    96                ; /WW.W
+%define STRIP0_PK     104               ; pk NNNN
+%define STRIP0_CL     112               ; cl NNN
+%define STRIP_PT_LEN  28                ; " pt 00.0/00.0 pk 0000 cl 000"
 
 ; More enabled processors than this in the MADT is an error we report, not a
 ; buffer we overrun. mlrig has 32 logical CPUs; the mirror run uses all of them.
@@ -6114,6 +6122,21 @@ console_putc:
         call    conv_dirty_row
         jmp     .out
 
+; draw_glyph - RSI = eight glyph bytes, EBX = cell row, ECX = cell column:
+; the cell painted from those bytes exactly as draw_cell paints a font
+; glyph. The arrow's painter (ring 6c). Preserves everything.
+draw_glyph:
+        push    rax
+        push    rbx
+        push    rcx
+        push    rdx
+        push    rsi
+        push    rdi
+        push    r8
+        push    r9
+        push    r10
+        jmp     draw_cell.from_font
+
 ; draw_cell - EAX = character, EBX = cell row, ECX = cell column. Preserves
 ; everything. Each glyph bit becomes a 2x2 block of foreground or background;
 ; bit 0 of a font byte is the leftmost pixel (see stage2/FONT.md).
@@ -6706,6 +6729,8 @@ glass_main:
         mov     r15, rax                ; t0
         mov     [obs_page + OBS_NOW], rax
         mov     r14, [obs_page + OBS_ECHO_PENDING]      ; snapshot, before the copy
+        mov     rax, [obs_page + OBS_PTR_PENDING]       ; and the pointer's (ring 6c)
+        mov     [ptr_pend_snap], rax
         lea     rbp, [obs_page + OBS_SURF_CHOICES]
         call    surf_render
         lea     rbp, [obs_page + OBS_SURF_CONV]
@@ -6715,6 +6740,7 @@ glass_main:
         call    strip_format            ; the strip, from the page, every frame
         lea     rbp, [obs_page + OBS_SURF_STRIP]
         call    surf_render
+        call    cursor_draw             ; step 3b: the arrow, last of all (ring 6c)
         rdtsc
         shl     rdx, 32
         or      rax, rdx
@@ -6737,14 +6763,105 @@ glass_main:
 .photon_done:
         mov     qword [obs_page + OBS_ECHO_PENDING], 0
 .pace:
+        cmp     qword [ptr_pend_snap], 0
+        je      .paced
+        mov     rax, rbx                ; pointer input-to-photon: the packet's
+        sub     rax, [obs_page + OBS_PTR_STAMP]         ; first byte to this copy's end
+        mov     [obs_page + OBS_POINTER_LAST], rax
+        cmp     rax, [obs_page + OBS_POINTER_WORST]
+        jbe     .ptr_done
+        mov     [obs_page + OBS_POINTER_WORST], rax
+.ptr_done:
+        mov     qword [obs_page + OBS_PTR_PENDING], 0
+.paced:
         pause
         rdtsc
         shl     rdx, 32
         or      rax, rdx
         sub     rax, r15
         cmp     rax, [frame_ticks]
-        jb      .pace
+        jb      .paced
         jmp     .frame
+
+; cursor_draw - the arrow, the last thing painted in every frame (GLASS.md,
+; "The cursor"): nothing until the first packet; then, if the cell has
+; changed since the arrow was last drawn, the old cell repainted from its
+; surface, and the arrow painted at the page's cell - every frame, since a
+; dirty row may just have repainted its cell. Clobbers registers freely.
+cursor_draw:
+        cmp     qword [obs_page + OBS_PACKETS], 0
+        je      .ret
+        mov     rax, [obs_page + OBS_PTR_CELL]
+        cmp     dword [arrow_on], 0
+        je      .draw
+        cmp     rax, [arrow_cell]
+        je      .draw
+        mov     rdx, [arrow_cell]       ; the cell the arrow is leaving
+        mov     ebx, edx
+        shr     ebx, 16
+        and     ebx, 0xFFFF
+        movzx   ecx, dx
+        push    rax
+        call    cell_repaint
+        pop     rax
+.draw:
+        mov     [arrow_cell], rax
+        mov     dword [arrow_on], 1
+        mov     ebx, eax
+        shr     ebx, 16
+        and     ebx, 0xFFFF
+        movzx   ecx, ax
+        lea     rsi, [arrow_glyph]
+        call    draw_glyph
+.ret:
+        ret
+
+; cell_repaint - EBX = a screen row, ECX = a screen column: the cell painted
+; from the surface that owns it - the first of the four descriptors in the
+; obs page whose bounds contain it - with the conversation's block cursor
+; overlaid when it sits there. Clobbers RAX, RDX, RSI, RDI, R8.
+cell_repaint:
+        lea     rsi, [obs_page + OBS_SURF_STRIP]
+        mov     r8d, 4
+.surface:
+        mov     rax, rbx
+        sub     rax, [rsi + SURF_ROW0]
+        js      .next
+        cmp     rax, [rsi + SURF_ROWS]
+        jae     .next
+        mov     rdx, rcx
+        sub     rdx, [rsi + SURF_COL0]
+        js      .next
+        cmp     rdx, [rsi + SURF_COLS]
+        jae     .next
+        ; RAX = the row, RDX = the column, relative to the surface.
+        mov     rdi, [rsi + SURF_CURSOR]
+        test    edi, 1 << 31
+        jz      .no_cursor
+        push    rdi
+        shr     edi, 16
+        and     edi, 0x7FFF
+        cmp     rdi, rax
+        pop     rdi
+        jne     .no_cursor
+        movzx   edi, di
+        cmp     rdi, rdx
+        jne     .no_cursor
+        mov     eax, CELL_BLOCK
+        jmp     .paint
+.no_cursor:
+        imul    rax, [rsi + SURF_COLS]
+        add     rax, rdx
+        mov     rdi, [rsi + SURF_CELLS]
+        movzx   eax, byte [rdi + rax]
+.paint:
+        call    draw_cell
+        ret
+.next:
+        add     rsi, 64
+        dec     r8d
+        jnz     .surface
+        ret
 
 ; surf_render - RBP = a surface descriptor in the obs page. Every dirty row:
 ; the flag exchanged to zero, then its cells painted at the region's place,
@@ -6853,6 +6970,31 @@ strip_format:
         mov     rax, [obs_page + OBS_STEP_WORST]
         lea     rdi, [strip_line + STRIP0_SW]
         call    put_ms
+        mov     dword [strip_line_len], STRIP_LEN
+        cmp     qword [obs_page + OBS_PACKETS], 0
+        je      .row0_done
+        ; The third field (ring 6c): " pt LL.L/WW.W pk NNNN cl NNN" from
+        ; column 87, the pointer's photon, the packets and the clicks.
+        lea     rdi, [strip_line + STRIP_LEN]
+        lea     rsi, [strip_tmpl_pt]
+        mov     ecx, STRIP_PT_LEN
+        rep     movsb
+        mov     rax, [obs_page + OBS_POINTER_LAST]
+        lea     rdi, [strip_line + STRIP0_PT]
+        call    put_ms
+        mov     rax, [obs_page + OBS_POINTER_WORST]
+        lea     rdi, [strip_line + STRIP0_PTW]
+        call    put_ms
+        mov     rax, [obs_page + OBS_PACKETS]
+        lea     rdi, [strip_line + STRIP0_PK]
+        mov     ecx, 4
+        call    put_num
+        mov     rax, [obs_page + OBS_CLICKS]
+        lea     rdi, [strip_line + STRIP0_CL]
+        mov     ecx, 3
+        call    put_num
+        mov     dword [strip_line_len], STRIP_LEN + STRIP_PT_LEN
+.row0_done:
         xor     ebx, ebx
         call    strip_put_row
 
@@ -6861,6 +7003,7 @@ strip_format:
         lea     rsi, [strip_tmpl1]
         mov     ecx, STRIP_LEN
         rep     movsb
+        mov     dword [strip_line_len], STRIP_LEN
         ; The mode word, in its 18-column field.
         lea     rdi, [strip_line + STRIP1_MODE]
         mov     rax, [obs_page + OBS_MODE]
@@ -6935,7 +7078,8 @@ strip_format:
         call    strip_put_row
         ret
 
-; strip_put_row - EBX = 0 or 1: strip_line into that row of the strip
+; strip_put_row - EBX = 0 or 1: strip_line_len bytes of strip_line into
+; that row of the strip
 ; surface, cut at the screen's width, padded with spaces, the row dirty.
 strip_put_row:
         lea     rdi, [strip_cells]
@@ -6944,7 +7088,7 @@ strip_put_row:
         add     rdi, rax
         lea     rsi, [strip_line]
         mov     ecx, [scr_cols]
-        mov     edx, STRIP_LEN
+        mov     edx, [strip_line_len]   ; 87, or 115 with the pointer's field
 .cell:
         test    ecx, ecx
         jz      .filled
@@ -7307,6 +7451,8 @@ strip_tmpl0:    db      'up 000000 core 00 fr 000000 00.0/00.0 ph 00.0/00.0 k 00
 strip_tmpl1:    db      'prompt             q 000 n 000 g 000/000 disk 0000 000000 w 000 000000 io 000000/000000'
 mode_words:     db      'prompt     ', 'asking     ', 'growing    ', 'running    ', 'installing '
 block_glyph:    db      0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
+arrow_glyph:    db      0x01, 0x03, 0x07, 0x0F, 0x1F, 0x0D, 0x19, 0x30   ; GLASS.md, "The cursor"
+strip_tmpl_pt:  db      ' pt 00.0/00.0 pk 0000 cl 000'
 ; The SHA-256 constants (FIPS 180-4): the sixty-four round constants and
 ; the eight initial hash words.
         align   4
@@ -7623,6 +7769,15 @@ mse_pkt:        resb    4               ; the packet's bytes as they arrive
         alignb  16
 mse_ring:       resb    MSE_RING_SIZE * MSE_ENTRY
 mse_cur:        resb    MSE_ENTRY       ; the entry mouse_next last popped
+
+; The glass core's cursor state (ring 6c): where the arrow was last drawn,
+; whether it has been drawn at all, the pointer's pending snapshot for the
+; frame, and the strip line's length for the row being put.
+        alignb  16
+arrow_cell:     resq    1
+arrow_on:       resd    1
+strip_line_len: resd    1
+ptr_pend_snap:  resq    1
 
 ; The display's EDID (GLASS.md, "The screen").
         alignb  16
