@@ -24,7 +24,7 @@ implemented on **Fable 5.1 at high effort**, one session, one commit per
 item, tests red before code; at the plan gate Cowork needed no blocking
 change to the design (A1 an expected-green line, A2 no count a literal, A3
 the empty-line rule), and the freeze was opened once for a misordered read
-in the checker's own screen D (item 11b). The ring's section is below the
+in the checker's own screen D (item 11b); Cowork's pre-oracle review found one defect — loop state in R12–R15 across a call into grown code — fixed as item 12b. The ring's section is below the
 ring 6b build. Earlier — **Stage 6 ring 6b, the store of
 plans, is CLOSED.** Wajira ran test 5 with the real broker:
 `! install calculator` was built by the real backend from
@@ -1336,6 +1336,24 @@ harmlessly, screen D with `pk 0107 cl 011`, 47 keys, 11 clicks, 8 hits, every
 count derived from the events; the point app rehearsed by hand through
 `broker/pointer.py` on this image, nine criteria in 14.0 s; Stages 0–5, ring
 6a and ring 6b green on the same binary. The binary is 36,864 bytes.
+
+**Item 12b — Cowork's pre-oracle review, one defect, fixed before the
+oracle.** `click_panel` kept its loop state — the panel row, the column,
+the pressed bits, the button number — in R12–R15 across `call app_call`;
+`app_call` preserves nothing but RSP and GLASS.md lets an app clobber every
+other register, so after `point` returned the loop could run again on
+garbage. It passed the gate only because `pointer.asm` preserves R12 and
+RBX, which the contract does not require of a grown app. The fix: the four
+registers pushed before the call and popped after (`app_call` restores RSP
+from `saved_rsp`, so the pushes are still there). Two nits taken:
+`mouse_init` reads the command byte back with `20` after writing it, as the
+section says, a confirmation only (`i8042_cmd`'s meaning unchanged); the
+README's oracle paragraph says `! point app` is the mock's request. A gotcha
+in CLAUDE.md: nothing survives a call into grown code but memory and the
+stack. Verified by hand on a private copy with the mock — five clicks in
+the point app drew `1`, `2`, `3`, `1`, `2` where they landed (5 hits), three
+in the test app left its known picture — then the gate whole and every
+earlier gate, all green (`stage6/out/regress.item12b`).
 
 ## Next action
 

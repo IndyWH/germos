@@ -1404,7 +1404,20 @@ click_panel:
         mov     esi, r13d
         mov     edx, r15d
         mov     eax, CB_POINT
+        ; Nothing survives a call into grown code but memory and the stack
+        ; (GLASS.md: an app may clobber every register but RSP; app_call
+        ; restores RSP from saved_rsp, so what is pushed here is still here
+        ; after). The loop's state rides the stack, whatever a fixture
+        ; happens to preserve (Cowork's pre-oracle review, item 12b).
+        push    r12
+        push    r13
+        push    r14
+        push    r15
         call    app_call
+        pop     r15
+        pop     r14
+        pop     r13
+        pop     r12
 .next:
         shr     r14d, 1
         inc     r15d
@@ -2121,6 +2134,10 @@ mouse_init:
         call    i8042_data
         pop     rdx
         mov     [obs_page + OBS_I8042_CMD], rdx
+        mov     al, 0x20                ; read it back (GLASS.md: "read back
+        call    i8042_cmd               ; with 20") - a confirmation only;
+        call    i8042_read              ; i8042_cmd in the page keeps its
+                                        ; meaning: as read, as written
         mov     al, 0xA8                ; the auxiliary port enabled
         call    i8042_cmd
 

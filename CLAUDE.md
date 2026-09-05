@@ -305,6 +305,12 @@ test in the twin.
 - **A serial line after `keyboard ready` must bypass the tee.** Once the
   console is up, `serial_putc` draws every byte into the conversation;
   a status line meant for serial alone goes through a raw UART write.
+- **Nothing survives a call into grown code but memory and the stack.**
+  An app may clobber every register but RSP, so loop state around
+  `app_call` goes on the stack (pushed before, popped after - `app_call`
+  restores RSP from `saved_rsp`), never in R12-R15, whatever the fixture
+  happens to preserve. `click_panel`'s button loop passed the gate on the
+  point app's courtesy alone (Cowork's pre-oracle review, ring 6c item 12b).
 
 ## Working with the hooks
 

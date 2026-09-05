@@ -166,7 +166,7 @@ qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
   -device virtio-net-pci,netdev=n0 -serial stdio
 ```
 
-Click in the QEMU window to grab the mouse (Ctrl+Alt+G releases it) and move it: the arrow appears, `S6: mouse ready` goes out on serial, and `pt`, `pk` and `cl` join the strip. Click `! grow` and type a request, or `! install calculator` and then click `! calculator` on the row; click into the calculator's panel (nothing happens — it has no `point`), then `= result`, `c clear`, `Tab prompt`, `Tab app`, `Esc exit`. `! point app` from the mock's table is the one app that takes clicks: each button draws its digit where you clicked. The automated gate (`./stage6/test-6c.sh`) drives QEMU's PS/2 mouse through the monitor, speaks only to the mock, and spends no token.
+Click in the QEMU window to grab the mouse (Ctrl+Alt+G releases it) and move it: the arrow appears, `S6: mouse ready` goes out on serial, and `pt`, `pk` and `cl` join the strip. Click `! grow` and type a request, or `! install calculator` and then click `! calculator` on the row; click into the calculator's panel (nothing happens — it has no `point`), then `= result`, `c clear`, `Tab prompt`, `Tab app`, `Esc exit`. With the mock broker (`python3 broker/pointer.py --mock`) the request `! point app` serves the one committed app that takes clicks: each button draws its digit where you clicked. The automated gate (`./stage6/test-6c.sh`) drives QEMU's PS/2 mouse through the monitor, speaks only to the mock, and spends no token.
 
 ## The team of three
 
