@@ -3,7 +3,27 @@
 Rolling state of the AI OS project. Read this first, then `ai-os-foundation.md`
 (the single source of truth), then the current stage's `spec.md` and `plan.md`.
 
-**Last updated:** 5 September 2026 — **Stage 6 ring 6c, the pointer, is
+**Last updated:** 9 September 2026 — **Stage 7 — Metal — is OPEN, and ring
+7a, the disk, opened today.** `stage7/spec.md` was approved by the owner
+on 9 September 2026 (all recommendations taken, decision 5 amended: the
+HP plugs into the home switch; the policy gate re-checked the same day —
+`claude -p` still draws from the subscription, no API keys). Patient one
+is the **HP Compaq Elite 8300 SFF** (Q77 AHCI SATA, Intel 82579LM, PS/2
+keyboard and mouse, COM A, four cores), not the Lenovo the earlier notes
+named. Three rings: **7a the disk** (AHCI, one SATA disk with a GPT the
+guest writes, notes and home as two partitions, the frozen formats moved
+inside unchanged), **7b the wire** (e1000e, the cage becoming the home
+switch through a relay), **7c the metal** (the stick, the flash by the
+owner's hand, every stage re-proven on the HP). Ring 7a's plan,
+`stage7/plan-7a.md`, was approved at the plan gate with Cowork's four
+amendments (A1 the port-selection rule — a GermOS table wins, else a blank
+disk is formatted, else a named error and nothing is ever formatted over;
+A2 the twin's SATA read never raises; A3 `broker/metal.py` freezes at item
+10, after nine of nine through it; A4 the BSP's APIC mode recorded at item
+1) and all eleven deviations accepted bar the two the amendments withdraw.
+**The model for this ring: Fable 5.1 at high effort, the owner's decision.**
+Its section is below Stage 6's; item 0 is done and the items follow one
+commit each. Earlier — **Stage 6 ring 6c, the pointer, is
 CLOSED — and with it STAGE 6.** Wajira ran test 5 twice with the real
 broker. The first run, on the morning of 5 September: the arrow appeared
 on the first move, `! calculator` launched from disk by a click, clicks
@@ -107,12 +127,12 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 
 | | |
 |---|---|
-| Stage | **6 — Growth — CLOSED 5 September 2026**: ring 6a closed 2 September, ring 6b 3 September, ring 6c 5 September (Stages 0–6 closed). Next: **Stage 7 — real hardware**, its spec in a fresh session |
-| Status | Ring 6c: all five tests **PASS** (test 5 confirmed by Wajira, 5 September 2026, twice — the second run after the edge fix, item 12c). Rings 6a and 6b and Stages 0–5 green on the same binary. Next: the Stage 7 spec, with the policy re-check at its gate and the owner's inputs listed under "Next action". |
+| Stage | **7 — Metal — OPEN since 9 September 2026**: ring 7a (the disk) opened 9 September; rings 7b (the wire) and 7c (the metal) to follow, each a fresh session with its own plan gate. Stages 0–6 closed (Stage 6 on 5 September 2026) |
+| Status | Ring 7a: **item 0 done** — the plan and the spec committed. Tests 1–4 not yet written (items 4–7); the freeze at item 8 (`metal.py` at item 10); the guest at items 9–10. Stages 0–5 and the three ring 6 gates green on their own binaries. |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.261 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
-| Model | **Ring 6c: Fable 5.1 at high effort** — the owner's decision for this ring, recorded at item 0. Stage 6's standing rule is Fable 5.1 at high (6a); ring 6b was Fable 5.1 at medium, the owner's experiment, to be compared with Opus at high (Stages 0 and 1) and Fable at high (Stages 2 to 6a, 6c); Cowork reviews to the same standard as every ring |
+| Model | **Ring 7a: Fable 5.1 at high effort** — the owner's decision for this ring, recorded at item 0 (the spec sets high for 7a and 7b, medium for 7c, decided at each gate). Ring 6c was Fable 5.1 at high; ring 6b Fable 5.1 at medium, the owner's experiment, to be compared with Opus at high (Stages 0 and 1) and Fable at high (Stages 2 to 6a, 6c); Cowork reviews to the same standard as every ring |
 
 ## The project in three lines
 
@@ -1402,11 +1422,94 @@ corner: the pointer at (1919, 1071) in cell (66, 119), the arrow whole there
 and nowhere else), every earlier gate and the payload table, all green
 (`stage6/out/regress.item12c`).
 
+## Stage 7 — Metal · opened 9 September 2026
+
+`stage7/spec.md`, approved by the owner on 9 September 2026 with every
+recommendation taken and decision 5 amended (the HP plugs into the home
+switch beside mlrig; mlrig's LAN port carries 10.0.2.4/24 as a second
+address and answers the guest's ARP across the switch). The policy gate
+re-checked the same day: `claude -p` still draws from the subscription, no
+API keys anywhere; next re-check at the Stage 8 gate. **The patient: the
+HP Compaq Elite 8300 SFF** — Q77 AHCI SATA (no drive fitted yet), Intel
+82579LM (`6C:3B:E5:3B:86:45`), PS/2 keyboard and mouse, COM A on the rear
+panel, Intel HD graphics, AMI Aptio UEFI with Secure Boot off and USB
+first, four cores, 8 GB. Patient two, later, the ThinkStation P330. Three
+rings, each a fresh session with its own plan gate and its own frozen
+tests: **7a the disk** (an AHCI driver; notes and home on one SATA disk
+under a GPT the guest writes), **7b the wire** (an e1000e driver; the cage
+becomes the home switch through `broker/relay.py`), **7c the metal** (the
+EDID guard, the i8042 cold init, the stick, the flash by the owner's hand,
+every stage re-proven on the HP). The N-of-1 trials ring comes after the
+metal. The Stage 6 binary and gates are untouched: Stage 7 is
+`stage7/stage7.asm`, copied from `stage6.asm` at ring 7a item 1 with the
+prefix `S7:`, drivers swapped, and Stages 0–6 stay green forever on their
+own binaries.
+
+## Ring 7a — the disk · opened 9 September 2026
+
+`stage7/plan-7a.md` was approved on 9 September 2026 with Cowork's four
+amendments (A1 the port-selection rule: every SATA port identified, the
+port holding a recognised GermOS table chosen, else the port whose first
+two sectors are all zero and that disk formatted, else `ERR: no GermOS
+disk and no blank disk` naming each port — a foreign table, an MBR, a boot
+sector or a torn table is refused, never formatted; the disk line gains
+the port; test 2 checks `esp.img` byte-identical around every boot and
+adds a foreign-table refusal boot; A2 the twin's SATA read yields `notes
+None` and a log line on any error, never an exception; A3 `broker/metal.py`
+joins `PROTECTED` at item 10 after nine of nine through it, the other
+three paths at item 8; A4 the BSP's xAPIC/x2APIC mode recorded at item 1)
+and every deviation accepted bar the two the amendments withdraw. **The
+model for this ring: Fable 5.1 at high effort**, the owner's decision;
+Cowork reviews to the same standard as every ring. Item 0 (this record,
+the plan's and the spec's commit) is done; the items follow one commit
+each, exactly as the plan says.
+
+**The shape, from the plan** (its environment table holds the measured
+facts behind every choice): the AHCI driver per 1.3 — the controller by
+class, the ABAR mapped uncached, every port with a SATA disk identified,
+one command slot, `IDENTIFY DEVICE`, `READ DMA EXT` and `WRITE DMA EXT`,
+polled, interrupts off, bus mastering before any address; `blk_rw` over
+two partition descriptors; a GPT with GermOS's own type GUIDs and fixed
+disk and partition GUIDs, so the table is a function of the sector count
+and the checker compares it byte for byte with what `stage7/DISK.md`'s own
+Python builds; notes at LBA 2048 and home at 34816, 16 MB each, the two
+frozen formats inside unchanged; `S7: gpt written` then `S7: disk port <p>
+<sectors> notes <lba> home <lba>` — eighteen lines on a blank disk,
+seventeen on a recognised one, no count a literal; the frozen twin cannot
+read an `S7:` guest (three literals, no seam), so `broker/metal.py` carries
+`rehearse_metal`, the frozen twin transcribed and judged by the frozen
+`judge`, the SATA disk through `extra_args` beside the frozen virtio notes
+disk the guest ignores (proven by one deliberate `if=virtio` boot in test
+2 and by the twin's image after every rehearsal); the gate at 1920x1080,
+`-cpu IvyBridge`, `-smp 2`, `4` and `8`, mock only. Test 1 is green from
+item 4; tests 2, 3 and 4 go green together at item 10.
+
+| # | Test | Status |
+|---|---|---|
+| 1 | Artefact — PE32+ magics, x86-64, subsystem 10, relocs stripped, packed image | not yet written (item 4) |
+| 2 | Serial — ring 6c's lines as `S7:` with the disk line, `gpt written` on a blank disk, `esp.img` untouched, a foreign table refused; at `-smp 8`, `4`, `2`, and `2` with a virtio disk | not yet written (item 5) |
+| 3 | The notebook on SATA — two notes, a reboot, both back on screen; the partition parsed from the host through the GPT reader | not yet written (item 6) |
+| 4 | The store on SATA — `! install echo` through the mock, a reboot with no broker, `S7: home 1 apps`, `! echo` from disk, the liar refused, the undo hash-checked from the host | not yet written (item 7) |
+| 5 | **Oracle — Wajira, real broker** — one note, one reboot, `! calculator` from a home partition the real broker installed | pending |
+
+### Ring 7a — the build, item by item
+
+**Item 0** — this record; `stage7/plan-7a.md` and `stage7/spec.md`
+committed.
+
 ## Next action
 
-**Ring 6c is closed; Stage 6 is closed.** Next: **the Stage 7 spec — real
-hardware** — in a fresh Cowork session, with the policy re-check the
-foundation requires at the gate. What the owner brings to it:
+**Ring 7a is open at item 0.** Next: item 1 — `stage7/` with the Stage 7
+copy of the binary under `S7:`, its builder, and the firmware's AHCI state
+measured (the ABAR, `CAP`, `PI`, each port's signature and command state,
+the BSP's APIC mode at `-smp 2`, `4` and `8`, OVMF's boot order with a
+blank disk on `ide.1`) into this file's environment table before any test
+is written. The items then follow the plan one commit each.
+
+Earlier — **Ring 6c is closed; Stage 6 is closed.** The Stage 7 spec was
+written in a fresh Cowork session on 9 September 2026 with the policy
+re-check the foundation requires at the gate, against the HP's inventory
+(the Lenovo below was replaced by the HP). What the owner brought to it:
 
 1. **The Lenovo** (the sacrificial desktop with the laptop board inside,
    decided 1 September), fetched from Baldock and fitted with a drive it
