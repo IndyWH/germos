@@ -1495,7 +1495,22 @@ item 4; tests 2, 3 and 4 go green together at item 10.
 ### Ring 7a — the build, item by item
 
 **Item 0** — this record; `stage7/plan-7a.md` and `stage7/spec.md`
-committed.
+committed. **Item 1** — `stage7/stage7.asm` (the ring 6c source with every
+`S6:` made `S7:`, twenty-five literals and comments, and a Stage 7 header
+above Stage 6's own), `stage7/mkimage.sh` (the recipe retargeted; 36,864
+bytes, the same size as Stage 6's). The environment, measured on private
+copies under `stage7/out/probe7a/` with a temporary probe injected into a
+copy of the source (never into `stage7/stage7.asm`, never committed):
+
+| Fact | Measured how |
+|---|---|
+| **The copy boots in the twin's shape** — `-cpu IvyBridge`, `esp.img` on `ide.0`, a blank 64 MB disk on `ide.1`, the frozen twin's blank virtio notes disk, the cage, 1920x1080 — to `S7: keyboard ready` with **sixteen** `S7:` lines at `-smp 2`, `4` and `8` (one virtio disk, no home line), found = woken = smp, `console 120x67`; OVMF boots `esp.img` from `ide.0` with the blank disk beside it; the SATA disk's sectors 0–1 stay zero (no driver touches it) and the virtio notes disk is formatted by the copy, as it must be | `stage7/out/probe7a/boot.sh`, six boots |
+| **The BSP is in xAPIC mode** under `-cpu IvyBridge` at `-smp 2`, `4` and `8`: `IA32_APIC_BASE` = `0xfee00900` (BSP, enabled, bit 10 clear). Stage 1's x2APIC path is **not** exercised by this CPU model (A4); the i5-3570 carries the same flag and its firmware decides | the probe's `rdmsr 0x1B` |
+| **The AHCI function is `00:1f.2`**, vendor:device `8086:2922` (ICH9 AHCI), class dword `0x01060102` (class 01, subclass 06, interface 01, revision 02); command register `0x0007` — memory, I/O **and bus mastering already on**, left so by OVMF's driver — status `0x0010`; **BAR5 = `0x81080000`**, a 32-bit memory BAR below 4 GB, inside the identity map (`map_mmio_2m` remaps its 2 MB page uncached) | the probe's PCI scan by class |
+| **The HBA:** `CAP` `0xc0141f05` — S64A, NCQ, **32 command slots**, 6 ports, Gen 2; `GHC` `0x80000000` — **AE already set, IE clear**; `PI` `0x3f`; `VS` 1.0 | the probe, ABAR mapped uncached |
+| **Ports 0 and 1 hold the two disks, ports 2–5 are empty.** Ports 0 and 1: `PxSSTS` `0x113` (DET 3 device present and Phy up, SPD Gen 1, IPM 1 active), `PxSIG` **`0x00000101`** (a SATA disk), **`PxCMD` `0x0006` — SUD and POD set, ST, FRE, CR and FR all clear: OVMF's driver stopped its ports before handing over**; `PxCLB` one list shared by every port (`0x0ea63000`, `0x0ea53000`, `0x0e833000` — moves with the boot), `PxFB` `CLB + 0x1000 + port·0x100`; `PxTFD` `0x50` (DRDY, DSC); `PxSERR` 0; `PxIS` `0x1` (a stale D2H-register bit to clear); `PxIE` 0. Ports 2–5: `PxSSTS` 0, `PxSIG` `0xffff0101`, `PxCMD` `0x4014`. **`ide.1` is port 1; `esp.img` is port 0** — exactly A1's case | the probe, every implemented port |
+| **OVMF writes to `esp.img` on every boot, whether the guest touches the disk or not**: with `-bios OVMF.fd` and no separate variable store the firmware keeps its non-volatile variables in a file, **`NvVars`** (3,031 bytes), on the first FAT volume — 1,711 bytes differ between the image before and after a boot (FSInfo's free-cluster hints at sector 1, the FAT at sectors 32 and 788, the root directory at 1544, four data sectors), and no two boots leave the same bytes. **So A1's "`esp.img` byte-identical before and after" cannot be a criterion as worded**; what the guest must never do is write a table over it, and that is what test 2 will check: sector 0 (the FAT boot sector) byte-identical, `classify(esp)` still `other` (no protective MBR, no `EFI PART` at sector 1), `BOOTX64.EFI` extracted byte-identical to the build, and the refusal boot's error line naming port 0 as `other`. Recorded here for the owner and Cowork before item 5 writes the test | `md5sum` before and after each boot; `cmp -l`; `mdir` on the booted copy |
+| **`blkid -p` and `partx -s` read a table built by DISK.md's Python** (a 64 MB image on the host): `PTTYPE="gpt"`, `PTUUID` the disk GUID, partition 1 `GermOS notes` 2048–34815 and partition 2 `GermOS home` 34816–67583, each 16M, with their GUIDs — the host's two witnesses agree with the document before the guest exists (item 2's evidence, measured at item 1) | `blkid -p`, `partx -s` on `stage7/out/probe7a/host-gpt.img` |
 
 ## Next action
 
