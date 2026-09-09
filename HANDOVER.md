@@ -22,8 +22,19 @@ A2 the twin's SATA read never raises; A3 `broker/metal.py` freezes at item
 10, after nine of nine through it; A4 the BSP's APIC mode recorded at item
 1) and all eleven deviations accepted bar the two the amendments withdraw.
 **The model for this ring: Fable 5.1 at high effort, the owner's decision.**
-Its section is below Stage 6's; item 0 is done and the items follow one
-commit each. Earlier — **Stage 6 ring 6c, the pointer, is
+**Ring 7a is green pending the oracle**: all four automated tests pass at
+`-smp 2`, `4` and `8` (item 10, the same day) — a blank SATA disk
+partitioned by the guest with the table byte-identical to DISK.md's, two
+notes across a reboot on the notes partition, ring 6b's whole store test
+on the home partition with the twin formatting a SATA disk of its own; the
+foreign table refused by name and never written; Stages 0–5 and the three
+ring 6 gates green on their own binaries. One session, one commit per
+item, tests red before code, no freeze opening; two defects of the first
+driver draft fixed before any probe passed (an address table in data, a
+clobbered loop register); the plan's A1 wording of "esp.img byte-identical"
+replaced by what the guest must never do to it, once OVMF's NvVars write
+was measured at item 1. Test 5 is Wajira's, the two commands under "Next
+action". Earlier — **Stage 6 ring 6c, the pointer, is
 CLOSED — and with it STAGE 6.** Wajira ran test 5 twice with the real
 broker. The first run, on the morning of 5 September: the arrow appeared
 on the first move, `! calculator` launched from disk by a click, clicks
@@ -128,7 +139,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | | |
 |---|---|
 | Stage | **7 — Metal — OPEN since 9 September 2026**: ring 7a (the disk) opened 9 September; rings 7b (the wire) and 7c (the metal) to follow, each a fresh session with its own plan gate. Stages 0–6 closed (Stage 6 on 5 September 2026) |
-| Status | Ring 7a: **item 0 done** — the plan and the spec committed. Tests 1–4 not yet written (items 4–7); the freeze at item 8 (`metal.py` at item 10); the guest at items 9–10. Stages 0–5 and the three ring 6 gates green on their own binaries. |
+| Status | Ring 7a: **tests 1–4 PASS** (item 10, 9 September 2026) at `-smp 2`, `4` and `8`; **test 5 pending** — Wajira's windowed run with the real broker, the two commands under "Next action". Stages 0–5 and the three ring 6 gates green on their own binaries. |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.261 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
@@ -1486,11 +1497,53 @@ item 4; tests 2, 3 and 4 go green together at item 10.
 
 | # | Test | Status |
 |---|---|---|
-| 1 | Artefact — PE32+ magics, x86-64, subsystem 10, relocs stripped, packed image | not yet written (item 4) |
-| 2 | Serial — ring 6c's lines as `S7:` with the disk line, `gpt written` on a blank disk, `esp.img` untouched, a foreign table refused; at `-smp 8`, `4`, `2`, and `2` with a virtio disk | not yet written (item 5) |
-| 3 | The notebook on SATA — two notes, a reboot, both back on screen; the partition parsed from the host through the GPT reader | not yet written (item 6) |
-| 4 | The store on SATA — `! install echo` through the mock, a reboot with no broker, `S7: home 1 apps`, `! echo` from disk, the liar refused, the undo hash-checked from the host | not yet written (item 7) |
+| 1 | Artefact — PE32+ magics, x86-64, subsystem 10, relocs stripped, packed image | **PASS** |
+| 2 | Serial — eighteen `S7:` lines on a blank disk with `gpt written` and the disk line, the table byte-identical to DISK.md's from the host and both stores freshly formatted; seventeen on the same disk, byte-identical afterwards; the twin's shape with a virtio disk beside the SATA disk, the virtio image all zero; a foreign table refused by name and never written; the boot image untouched around every boot; at `-smp 8`, `4`, `2`, `2` and `2` | **PASS** |
+| 3 | The notebook on SATA — `remember me` and `on sata` typed on a blank disk, the notes partition holding exactly them byte-exact per NOTEBOOK.md, a reboot with `S7: notebook 2 notes`, nothing on the wire, both above the prompt on screen, the disk untouched; at `-smp 2` and `-smp 8` | **PASS** |
+| 4 | The store on SATA — `! install echo` through the mock and a twin that formats its own SATA disk (its virtio image all zero), echo at LBA 34825 hash-checked; a reboot with no broker, `S7: home 1 apps`, `! echo` from the partition with the wire counters unchanged, the undo with nothing to undo refused; the liar refused, two re-installs, the undo swapping the builds back, both extents hash-checked from the host; screen D the truth; at `-smp 4` | **PASS** |
 | 5 | **Oracle — Wajira, real broker** — one note, one reboot, `! calculator` from a home partition the real broker installed | pending |
+
+**On this build** (9 September 2026): the binary is 36,864 bytes, Stage
+6's size; the AHCI function is `00:1f.2` (`8086:2922`), its ABAR at
+`0x81080000` below 4 GB, the disk on port 1 beside the boot image on port
+0; a blank 64 MB disk formats in one boot with thirty-eight sector writes
+(the table's thirty-six and the two partitions' first sectors) and both
+stores' own; the gate is twelve boots plus four rehearsals, about eight
+minutes; the twin's rehearsal 14 s for the test app, 17 s for echo against
+its plan; the BSP in xAPIC mode under `-cpu IvyBridge`; the payload table
+1324 cases, 0 wrong.
+
+**Caveats carried forward:**
+
+- **Everything Stage 6 carried.** One app at a time, no watchdog, the
+  glass core the first AP, the trials recorded for, not run.
+- **One port, one slot, one sector a command, polled**; no NCQ, no TRIM,
+  no FLUSH CACHE (a write completes when the device says so, as virtio's
+  did); interrupts never enabled on the controller.
+- **The backup header is written and never read**: a damaged primary is
+  `torn`, refused, not recovered. **Every GUID is fixed**: the table is a
+  function of the sector count alone, so two GermOS disks in one machine
+  would share a disk GUID.
+- **The partitions are 16 MB each at fixed LBAs**; the guest reads whatever
+  a recognised table names but writes only DISK.md's layout.
+- **Nothing that is not blank is ever formatted** (A1): a drive from
+  another life must have its first two sectors zeroed by the owner's hand
+  before the first boot — ring 7c's `METAL.md` will say so.
+- **OVMF writes `NvVars` into the ESP on every boot**, so "the boot image
+  untouched" means what the guest must never do to it: sector 0
+  identical, no table over it, `BOOTX64.EFI` identical.
+- **The frozen twin's virtio notes disk stays in every rehearsal**,
+  ignored by the guest and asserted all zero; `rehearse_metal` is the
+  frozen twin transcribed (plan deviation 1), judged by the frozen
+  `judge`, whose log line says "S6: lines" whatever the prefix.
+- **The `home_present` branch is dead code**: always 1 on a GermOS disk.
+- **The real backend is unchanged** this ring and exercised only at test 5.
+
+**Things that bit this ring, now in CLAUDE.md's gotchas:** a table of
+addresses in data is a table of RVAs (the stripped-relocations trap, its
+other form); OVMF writes to the ESP on every boot; the twin always has two
+SATA disks, so a driver chooses by what a disk holds and never writes one
+that is not blank.
 
 ### Ring 7a — the build, item by item
 
@@ -1726,15 +1779,54 @@ broker from the partition; the liar refused; both extents of the undo
 hash-checked from the host; screen D the truth). **The regression chain
 on their own binaries: Stages 0–5, ring 6a, 6b and 6c all PASS** (14, 182,
 77, 92, 102, 230, 383, 395 and 207 s).
+**Item 11** — this handover to the green-pending-oracle state; CLAUDE.md's
+build block gains `./stage7/mkimage.sh`, `./stage7/test.sh` and
+`python3 broker/metal.py --mock`, the windowed command its Stage 7 shape,
+and three gotchas; README's Stage 7 paragraph and its ring 7a running
+section; the payload table re-run, 1324 cases, 0 wrong; the two commands
+above for Wajira. The probe artefacts stay under `stage7/out/probe7a/`
+(gitignored) for the review; nothing frozen touched.
 
 ## Next action
 
-**Ring 7a is open at item 0.** Next: item 1 — `stage7/` with the Stage 7
-copy of the binary under `S7:`, its builder, and the firmware's AHCI state
-measured (the ABAR, `CAP`, `PI`, each port's signature and command state,
-the BSP's APIC mode at `-smp 2`, `4` and `8`, OVMF's boot order with a
-blank disk on `ide.1`) into this file's environment table before any test
-is written. The items then follow the plan one commit each.
+**Ring 7a is green pending the oracle.** Tests 1–4 pass at `-smp 2`, `4`
+and `8` and every earlier gate passes on its own binary. **Test 5 is
+Wajira's** — two terminals at the repo root. The broker (it answers
+questions, grows requests, installs plans; every candidate rehearsed in
+the twin at 1920x1080 on IvyBridge with a 64 MB SATA disk of its own):
+
+```
+python3 broker/metal.py
+```
+
+and the machine, windowed, with one SATA disk — the `truncate` only for a
+blank disk (`./stage7/test.sh` overwrites `stage7/out/disk.img`; a disk
+worth keeping is copied to `stage7/out/disk.oracle.img`, a name the
+harness never touches):
+
+```
+truncate -s 64M stage7/out/disk.img
+qemu-system-x86_64 -machine q35 -cpu IvyBridge -m 256M -smp 4 -bios /usr/share/ovmf/OVMF.fd \
+  -vga none -device VGA,edid=on,xres=1920,yres=1080 \
+  -drive format=raw,file=stage7/out/esp.img \
+  -drive if=none,id=d0,format=raw,file=stage7/out/disk.img -device ide-hd,drive=d0,bus=ide.1 \
+  -netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9999' \
+  -device virtio-net-pci,netdev=n0 -serial stdio
+```
+
+On a blank disk the serial log says `S7: gpt written` then `S7: disk port
+1 131072 notes 2048 home 34816`, `S7: notebook formatted`, `S7: home 0
+apps`. Type a note. Type **`! install calculator`**: the strip says
+`installing` while Claude builds from `plans/calculator.md` and the twin
+runs its five tests on a SATA disk of its own; then `installed calculator`
+in its panel. Do a sum; Esc. Quit QEMU, stop the broker, run the same QEMU
+command again (no `truncate`): `S7: disk port 1 131072 notes 2048 home
+34816`, `S7: notebook 1 notes`, `S7: home 1 apps`; the note on screen;
+**`! calculator`** on the choices row, launched from the home partition
+with nothing on the wire. On the host, `blkid -p stage7/out/disk.img` and
+`partx -s stage7/out/disk.img` read the table the machine wrote. His word
+closes the ring; then ring 7b, the wire, in its own session with its own
+plan gate.
 
 Earlier — **Ring 6c is closed; Stage 6 is closed.** The Stage 7 spec was
 written in a fresh Cowork session on 9 September 2026 with the policy

@@ -26,7 +26,9 @@ The pictures in `history/` are the machine's own screendumps, taken by each stag
 
 ![The first grown component — asked for a clock at the GermOS prompt, Claude wrote one in machine code; it was rehearsed in the twin, then it ran](history/2026-09-01-first-grown-clock.png)
 
-**Stage 6 — growth — is closed** (5 September 2026): the glass, the store of plans and the pointer, three rings in four days. The owner's first oracle run found a defect the gate had missed — the arrow left fragments along the bottom edge, because a 1080-pixel mode is not a whole number of 16-pixel cells — and the fix made the bottom row a click margin for the choices row, as Fitts's law asks of an edge. Next: **Stage 7 — real hardware**, on a sacrificial machine, with the drivers the metal needs rehearsed first in the twin.
+**Stage 6 — growth — is closed** (5 September 2026): the glass, the store of plans and the pointer, three rings in four days. The owner's first oracle run found a defect the gate had missed — the arrow left fragments along the bottom edge, because a 1080-pixel mode is not a whole number of 16-pixel cells — and the fix made the bottom row a click margin for the choices row, as Fitts's law asks of an edge.
+
+**Stage 7 — metal — is open** (9 September 2026): the patient is an HP Compaq Elite 8300, and every driver the metal needs is rehearsed first in the twin. **Ring 7a, the disk**, replaces virtio-blk with an AHCI driver: one SATA disk, a GPT the machine writes itself on a blank drive, the notebook and the home as two partitions with their formats unchanged inside ([`stage7/DISK.md`](stage7/DISK.md)). The disk is chosen by what it holds — a GermOS table wins, a blank disk is formatted, anything else is refused by name and never written. Rings 7b (the wire, an e1000e driver behind a relay on the home switch) and 7c (the stick, the flash by the owner's hand, every stage re-proven on the HP) follow.
 
 ## Running it
 
@@ -167,6 +169,25 @@ qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
 ```
 
 Click in the QEMU window to grab the mouse (Ctrl+Alt+G releases it) and move it: the arrow appears, `S6: mouse ready` goes out on serial, and `pt`, `pk` and `cl` join the strip. Click `! grow` and type a request, or `! install calculator` and then click `! calculator` on the row; click into the calculator's panel (nothing happens — it has no `point`), then `= result`, `c clear`, `Tab prompt`, `Tab app`, `Esc exit`. With the mock broker (`python3 broker/pointer.py --mock`) the request `! point app` serves the one committed app that takes clicks: each button draws its digit where you clicked. The automated gate (`./stage6/test-6c.sh`) drives QEMU's PS/2 mouse through the monitor, speaks only to the mock, and spends no token.
+
+**Stage 7, ring 7a — the disk.** The same machine on q35's own SATA controller with the patient's CPU model: one 64 MB raw disk, blank, which the machine partitions on its first boot — a protective MBR, a GPT with GermOS's own type GUIDs, a 16 MB notes partition at LBA 2048 and a 16 MB home partition at 34816, the frozen formats byte for byte inside — and recognises on every boot after. `S7: gpt written` on the boot that formats, then `S7: disk port 1 131072 notes 2048 home 34816`. A disk holding anyone else's table, a boot sector or a torn table is refused by name (`ERR: no GermOS disk and no blank disk - port 0: other, port 1: gpt`) and never written; the twin's own boot image sits on port 0 and is never touched. Everything Stage 6 does runs unchanged on the partitions. Two terminals:
+
+```
+python3 broker/metal.py
+```
+
+```
+./stage7/mkimage.sh
+truncate -s 64M stage7/out/disk.img
+qemu-system-x86_64 -machine q35 -cpu IvyBridge -m 256M -smp 4 -bios /usr/share/ovmf/OVMF.fd \
+  -vga none -device VGA,edid=on,xres=1920,yres=1080 \
+  -drive format=raw,file=stage7/out/esp.img \
+  -drive if=none,id=d0,format=raw,file=stage7/out/disk.img -device ide-hd,drive=d0,bus=ide.1 \
+  -netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9999' \
+  -device virtio-net-pci,netdev=n0 -serial stdio
+```
+
+Type a note; `! install calculator`; do a sum; quit, stop the broker, boot the same command again: the note is back, `S7: home 1 apps`, and `! calculator` runs from the home partition. On the host, `blkid -p stage7/out/disk.img` and `partx -s stage7/out/disk.img` read the table the machine wrote. The automated gate (`./stage7/test.sh`) drives five serial boots, the persistence pair and ring 6b's store test on the partitions, speaks only to the mock, and spends no token.
 
 ## The team of three
 

@@ -66,28 +66,42 @@ nasm -f bin stage0/stage0.asm -o stage0/out/stage0.img
                        # Rings 6a and 6b stay the regressions: the same binary
                        # with a mouse that never moves is ring 6a's to the pixel.
 
+# Stage 7 ring 7a - the disk
+./stage7/mkimage.sh    # assemble stage7.asm, pack the FAT image (not frozen)
+./stage7/test.sh       # acceptance tests 1-4 on q35's own AHCI with -cpu
+                       # IvyBridge and ONE 64 MB SATA disk the guest partitions
+                       # (stage7/DISK.md): eighteen lines on a blank disk and
+                       # the table byte-exact, seventeen on the same disk, the
+                       # twin's shape with a virtio disk the guest ignores, a
+                       # foreign table refused; two notes across a reboot on
+                       # the notes partition; ring 6b's store test on the home
+                       # partition at -smp 4. Needs 9999 and 9998 free.
+                       # ~8 min, twelve boots plus four rehearsals.
+
 # The mock brokers (what the gates talk to; never spend a token)
 python3 broker/broker.py --mock --port 9999     # Stage 4
 python3 broker/plans.py --mock                  # Stage 6 (answers, apps, installs)
 python3 broker/pointer.py --mock                # Stage 6 ring 6c (the point app too)
+python3 broker/metal.py --mock                  # Stage 7 (the same table; the twin on SATA)
 
 # The hook's payload table - every freeze and bodyguard case, 0 wrong or exit 1
 python3 .claude/hooks/payloads.py
 ```
 
-Windowed, for the oracle test (Stage 6 ring 6c shape, with the real broker
-`python3 broker/pointer.py` in another terminal; click in the QEMU window to
-grab the mouse, Ctrl+Alt+G releases it; earlier stages drop the drives, the
-display and the cage they did not have and point at their own `esp.img` —
-see README.md):
+Windowed, for the oracle test (Stage 7 ring 7a shape, with the real broker
+`python3 broker/metal.py` in another terminal; one 64 MB SATA disk the
+guest partitions on its first boot - `truncate` only for a blank one, the
+gate overwrites `disk.img`; click in the QEMU window to grab the mouse,
+Ctrl+Alt+G releases it; Stage 6 keeps its virtio disks and `broker/pointer.py`,
+earlier stages drop the drives, the display and the cage they did not have
+and point at their own `esp.img` — see README.md):
 
 ```bash
-truncate -s 16M stage6/out/home.img
-qemu-system-x86_64 -machine q35 -m 256M -smp 8 -bios /usr/share/ovmf/OVMF.fd \
+truncate -s 64M stage7/out/disk.img
+qemu-system-x86_64 -machine q35 -cpu IvyBridge -m 256M -smp 4 -bios /usr/share/ovmf/OVMF.fd \
   -vga none -device VGA,edid=on,xres=1920,yres=1080 \
-  -drive format=raw,file=stage6/out/esp.img \
-  -drive format=raw,file=stage6/out/notes.img,if=virtio \
-  -drive format=raw,file=stage6/out/home.img,if=virtio \
+  -drive format=raw,file=stage7/out/esp.img \
+  -drive if=none,id=d0,format=raw,file=stage7/out/disk.img -device ide-hd,drive=d0,bus=ide.1 \
   -netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9999' \
   -device virtio-net-pci,netdev=n0 -serial stdio
 ```
@@ -321,6 +335,23 @@ test in the twin.
   edges are where a human goes first and where Fitts's targets are; the
   gate's sweep lived inside the app panel and never met the spare pixels.
   Drive a pointer test into every corner and along every edge.
+- **A table of addresses in data is a table of RVAs.** `dq label` stores
+  the label's offset in the file, not where OVMF loaded the image
+  (relocations are stripped), so a lookup through it reads low memory and
+  a string prints as nothing. The `[label + reg]` gotcha above, in its
+  other form: choose with a compare chain of `lea`s (ring 7a item 9).
+- **OVMF writes to the ESP on every boot.** With `-bios OVMF.fd` and no
+  separate variable store the firmware keeps its variables in a file,
+  `NvVars`, on the first FAT volume: FSInfo, the FAT, the root directory
+  and a few data sectors change on every boot, and no two boots leave
+  the same bytes. "The boot image is byte-identical before and after" can
+  never be a criterion; what the guest must never do to it can (ring 7a
+  item 1, amendment A1's test).
+- **The twin always has two SATA disks.** The frozen twin boots its ESP
+  from q35's own controller, so a driver that takes "the first port with a
+  disk" takes the boot image, and a rule that formats "anything not ours"
+  formats it. Identify every port, choose by what the disk holds, and
+  never write a disk that is not blank (ring 7a, amendment A1).
 
 ## Working with the hooks
 
