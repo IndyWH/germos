@@ -1594,6 +1594,19 @@ virtio-free boots; sixteen lines with `S7: disk 32768 sectors` tenth in
 the virtio boot; the wrong `ERR:` on the foreign disk; the boot image
 passed its check in every boot and the foreign disk stayed byte-identical.
 Test 1 green.
+**Item 6** — `checkdisk.py --persist` (test 3): the checker's own
+`qemu_argv` (the Stage 7 machine, two drives, the cage, `-cpu
+IvyBridge`), `drive` (ring 6b's step vocabulary under `S7:`; a guest that
+never reaches ready has its `ERR:` line quoted), and `run_persist` — run
+one on a blank disk types `remember me` and `on sata`, the echo exact, the
+disk parsed from the host (the table byte-exact, the notes partition
+exactly those two notes per NOTEBOOK.md's worked example, the home
+partition empty); run two on the same disk demands seventeen lines with
+`S7: notebook 2 notes`, nothing on the wire, both notes above the prompt in
+the conversation panel through the frozen `check_region_rows`, and the
+disk byte-identical. `test.sh` gains test 3 at `-smp 2` and `-smp 8`.
+**Red on the item 1 copy**: run one never reaches ready — `ERR: no
+virtio-blk device on PCI bus 0` quoted.
 
 ## Next action
 

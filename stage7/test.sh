@@ -495,6 +495,33 @@ else
 fi
 echo
 
+# ------------------------------------------------ test 3: persistence --------
+# Stage 3's soul on SATA. Run one: a blank disk, "remember me" and "on sata"
+# typed through the QEMU monitor, quit; the disk parsed FROM THE HOST by
+# DISK.md and NOTEBOOK.md must hold the table byte-exact and exactly those
+# two notes on the notes partition, byte-exact, with the home partition
+# freshly formatted. Run two: the same disk in a fresh QEMU must log "S7:
+# notebook 2 notes", put nothing on the wire after "S7: keyboard ready",
+# show both notes above the prompt in the conversation panel rendered from
+# the shared font, and leave the disk untouched. At -smp 2 and -smp 8 -
+# memory must follow the machine, not the core count. The work is in
+# stage7/checkdisk.py --persist.
+
+echo "Test 3 - The notebook on SATA: two notes, a reboot, both back, the partition parsed from the host, at -smp 2 and -smp 8"
+if [ ! -f "$ESP" ]; then
+  fail "test 3: no image was built"
+else
+  kept=0
+  python3 "$REPO/stage7/checkdisk.py" --persist 2 || kept=1
+  python3 "$REPO/stage7/checkdisk.py" --persist 8 || kept=1
+  if [ "$kept" -eq 0 ]; then
+    pass "test 3: the notes survived a reboot on the SATA partition, on disk and on screen, at both -smp 2 and -smp 8"
+  else
+    fail "test 3: the machine does not keep what it is told on SATA (see above)"
+  fi
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then

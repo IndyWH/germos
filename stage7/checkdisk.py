@@ -26,7 +26,10 @@ amendments fix them:
         unchanged. OVMF writes its NvVars file into the ESP on every boot
         (ring 7a item 1's measurement), so a whole-image identity cannot
         be the criterion; what the guest must never do is the criterion.
-  --persist SMP     (test 3, item 6)
+  --persist SMP
+        test 3: Stage 3's persistence on the notes partition - two notes
+        typed on a blank disk, the disk parsed from the host, a reboot with
+        both notes back on screen and nothing on the wire.
   --store           (test 4, item 7)
 
 Everything runs inside QEMU with the caged network and the 1920x1080
@@ -45,6 +48,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
@@ -65,8 +69,13 @@ import metal  # noqa: E402  - DISK.md's Python, verbatim
 from metal import (SECTOR, NOTES_FIRST, HOME_FIRST, PART_SECTORS, DISK_BYTES_7, build_gpt, parse_gpt,  # noqa: E402
                    classify, partition_bytes, check_table, partition_entries, gpt_header, crc32, guid_bytes)
 from checknotes import parse_notebook, expected_header, expected_record  # noqa: E402
-from checkglass import say, report, dump_capture  # noqa: E402
+from checkglass import (say, report, dump_capture, check_region_rows, record_count, PROMPT)  # noqa: E402
 from checkplans import parse_home  # noqa: E402
+from glass import regions  # noqa: E402
+import twin  # noqa: E402
+from twin import Driver  # noqa: E402
+from plans import plan_keyname  # noqa: E402
+from rehearse import KEY_GAP  # noqa: E402
 import uuid  # noqa: E402
 
 PART_BYTES = PART_SECTORS * SECTOR                   # 16 MB: what NOTEBOOK.md's and HOME.md's parsers expect
@@ -340,6 +349,212 @@ def check_esp(before, after, efi, label):
     return problems
 
 
+# ------------------------------------------------------------- the driver ---
+# The checker's own QEMU command and monitor driver: the Stage 7 machine
+# with two drives, S7: for the ready line and the obs page. The step
+# vocabulary is ring 6b's: ("type", text), ("sleep", seconds),
+# ("wait_record", path, count, timeout), ("shot", path), ("obs", label),
+# ("surfaces", label).
+
+def fresh_disk(path):
+    """A brand-new all-zero 64 MB raw image: the blank disk the guest
+    formats. Removed first, so nothing from an earlier run survives."""
+    if os.path.exists(path):
+        os.remove(path)
+    with open(path, "wb") as fh:
+        fh.truncate(DISK_BYTES_7)
+
+
+def qemu_argv(smp, disk, serial_path):
+    """The one place the checker's QEMU command is spelled. Test 4 inspects this."""
+    return [
+        "qemu-system-x86_64",
+        "-machine", "q35",
+    ] + list(CPU) + [
+        "-m", "256M",
+        "-smp", str(smp),
+        "-bios", OVMF,
+    ] + list(DISPLAY) + [
+        "-drive", "format=raw,file=" + ESP,
+        "-drive", "if=none,id=d0,format=raw,file=" + disk,
+        "-device", "ide-hd,drive=d0,bus=ide.1",
+        "-netdev", CAGE_NETDEV,
+        "-device", CAGE_DEVICE,
+        "-display", "none",
+        "-serial", "file:" + serial_path,
+        "-monitor", "stdio",
+    ]
+
+
+def geometry_of(capture):
+    m = re.search(rb"S7: gop (\d+)x(\d+) fb 0x", capture)
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def drive(smp, disk, steps, serial_path, ready=READY, ready_limit=60.0):
+    """Boot inside the cage with the SATA disk, wait for the guest's own
+    ready line, run the steps, quit, reap. Returns (serial_bytes, reads,
+    error). Never leaves a QEMU running behind us."""
+    reads = {}
+    if not os.path.isfile(ESP):
+        return b"", reads, "no image was built"
+    if not os.path.isfile(OVMF):
+        return b"", reads, "OVMF firmware not found at " + OVMF
+    if os.path.exists(serial_path):
+        os.remove(serial_path)
+    for step in steps:
+        if step[0] == "shot" and os.path.exists(step[1]):
+            os.remove(step[1])
+
+    proc = subprocess.Popen(qemu_argv(smp, disk, serial_path),
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    drv = Driver(proc, serial_path, OUT)
+
+    err = None
+    obs_addr = None
+    try:
+        deadline = time.time() + ready_limit
+        got_ready = False
+        while time.time() < deadline:
+            time.sleep(0.25)
+            if proc.poll() is not None:
+                break
+            if ready in drv.serial_bytes():
+                got_ready = True
+                break
+        if not got_ready:
+            err = "the guest never printed %r within %.0fs" % (ready.decode(), ready_limit)
+            if proc.poll() is not None:
+                err += " (qemu exited %d: %s)" % (proc.returncode,
+                                                 proc.stderr.read().decode(errors="replace").strip()[:300])
+            else:
+                errs = re.findall(rb"ERR: [^\r\n]*", drv.serial_bytes())
+                if errs:
+                    err += " (the guest said: %s)" % errs[0].decode(errors="replace")
+        else:
+            time.sleep(1.0)
+            for step in steps:
+                if step[0] == "type":
+                    for ch in step[1]:
+                        drv.tell(b"sendkey " + plan_keyname(ch).encode() + b"\n" if ch not in "\n\t\x1b"
+                                 else b"sendkey " + twin.keyname(ch).encode() + b"\n")
+                        time.sleep(KEY_GAP)
+                elif step[0] == "sleep":
+                    time.sleep(step[1])
+                elif step[0] == "wait_record":
+                    _, path, count, limit = step
+                    until = time.time() + limit
+                    while time.time() < until and record_count(path) < count:
+                        time.sleep(0.2)
+                    if record_count(path) < count:
+                        say("(the broker record did not reach %d connection(s) within %.0fs)" % (count, limit))
+                elif step[0] == "shot":
+                    drv.screendump(step[1])
+                elif step[0] in ("obs", "surfaces"):
+                    if obs_addr is None:
+                        text = drv.serial_bytes().decode("utf-8", "replace")
+                        m = re.search(r"S7: obs page 0x([0-9a-f]{16})", text)
+                        obs_addr = int(m.group(1), 16) if m else 0
+                    try:
+                        if not obs_addr:
+                            raise ValueError("no obs page line on serial")
+                        page = drv.read_obs(obs_addr)
+                        if step[0] == "obs":
+                            reads[step[1]] = page
+                        else:
+                            reads[step[1]] = {name: drv.read_surface(page[name])
+                                              for name in ("strip", "choices", "conversation", "app")}
+                            reads[step[1]]["obs"] = page
+                    except ValueError as exc:
+                        say("(xp for %r failed: %s)" % (step[1], exc))
+        drv.tell(b"quit\n")
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        try:
+            proc.stdin.close()
+        except OSError:
+            pass
+    return drv.serial_bytes(), reads, err
+
+
+# ------------------------------------------------------- test 3: persist ---
+# Stage 3's soul on the notes partition. Run one: a blank disk, two notes
+# typed through the monitor, the machine quit; the disk parsed FROM THE
+# HOST by DISK.md and NOTEBOOK.md holds exactly those two notes, byte-exact
+# per the worked examples, the home partition freshly formatted, the table
+# untouched. Run two: the same disk in a fresh machine logs "S7: notebook 2
+# notes", puts nothing on the wire after ready, shows both notes above the
+# prompt in the conversation panel rendered from the shared font, and
+# leaves the disk byte-identical.
+
+NOTES = ["remember me", "on sata"]
+
+
+def run_persist(smp):
+    disk = DISK
+    fresh_disk(disk)
+    serial_one = os.path.join(OUT, "serial.persist.%d.run1.txt" % smp)
+    serial_two = os.path.join(OUT, "serial.persist.%d.run2.txt" % smp)
+    shot = os.path.join(OUT, "screen.persist.%d.ppm" % smp)
+    ok = True
+
+    say("run one: a blank disk at -smp %d; %r and %r typed" % (smp, NOTES[0], NOTES[1]))
+    steps = [("type", NOTES[0] + "\n"), ("sleep", 1.5), ("type", NOTES[1] + "\n"), ("sleep", 1.5)]
+    capture, reads, err = drive(smp, disk, steps, serial_one)
+    if err:
+        say(err)
+        if capture:
+            dump_capture(capture)
+        return 1
+    problems, geometry = check_boot_lines(capture, smp, True, "formatted", 0, DISK_SECTORS)
+    problems += check_echo(capture, (NOTES[0] + "\r\n" + NOTES[1] + "\r\n").encode())
+    if not report("run one's serial log is not what the spec asks for", problems, capture):
+        return 1
+    say("run one: eighteen lines, the table written, the notebook formatted, the echo exactly the two typed lines")
+
+    data = read_image(disk)
+    problems = ["the table: " + p for p in check_table(data)]
+    if not problems:
+        problems += check_notes_partition(data, NOTES, "run one")
+        problems += check_home_partition(data, "run one")
+    if not report("the disk after run one is not what DISK.md and NOTEBOOK.md say", problems):
+        return 1
+    say("the disk: the table byte-exact, the notes partition holding exactly %r per NOTEBOOK.md's worked example, the home partition empty" % (NOTES,))
+    image_one = data
+
+    say("run two: the same disk, nothing typed, a screendump")
+    capture, reads, err = drive(smp, disk, [("sleep", 1.0), ("shot", shot)], serial_two)
+    if err:
+        say(err)
+        if capture:
+            dump_capture(capture)
+        return 1
+    problems, geometry = check_boot_lines(capture, smp, False, "%d notes" % len(NOTES), 0, DISK_SECTORS)
+    problems += check_echo(capture, b"")
+    image_two = read_image(disk)
+    if image_two != image_one:
+        off = next(i for i in range(len(image_one)) if image_one[i] != image_two[i])
+        problems.append("the disk changed during run two (first difference at sector %d) - a replay must not write" % (off // SECTOR))
+    if not report("run two is not what the spec asks for", problems, capture):
+        return 1
+    say("run two: seventeen lines, 'S7: notebook %d notes', nothing on the wire after ready, the disk unchanged" % len(NOTES))
+    if None in geometry:
+        return 1
+    regs = regions(geometry[2], geometry[3])
+    problems = check_region_rows(shot, geometry, regs["conversation"], NOTES + [PROMPT])
+    if not report("the screen after run two does not show the remembered notes", problems):
+        return 1
+    say("the screen: %r and %r above the prompt in the conversation panel, from the shared font, two colours only" % (NOTES[0], NOTES[1]))
+    say("-smp %d: the machine remembered on SATA" % smp)
+    return 0 if ok else 1
+
+
 # --------------------------------------------------------------- main ------
 
 def main(argv):
@@ -359,6 +574,11 @@ def main(argv):
         for p in problems:
             say("  - " + p)
         return 1 if problems else 0
+    if len(argv) == 2 and argv[0] == "--persist":
+        try:
+            return run_persist(int(argv[1]))
+        except ValueError:
+            pass
     say("usage: checkdisk.py --formatted IMAGE SECTORS NOTES HOME | --recognised IMAGE SECTORS NOTES HOME | "
         "--foreign IMAGE | --esp BEFORE AFTER EFI | --persist SMP | --store")
     return 1
