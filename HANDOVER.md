@@ -1640,6 +1640,58 @@ The gate whole on the item 1 copy, for the record: test 1 PASS, tests 2,
 every criterion but the twin's module is frozen. Part 2, the guest, begins
 at item 9.
 
+**Part 2 so far — item 9** (`stage7/stage7.asm`): the AHCI driver —
+`pci_scan` matching class `0x010601` into `ahci_bdf` (its virtio-blk
+branch gone), `ahci_find` (the command register owned before BAR5 is read,
+the ABAR mapped uncached, `AE` set and `IE` clear, `CAP` and `PI` into the
+obs page at `0x2C0`), `ahci_port_stop`/`ahci_port_open` (ST then FRE
+awaited clear, the list, the FIS area and the table zeroed, `SERR` and `IS`
+cleared, `IE` masked, FRE then ST once the task file is idle), `ahci_cmd`
+(slot 0, a 20-byte H2D FIS, one PRD of 512 bytes, `PxCI` polled with PIT
+breaths and bounded, `TFES` and `ERR` named), `ahci_identify` (LBA48 from
+words 100–103, the sector size checked), `ahci_rw` (`READ`/`WRITE DMA
+EXT`); DISK.md's selection rule in `disk_select` — every implemented port
+with `DET` 3 and `IPM` 1 (a Phy still coming up given a bounded wait, an
+empty port passed at once) and the SATA signature opened, identified,
+classified by `disk_classify` (two sectors read; blank, other, or
+`gpt_validate`'s germos/gpt/torn by the recognition rule — the header's
+fields and CRC, the array read and its CRC, every entry zero or inside the
+usable range, the first entry of each type into the descriptors) and
+stopped again; the first germos port chosen, else the first blank (item
+10's writer; at item 9 the stub falls to the refusal), else `ERR: no
+GermOS disk and no blank disk - port 0: other, port 1: blank` naming each
+port through `word_string` (RIP-relative leas — a first draft's table of
+`dq` addresses in data printed nothing, relocations being stripped: the
+standing gotcha, met again); `crc32_update` bit by bit; the two partition
+descriptors, `blk_rw` over them with Stage 3's signature, `disk_rw` and
+`home_rw` unchanged for their callers; the disk line; the virtio-blk
+driver, its two device blocks, their rings and the request header gone,
+the NIC's virtio plumbing kept. The binary is 36,864 bytes still. **Probed
+by hand on private copies:** a host-partitioned disk (DISK.md's `build_gpt`
+on the host) at `-smp 4`, `2` and `8` — seventeen lines with `S7: disk port
+1 131072 notes 2048 home 34816`, the table recognised (the guest's CRC
+agreeing with zlib's on the header and the 16 KB array), `notebook
+formatted`, `home 0 apps`; `remember me` typed, the notes partition
+holding it byte-exact per NOTEBOOK.md at LBA 2049, the home partition
+formatted, the table untouched; the same disk again — `notebook 1 notes`,
+the note above the prompt on the screen through the frozen
+`check_region_rows`, the disk byte-identical across the reboot; a blank
+disk refused `port 0: other, port 1: blank` and left all zero; the foreign
+disk refused `port 0: other, port 1: gpt` and left byte-identical; the
+twin's shape (a blank virtio disk beside the host-partitioned SATA disk) —
+seventeen lines, the SATA stores formatted, the virtio image all zero; the
+twin through `metal.py` on this image — its blank disk refused by name,
+`virtio notes.img: untouched, all zero`, `the twin did not boot` (nine of
+nine is item 10's, once the guest can write the table). A second defect of
+the first draft, for the record: `gpt_validate`'s entry loop used R12,
+the port loop's index — port 1 was never recorded; the validator now saves
+it. The frozen `judge`'s log line says "S6: lines" whatever the prefix; the
+count it reports is this twin's. **The gate on this binary: test 1 PASS;
+tests 2, 3 and 4 FAIL on the writer alone** — every one starts from a
+blank disk and this binary refuses one by name; test 2's foreign boot
+already passes its own check (the refusal, the disk byte-identical, the
+boot image untouched).
+
 ## Next action
 
 **Ring 7a is open at item 0.** Next: item 1 — `stage7/` with the Stage 7

@@ -160,6 +160,58 @@ org 0                           ; file offsets == RVAs
 %define VIO_SECTORS         (VIO_Q + VIO_QUEUES * VQ_BLK)  ; u32 a disk's capacity (ring 6b)
 %define VIO_BLOCK_SIZE      (VIO_SECTORS + 8)
 
+; The AHCI controller (stage7/DISK.md, ring 7a): the HBA's registers, a
+; port's registers, the command header and table this driver builds, and
+; the two partition descriptors over the chosen port.
+%define AHCI_CLASS          0x010601    ; class 01, subclass 06, interface 01: bits 31:8 of register 8
+%define HBA_CAP             0x00
+%define HBA_GHC             0x04
+%define HBA_PI              0x0C
+%define HBA_PORTS           0x100       ; port 0's registers; 0x80 bytes per port
+%define GHC_AE              (1 << 31)
+%define GHC_IE              (1 << 1)
+%define PX_CLB              0x00
+%define PX_CLBU             0x04
+%define PX_FB               0x08
+%define PX_FBU              0x0C
+%define PX_IS               0x10
+%define PX_IE               0x14
+%define PX_CMD              0x18
+%define PX_TFD              0x20
+%define PX_SIG              0x24
+%define PX_SSTS             0x28
+%define PX_SERR             0x30
+%define PX_CI               0x38
+%define PXCMD_ST            (1 << 0)
+%define PXCMD_FRE           (1 << 4)
+%define PXCMD_FR            (1 << 14)
+%define PXCMD_CR            (1 << 15)
+%define PXIS_TFES           (1 << 30)
+%define TFD_ERR             (1 << 0)
+%define TFD_DRQ             (1 << 3)
+%define TFD_BSY             (1 << 7)
+%define SIG_SATA_DISK       0x00000101
+%define FIS_H2D             0x27
+%define ATA_IDENTIFY        0xEC
+%define ATA_READ_DMA_EXT    0x25
+%define ATA_WRITE_DMA_EXT   0x35
+%define CT_PRDT             0x80        ; the one PRD, after the 64-byte FIS and the 16-byte ACMD
+%define AHCI_STOP_TRIES     2500        ; x 200 us = half a second
+%define AHCI_PROBE_TRIES    5000        ; x 200 us = one second for a port's Phy to come up
+%define MAX_PORTS           32
+%define PART_BASE           0           ; u32  the partition's first LBA
+%define PART_SECTORS        4           ; u32  its length in sectors
+%define DISK_GERMOS         0           ; DISK.md's five words
+%define DISK_BLANK          1
+%define DISK_GPT            2
+%define DISK_TORN           3
+%define DISK_OTHER          4
+%define GPT_FIRST_USABLE    34
+%define GPT_ENTRIES         128
+%define GPT_ENTRY           128
+%define GPT_ENTRY_SECTORS   32
+%define GPT_MIN_SECTORS     67617       ; DISK.md: the smallest disk the two partitions fit
+
 ; The NIC's receive buffers (plan decision 8): sixteen of 2048 bytes, each
 ; holding the 12-byte virtio-net header and a whole frame, since buffers do
 ; not merge. One transmit buffer of the same size.
@@ -173,9 +225,10 @@ org 0                           ; file offsets == RVAs
 %define NOTE_MAX            500
 %define NB_TEXT_OFF         12
 
-; The home image (stage6/HOME.md, ring 6b): the second virtio-blk, by drive
-; order. Sector 0 the header, sectors 1-8 the table of sixteen 256-byte
-; entries, the builds from sector 9. The table lives in RAM from boot.
+; The home image (stage6/HOME.md, ring 6b): the home partition, from Stage
+; 7 (DISK.md). Sector 0 the header, sectors 1-8 the table of sixteen
+; 256-byte entries, the builds from sector 9 - every sector relative to
+; the partition. The table lives in RAM from boot.
 %define HOME_TABLE_FIRST    1
 %define HOME_TABLE_SECTORS  8
 %define HOME_DATA_FIRST     9
@@ -279,6 +332,9 @@ org 0                           ; file offsets == RVAs
 %define OBS_RESYNCS         0x2A8
 %define OBS_MOUSE_ID        0x2B0
 %define OBS_I8042_CMD       0x2B8
+%define OBS_AHCI_CAP        0x2C0       ; DISK.md: the HBA's CAP, PI, the chosen port
+%define OBS_AHCI_PI         0x2C8
+%define OBS_AHCI_PORT       0x2D0
 %define SURF_CELLS          0
 %define SURF_DIRTY          8
 %define SURF_ROW0           16
@@ -1013,42 +1069,50 @@ efi_main:
         call    serial_puts
 
         ; -------------------------------------------------------------------
-        ; The disk - the stage's first new organ. Found on the PCI bus, its
-        ; modern capability region mapped wherever the firmware put it, then
-        ; (item 10) negotiated and (item 11) driven. All of it with
-        ; interrupts off and polled, so that S7: keyboard ready stays the
-        ; last line before sti and the echo contract stays Stage 2's.
+        ; The disk (stage7/DISK.md, ring 7a): the AHCI controller found by
+        ; class and owned, every port with a SATA disk identified and
+        ; classified, one port chosen by the selection rule - a GermOS
+        ; table, else a blank disk formatted ("S7: gpt written"), else a
+        ; named refusal - and the two partition descriptors read from its
+        ; table. Then the disk line. All of it with interrupts off and
+        ; polled, so that S7: keyboard ready stays the last line before sti.
         ; -------------------------------------------------------------------
-        call    disk_find
-        call    disk_negotiate
+        call    ahci_find
+        call    disk_select
 
-        lea     rsi, [msg_disk]         ; line nine
+        lea     rsi, [msg_disk]         ; the disk line
         call    serial_puts
-        mov     eax, [disk_sectors]
+        mov     eax, [ahci_port]
         call    serial_putdec
-        lea     rsi, [msg_sectors]
+        mov     al, ' '
+        call    serial_putc
+        mov     eax, [ahci_sectors]
+        call    serial_putdec
+        lea     rsi, [msg_notes_at]
         call    serial_puts
-
-        call    disk_queue_init
+        mov     eax, [part_notes + PART_BASE]
+        call    serial_putdec
+        lea     rsi, [msg_home_at]
+        call    serial_puts
+        mov     eax, [part_home + PART_BASE]
+        call    serial_putdec
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+        mov     eax, [part_notes + PART_SECTORS]
+        mov     [disk_sectors], eax     ; the notebook's capacity: its partition's
 
         ; -------------------------------------------------------------------
-        ; The notebook - the stage's second new organ. A recognised disk is
-        ; scanned and counted; a blank one is formatted. Line ten either way.
+        ; The notebook, on the notes partition (NOTEBOOK.md unchanged): a
+        ; recognised partition is scanned and counted; a blank one is
+        ; formatted.
         ; -------------------------------------------------------------------
         call    notebook_init
 
         ; -------------------------------------------------------------------
-        ; The home image (ring 6b, HOME.md): the second virtio-blk the same
-        ; scan found, if any - attached, negotiated, its queue up, then
-        ; formatted or scanned. Line twelve, only with a second disk.
+        ; The home image (ring 6b, HOME.md), on the home partition: always
+        ; present on a GermOS disk - formatted or scanned, then its line.
         ; -------------------------------------------------------------------
-        call    home_find
-        cmp     dword [home_dev + VIO_FOUND], 0
-        je      .no_home
         mov     dword [home_present], 1
-        call    home_negotiate
-        call    home_queue_init
-.no_home:
         call    home_init
 
         ; -------------------------------------------------------------------
@@ -2225,8 +2289,6 @@ serial_raw_puts:
 ; ---------------------------------------------------------------------------
 
 %define PCI_VENDOR_VIRTIO   0x1AF4
-%define PCI_DEV_BLK_TRANS   0x1001      ; transitional virtio-blk
-%define PCI_DEV_BLK_MODERN  0x1042      ; modern-only virtio-blk
 %define PCI_DEV_NET_TRANS   0x1000      ; transitional virtio-net
 %define PCI_DEV_NET_MODERN  0x1041      ; modern-only virtio-net
 %define PCI_CMD_MEMORY      (1 << 1)
@@ -2379,9 +2441,9 @@ edid_read:
         ret
 
 ; pci_scan - one pass over bus 0, devices 0-31, every function of a
-; multi-function device, recording the first virtio-blk (1001 or 1042) into
-; disk_dev and the first virtio-net (1000 or 1041) into nic_dev: the BDF and
-; the found flag. Called once. Preserves everything.
+; multi-function device, recording the first virtio-net (1000 or 1041) into
+; nic_dev (the BDF and the found flag) and the first AHCI controller (class
+; 0x010601) into ahci_bdf. Called once. Preserves everything.
 pci_scan:
         push    rax
         push    rbx
@@ -2416,24 +2478,28 @@ pci_scan:
         or      ebx, eax
         xor     ecx, ecx
         call    pci_cfg_read32          ; vendor | device<<16
+        cmp     ax, 0xFFFF
+        je      .next_fn
         cmp     ax, PCI_VENDOR_VIRTIO
-        jne     .next_fn
+        jne     .not_virtio
         shr     eax, 16
-        lea     rbp, [disk_dev]
-        cmp     ax, PCI_DEV_BLK_TRANS
-        je      .blk
-        cmp     ax, PCI_DEV_BLK_MODERN
-        je      .blk
         lea     rbp, [nic_dev]
         cmp     ax, PCI_DEV_NET_TRANS
         je      .match
         cmp     ax, PCI_DEV_NET_MODERN
         jne     .next_fn
         jmp     .match
-.blk:                                   ; the first virtio-blk is the notebook's
-        cmp     dword [rbp + VIO_FOUND], 0      ; disk; the second, by drive
-        je      .match                          ; order, the home image
-        lea     rbp, [home_dev]                 ; (HOME.md, "Two disks")
+.not_virtio:                            ; the AHCI controller, by class (DISK.md)
+        mov     ecx, 0x08
+        call    pci_cfg_read32          ; class code in bits 31:8
+        shr     eax, 8
+        cmp     eax, AHCI_CLASS
+        jne     .next_fn
+        cmp     dword [ahci_found], 0
+        jne     .next_fn                ; the first controller wins
+        mov     [ahci_bdf], ebx
+        mov     dword [ahci_found], 1
+        jmp     .next_fn
 .match:
         cmp     dword [rbp + VIO_FOUND], 0
         jne     .next_fn                ; first of each kind wins
@@ -2717,179 +2783,238 @@ vio_driver_ok:
         ret
 
 ; ---------------------------------------------------------------------------
-; The disk - Stage 3's virtio-blk driver on the device block. Behaviour is
-; unchanged byte for byte: one queue, one request at a time, polled, a
-; three-descriptor chain per request.
+; The disk - the AHCI driver (stage7/DISK.md, ring 7a), replacing Stage 3's
+; virtio-blk driver. One controller found by class, every port with a SATA
+; disk identified and classified, one port chosen by DISK.md's selection
+; rule, one command slot, every transfer one sector, polled with a bounded
+; wait, interrupts never enabled. The two stores are two PARTITION
+; DESCRIPTORS over the chosen port: blk_rw keeps Stage 3's signature and
+; adds the partition's base. Only the BSP ever calls any of this.
 ; ---------------------------------------------------------------------------
 
-; disk_find - the physical address width, the one-pass PCI scan, then the
-; disk's block attached. Called once from efi_main with interrupts off;
-; clobbers registers freely.
-disk_find:
+; ahci_find - the physical address width, the one-pass PCI scan, then the
+; controller owned: memory, bus mastering and INTx off in its command
+; register BEFORE its BAR is read (the standing gotcha); the ABAR mapped
+; uncached wherever the firmware put it; AE set, IE clear; CAP and PI into
+; the obs page. Called once from efi_main with interrupts off; clobbers
+; registers freely.
+ahci_find:
         call    cpu_phys_bits
         call    pci_scan
-        lea     rbp, [disk_dev]
-        cmp     dword [rbp + VIO_FOUND], 0
+        cmp     dword [ahci_found], 0
         jne     .have
-        lea     rsi, [err_no_vblk]
+        lea     rsi, [err_no_ahci]
         call    serial_err
 .have:
-        call    vio_attach
+        mov     ebx, [ahci_bdf]
+        mov     ecx, 0x04
+        call    pci_cfg_read32
+        and     eax, 0xFFFF             ; the status half is write-1-to-clear
+        or      eax, PCI_CMD_MEMORY | PCI_CMD_MASTER | PCI_CMD_INTX_OFF
+        call    pci_cfg_write32
+        mov     ecx, 0x24               ; BAR5, the ABAR: a 32-bit memory BAR
+        call    pci_cfg_read32
+        test    al, 1
+        jnz     .bar_io
+        and     eax, 0xFFFFFFF0
+        mov     [ahci_abar], rax        ; RAX's high half is zero
+        call    map_mmio_2m             ; the page holding its first byte
+        add     rax, 0x10FF
+        call    map_mmio_2m             ; and its last (AHCI 1.3: 0x1100 bytes)
+        mov     rdi, [ahci_abar]
+        mov     eax, [rdi + HBA_GHC]
+        or      eax, GHC_AE
+        and     eax, ~GHC_IE
+        mov     [rdi + HBA_GHC], eax
+        mov     eax, [rdi + HBA_CAP]
+        mov     [obs_page + OBS_AHCI_CAP], rax
+        mov     eax, [rdi + HBA_PI]
+        mov     [obs_page + OBS_AHCI_PI], rax
+        mov     [ahci_pi], eax
         ret
-
-; disk_negotiate - VERSION_1 required and alone accepted; the capacity read
-; as two 32-bit halves from the device configuration. Called once from
-; efi_main after disk_find; clobbers registers freely.
-disk_negotiate:
-        lea     rbp, [disk_dev]
-        xor     ecx, ecx                ; nothing from the low word
-        mov     edx, VF_VERSION_1_HI
-        call    vio_negotiate
-
-        ; The capacity, in 512-byte sectors: a u64 at device config offset 0,
-        ; read as two halves. The high half must be zero - a disk of 2^32
-        ; sectors or more is beyond this stage's 32-bit sector arithmetic.
-        mov     rsi, [rbp + VIO_DEVICE]
-        mov     eax, [rsi + 4]
-        test    eax, eax
-        jnz     .too_big
-        mov     eax, [rsi]
-        mov     [disk_sectors], eax
-        mov     [rbp + VIO_SECTORS], eax
-        ret
-.too_big:
-        lea     rsi, [err_disk_big]
+.bar_io:
+        lea     rsi, [err_bar_io]
         call    serial_err
 
-; disk_queue_init - queue 0 on the disk's rings, then DRIVER_OK. Called once
-; from efi_main after disk_negotiate; clobbers registers freely.
-disk_queue_init:
-        lea     rbp, [disk_dev]
-        xor     ecx, ecx
-        lea     rsi, [disk_vq_desc]
-        lea     rdi, [disk_vq_avail]
-        lea     r8, [disk_vq_used]
-        call    vq_init
-        call    vio_driver_ok
+; ahci_port_base - EAX = a port index; RDI = its register block. Clobbers
+; EAX; preserves everything else.
+ahci_port_base:
+        mov     rdi, [ahci_abar]
+        add     rdi, HBA_PORTS
+        shl     eax, 7                  ; 0x80 bytes per port
+        add     rdi, rax
         ret
 
-; disk_rw / home_rw - EAX = VBLK_T_IN (read) or VBLK_T_OUT (write), EBX =
-; sector, RDI = a 512-byte buffer, on the notebook's disk or the home
-; image. Returns only on success; every failure is a named ERR: line and
-; a halt. Preserves everything. Both are blk_rw on their device block.
-disk_rw:
-        push    rbp
-        lea     rbp, [disk_dev]
-        call    blk_rw
-        pop     rbp
+; ahci_port_stop - RDI = a port's registers. ST cleared and CR awaited
+; clear, then FRE cleared and FR awaited clear, each bounded; a port that
+; will not stop is a named error. Preserves everything.
+ahci_port_stop:
+        push    rax
+        push    r8
+        and     dword [rdi + PX_CMD], ~PXCMD_ST
+        mov     r8d, AHCI_STOP_TRIES
+.wait_cr:
+        test    dword [rdi + PX_CMD], PXCMD_CR
+        jz      .cr_clear
+        mov     ax, PIT_200US
+        call    pit_wait
+        dec     r8d
+        jnz     .wait_cr
+        jmp     .would_not
+.cr_clear:
+        and     dword [rdi + PX_CMD], ~PXCMD_FRE
+        mov     r8d, AHCI_STOP_TRIES
+.wait_fr:
+        test    dword [rdi + PX_CMD], PXCMD_FR
+        jz      .fr_clear
+        mov     ax, PIT_200US
+        call    pit_wait
+        dec     r8d
+        jnz     .wait_fr
+.would_not:
+        lea     rsi, [err_ahci_stop]
+        call    serial_err
+.fr_clear:
+        pop     r8
+        pop     rax
         ret
 
-home_rw:
-        push    rbp
-        lea     rbp, [home_dev]
-        call    blk_rw
-        pop     rbp
+; ahci_port_open - EAX = the index of a port whose device is present.
+; Stops the port, gives it this driver's command list and FIS receive area
+; (zeroed), clears PxSERR and PxIS, masks PxIE, starts it (FRE, then ST
+; once BSY and DRQ are clear). Records the port and its registers. Called
+; for each port identified and again for the chosen one. Clobbers
+; registers freely.
+ahci_port_open:
+        mov     [ahci_port], eax
+        call    ahci_port_base
+        mov     [ahci_port_regs], rdi
+        call    ahci_port_stop
+
+        lea     rdi, [ahci_clb]         ; the list, the FIS area and the table
+        mov     ecx, (1024 + 256 + 256) / 8     ; contiguous in BSS, zeroed
+        xor     eax, eax
+        rep     stosq
+
+        mov     rdi, [ahci_port_regs]
+        lea     rax, [ahci_clb]
+        mov     [rdi + PX_CLB], eax
+        shr     rax, 32
+        mov     [rdi + PX_CLBU], eax    ; zero: BSS lies below 4 GB
+        lea     rax, [ahci_fb]
+        mov     [rdi + PX_FB], eax
+        shr     rax, 32
+        mov     [rdi + PX_FBU], eax
+        mov     dword [rdi + PX_SERR], 0xFFFFFFFF       ; write-1-to-clear
+        mov     dword [rdi + PX_IS], 0xFFFFFFFF
+        mov     dword [rdi + PX_IE], 0
+        or      dword [rdi + PX_CMD], PXCMD_FRE
+        mov     r8d, AHCI_STOP_TRIES
+.wait_tfd:
+        test    dword [rdi + PX_TFD], TFD_BSY | TFD_DRQ
+        jz      .idle
+        mov     ax, PIT_200US
+        call    pit_wait
+        dec     r8d
+        jnz     .wait_tfd
+        lea     rsi, [err_ahci_stop]
+        call    serial_err
+.idle:
+        or      dword [rdi + PX_CMD], PXCMD_ST
         ret
 
-; blk_rw - RBP = a virtio-blk device block (its capacity at VIO_SECTORS,
-; its queue 0 the one driven); EAX, EBX, RDI as above. One request in
-; flight at a time, on the shared header and status bytes; BSP only.
-blk_rw:
+; ahci_cmd - one command in slot 0 on the open port. AL = the ATA command,
+; EBX = the LBA (bits 47:32 zero), RDI = a 512-byte buffer, DL = 1 when the
+; data flows to the device (the W bit), 0 for a read. Builds the header and
+; the table, waits for the task file to be idle, issues, polls PxCI with a
+; PIT breath between looks, bounded, then checks the task file; every
+; failure is a named ERR: line. Counted and timed for the obs page as the
+; virtio requests were. Preserves everything.
+ahci_cmd:
         push    rax
         push    rbx
         push    rcx
         push    rdx
         push    rsi
         push    rdi
-        push    rbp
         push    r8
         push    r9
-        cmp     ebx, [rbp + VIO_SECTORS]
-        jae     .beyond
-        lea     r9, [rbp + VIO_Q]       ; queue 0's block
+        push    r10
+        mov     r9, rdi                 ; the buffer
+        lea     r10, [ahci_ct]
+        push    rax
+        mov     rdi, r10                ; the table, cleared
+        mov     ecx, 256 / 8
+        xor     eax, eax
+        rep     stosq
+        pop     rax
+        mov     byte [r10 + 0], FIS_H2D
+        mov     byte [r10 + 1], 0x80    ; C: a command, not control
+        mov     [r10 + 2], al           ; the command
+        mov     ecx, ebx
+        mov     [r10 + 4], cl           ; LBA 7:0
+        shr     ecx, 8
+        mov     [r10 + 5], cl           ; LBA 15:8
+        shr     ecx, 8
+        mov     [r10 + 6], cl           ; LBA 23:16
+        mov     byte [r10 + 7], 0x40    ; LBA mode
+        shr     ecx, 8
+        mov     [r10 + 8], cl           ; LBA 31:24; 47:32 stay zero
+        mov     byte [r10 + 12], 1      ; one sector
+        mov     [r10 + CT_PRDT], r9     ; DBA and DBAU
+        mov     dword [r10 + CT_PRDT + 12], 511 ; byte count - 1, no interrupt
+        lea     rsi, [ahci_clb]         ; slot 0's header
+        mov     eax, 5 | (1 << 16)      ; CFL 5 dwords, PRDTL 1
+        test    dl, dl
+        jz      .header
+        or      eax, 1 << 6             ; W
+.header:
+        mov     [rsi], eax
+        mov     dword [rsi + 4], 0      ; PRDBC
+        mov     [rsi + 8], r10          ; CTBA and CTBAU
 
-        mov     [req_hdr], eax          ; type
-        mov     dword [req_hdr + 4], 0  ; reserved
-        mov     [req_hdr + 8], ebx      ; sector, low half
-        mov     dword [req_hdr + 12], 0 ; sector, high half
-        mov     byte [req_status], 0xFF ; a sentinel the device must overwrite
-
-        mov     rsi, [r9 + Q_DESC]
-        lea     rdx, [req_hdr]          ; descriptor 0: the header, chained on
-        mov     [rsi], rdx
-        mov     dword [rsi + 8], 16
-        mov     word [rsi + 12], VQ_DESC_NEXT
-        mov     word [rsi + 14], 1
-        mov     [rsi + 16], rdi         ; descriptor 1: the data, chained on
-        mov     dword [rsi + 24], 512
-        mov     cx, VQ_DESC_NEXT
-        test    eax, eax
-        jnz     .not_a_read
-        or      cx, VQ_DESC_WRITE       ; a read: the device writes the buffer
-.not_a_read:
-        mov     [rsi + 28], cx
-        mov     word [rsi + 30], 2
-        lea     rdx, [req_status]       ; descriptor 2: the status, end of chain
-        mov     [rsi + 32], rdx
-        mov     dword [rsi + 40], 1
-        mov     word [rsi + 44], VQ_DESC_WRITE
-        mov     word [rsi + 46], 0
-
-        ; Publish: ring[idx & mask] = head 0, fence, idx++, fence.
-        mov     rsi, [r9 + Q_AVAIL]
-        movzx   ecx, word [rsi + 2]
-        mov     edx, ecx
-        and     edx, [r9 + Q_MASK]
-        mov     word [rsi + 4 + rdx*2], 0
-        mfence
-        inc     ecx
-        mov     [rsi + 2], cx
-        mfence
-
-        mov     rdx, [r9 + Q_DOORBELL]  ; ring: a 16-bit write of the queue number
-        mov     word [rdx], 0
-
-        ; Completion is the used index moving on. Polled with a PIT breath
-        ; between looks, bounded, so a dead device is a message in five
-        ; seconds rather than a gate that hangs. Counted and timed for the
-        ; obs page.
+        mov     rdi, [ahci_port_regs]
+        mov     r8d, AHCI_STOP_TRIES
+.wait_idle:
+        test    dword [rdi + PX_TFD], TFD_BSY | TFD_DRQ
+        jz      .issue
+        mov     ax, PIT_200US
+        call    pit_wait
+        dec     r8d
+        jnz     .wait_idle
+        jmp     .timeout
+.issue:
+        mov     dword [rdi + PX_IS], 0xFFFFFFFF ; a clean slate for this command
+        mov     dword [rdi + PX_CI], 1
         inc     qword [obs_page + OBS_DISK_REQS]
         rdtsc
         shl     rdx, 32
         or      rax, rdx
         mov     [t_disk], rax
-        mov     rsi, [r9 + Q_USED]
         mov     r8d, VQ_POLL_TRIES
 .poll:
-        movzx   eax, word [rsi + 2]
-        cmp     eax, [r9 + Q_LAST_USED]
-        jne     .completed
+        test    dword [rdi + PX_CI], 1
+        jz      .completed
         mov     ax, PIT_200US
         call    pit_wait
         dec     r8d
         jnz     .poll
+.timeout:
         lea     rsi, [err_disk_timeout]
         call    serial_err
 .completed:
-        lfence
         rdtsc
         shl     rdx, 32
         or      rax, rdx
         sub     rax, [t_disk]
         add     [obs_page + OBS_DISK_WAIT], rax
-        mov     edx, [r9 + Q_LAST_USED] ; the used element this completion fills
-        and     edx, [r9 + Q_MASK]
-        mov     eax, [rsi + 4 + rdx*8]  ; its id must be our chain head, 0
-        test    eax, eax
-        jnz     .bad_id
-        inc     dword [r9 + Q_LAST_USED]
-        and     dword [r9 + Q_LAST_USED], 0xFFFF
-        cmp     byte [req_status], VBLK_S_OK
-        jne     .failed
-
+        test    dword [rdi + PX_IS], PXIS_TFES
+        jnz     .failed
+        test    dword [rdi + PX_TFD], TFD_ERR
+        jnz     .failed
+        pop     r10
         pop     r9
         pop     r8
-        pop     rbp
         pop     rdi
         pop     rsi
         pop     rdx
@@ -2897,62 +3022,560 @@ blk_rw:
         pop     rbx
         pop     rax
         ret
-.beyond:
-        lea     rsi, [err_disk_beyond]
-        call    serial_err
-.bad_id:
-        lea     rsi, [err_disk_id]
-        call    serial_err
 .failed:
+        mov     dword [rdi + PX_SERR], 0xFFFFFFFF
         lea     rsi, [err_disk_failed]
         call    serial_err
 
-; ---------------------------------------------------------------------------
-; The home image - the second virtio-blk (stage6/HOME.md, ring 6b): the
-; same driver on its own device block and rings. Absent, the machine is
-; ring 6a's, line for line. Present, it is formatted or scanned at boot,
-; its table kept in RAM, and line twelve says how many apps it holds.
-; ---------------------------------------------------------------------------
-
-; home_find - the home's block attached, if the scan found a second
-; virtio-blk; nothing otherwise. Called once from efi_main after the
-; notebook, interrupts off; clobbers registers freely.
-home_find:
-        lea     rbp, [home_dev]
-        cmp     dword [rbp + VIO_FOUND], 0
-        je      .none
-        call    vio_attach
-.none:
+; ahci_rw - EAX = VBLK_T_IN (a read) or VBLK_T_OUT (a write), EBX = the
+; absolute LBA, RDI = a 512-byte buffer, on the open port. READ DMA EXT or
+; WRITE DMA EXT, one sector. Returns only on success. Preserves everything.
+ahci_rw:
+        push    rax
+        push    rdx
+        cmp     ebx, [ahci_sectors]
+        jae     .beyond
+        mov     dl, al                  ; 0 a read, 1 a write: the W bit
+        mov     al, ATA_READ_DMA_EXT
+        test    dl, dl
+        jz      .go
+        mov     al, ATA_WRITE_DMA_EXT
+.go:
+        call    ahci_cmd
+        pop     rdx
+        pop     rax
         ret
+.beyond:
+        lea     rsi, [err_disk_beyond]
+        call    serial_err
 
-; home_negotiate - VERSION_1 required and alone accepted; the capacity as
-; two halves into the block. Clobbers registers freely.
-home_negotiate:
-        lea     rbp, [home_dev]
-        xor     ecx, ecx
-        mov     edx, VF_VERSION_1_HI
-        call    vio_negotiate
-        mov     rsi, [rbp + VIO_DEVICE]
-        mov     eax, [rsi + 4]
-        test    eax, eax
+; ahci_identify - IDENTIFY DEVICE on the open port into ahci_ident: the
+; sector count into ahci_sectors (the LBA48 count in words 100-103 when
+; word 83 bit 10 says so, else words 60-61); 2^32 sectors or more, or a
+; logical sector that is not 512 bytes (word 106 bit 12 with words 117-118
+; not 256), a named error. Clobbers registers freely.
+ahci_identify:
+        mov     al, ATA_IDENTIFY
+        xor     ebx, ebx
+        lea     rdi, [ahci_ident]
+        xor     edx, edx
+        call    ahci_cmd
+        lea     rsi, [ahci_ident]
+        movzx   eax, word [rsi + 106 * 2]
+        test    eax, 1 << 12
+        jz      .sector_512
+        cmp     dword [rsi + 117 * 2], 256      ; words 117-118: the logical sector, in words
+        jne     .bad_sector
+.sector_512:
+        movzx   eax, word [rsi + 83 * 2]
+        test    eax, 1 << 10
+        jz      .lba28
+        mov     rax, [rsi + 100 * 2]            ; words 100-103, a u64
+        mov     rdx, rax
+        shr     rdx, 32
+        test    edx, edx
         jnz     .too_big
-        mov     eax, [rsi]
-        mov     [rbp + VIO_SECTORS], eax
+        jmp     .have
+.lba28:
+        mov     eax, [rsi + 60 * 2]             ; words 60-61
+.have:
+        mov     [ahci_sectors], eax
         ret
+.bad_sector:
+        lea     rsi, [err_sector_size]
+        call    serial_err
 .too_big:
         lea     rsi, [err_disk_big]
         call    serial_err
 
-; home_queue_init - queue 0 on the home's rings, then DRIVER_OK.
-home_queue_init:
-        lea     rbp, [home_dev]
-        xor     ecx, ecx
-        lea     rsi, [home_vq_desc]
-        lea     rdi, [home_vq_avail]
-        lea     r8, [home_vq_used]
-        call    vq_init
-        call    vio_driver_ok
+; disk_select - DISK.md's selection rule. Every implemented port whose
+; device is present and active (DET 3, IPM 1 - a port with a Phy still
+; coming up is given a bounded wait; a port with no device is passed at
+; once) and whose signature is a SATA disk is opened, identified, and its
+; first two sectors read and classified (disk_classify); the port is then
+; stopped, so only the chosen port ever runs with this driver's list. Then:
+; the first port holding a GermOS table is chosen; else the first blank
+; port is chosen and formatted (gpt_write); else the named error naming
+; every identified port, and a halt. Leaves the chosen port open, its count
+; in ahci_sectors, the two descriptors filled. Clobbers registers freely.
+disk_select:
+        xor     r12d, r12d
+        mov     dword [ports_mask], 0
+.port:
+        cmp     r12d, MAX_PORTS
+        jae     .choose
+        bt      dword [ahci_pi], r12d
+        jnc     .next
+        mov     eax, r12d
+        call    ahci_port_base
+        mov     r8d, AHCI_PROBE_TRIES
+.probe:
+        mov     eax, [rdi + PX_SSTS]
+        mov     ecx, eax
+        and     ecx, 0xF                ; DET
+        jz      .next                   ; no device, no Phy: nothing to wait for
+        and     eax, 0xF0F
+        cmp     eax, 0x103              ; DET 3, IPM 1
+        je      .present
+        mov     ax, PIT_200US
+        call    pit_wait
+        dec     r8d
+        jnz     .probe
+        jmp     .next
+.present:
+        cmp     dword [rdi + PX_SIG], SIG_SATA_DISK
+        jne     .next
+        mov     eax, r12d
+        call    ahci_port_open
+        call    ahci_identify
+        mov     eax, [ahci_sectors]
+        lea     rdx, [port_sectors]
+        mov     [rdx + r12*4], eax
+        call    disk_classify           ; AL = the word
+        lea     rdx, [port_word]
+        mov     [rdx + r12], al
+        bts     dword [ports_mask], r12d
+        mov     rdi, [ahci_port_regs]
+        call    ahci_port_stop
+.next:
+        inc     r12d
+        jmp     .port
+
+.choose:
+        cmp     dword [ports_mask], 0
+        je      .no_disk
+        mov     al, DISK_GERMOS
+        call    port_with_word
+        cmp     eax, -1
+        jne     .chosen
+        mov     al, DISK_BLANK
+        call    port_with_word
+        cmp     eax, -1
+        je      .refuse
+        call    ahci_port_open
+        call    gpt_write               ; the table, then "S7: gpt written"
+        mov     eax, [ahci_port]
+        jmp     .chosen
+.chosen:
+        call    ahci_port_open          ; open again: another port may have held the list
+        mov     eax, [ahci_port]
+        lea     rdx, [port_sectors]
+        mov     eax, [rdx + rax*4]
+        mov     [ahci_sectors], eax
+        mov     eax, [ahci_port]
+        mov     [obs_page + OBS_AHCI_PORT], rax
+        call    gpt_read                ; the descriptors from the table on the chosen disk
         ret
+.no_disk:
+        lea     rsi, [err_no_sata]
+        call    serial_err
+.refuse:
+        ; ERR: no GermOS disk and no blank disk - port 0: other, port 1: gpt
+        lea     rsi, [msg_err]
+        call    serial_puts
+        lea     rsi, [err_no_germos]
+        call    serial_puts
+        xor     r12d, r12d
+        xor     r13d, r13d              ; ports named so far
+.name:
+        cmp     r12d, MAX_PORTS
+        jae     .named
+        bt      dword [ports_mask], r12d
+        jnc     .name_next
+        test    r13d, r13d
+        jz      .first_name
+        lea     rsi, [msg_comma]
+        call    serial_puts
+.first_name:
+        lea     rsi, [msg_port]
+        call    serial_puts
+        mov     eax, r12d
+        call    serial_putdec
+        lea     rsi, [msg_colon]
+        call    serial_puts
+        lea     rdx, [port_word]
+        movzx   eax, byte [rdx + r12]
+        call    word_string
+        call    serial_puts
+        inc     r13d
+.name_next:
+        inc     r12d
+        jmp     .name
+.named:
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+        jmp     halt_forever
+
+; word_string - AL = a word; RSI = its name. RIP-relative leas, never a
+; table of addresses in data: relocations are stripped. Preserves
+; everything else.
+word_string:
+        lea     rsi, [word_germos]
+        cmp     al, DISK_GERMOS
+        je      .out
+        lea     rsi, [word_blank]
+        cmp     al, DISK_BLANK
+        je      .out
+        lea     rsi, [word_gpt]
+        cmp     al, DISK_GPT
+        je      .out
+        lea     rsi, [word_torn]
+        cmp     al, DISK_TORN
+        je      .out
+        lea     rsi, [word_other]
+.out:
+        ret
+
+; port_with_word - AL = a word; EAX = the first identified port holding a
+; disk of that word, or -1. Preserves everything else.
+port_with_word:
+        push    rcx
+        push    rdx
+        mov     cl, al
+        xor     eax, eax
+.scan:
+        cmp     eax, MAX_PORTS
+        jae     .none
+        bt      dword [ports_mask], eax
+        jnc     .next
+        lea     rdx, [port_word]
+        cmp     [rdx + rax], cl
+        je      .found
+.next:
+        inc     eax
+        jmp     .scan
+.none:
+        mov     eax, -1
+.found:
+        pop     rdx
+        pop     rcx
+        ret
+
+; disk_classify - the open port's disk in DISK.md's five words: sectors 0
+; and 1 read into gpt_sec0 and gpt_hdr; both all zero is blank; no EFI PART
+; signature at sector 1 is other; else gpt_validate says germos, gpt or
+; torn. AL = the word. Clobbers registers freely.
+disk_classify:
+        mov     eax, VBLK_T_IN
+        xor     ebx, ebx
+        lea     rdi, [gpt_sec0]
+        call    ahci_rw
+        mov     eax, VBLK_T_IN
+        mov     ebx, 1
+        lea     rdi, [gpt_hdr]
+        call    ahci_rw
+        lea     rsi, [gpt_sec0]
+        mov     ecx, 1024 / 8           ; the two sectors are contiguous
+        call    buf_zero
+        test    eax, eax
+        jnz     .blank
+        mov     rax, 'EFI PART'
+        cmp     [gpt_hdr], rax
+        jne     .other
+        call    gpt_validate
+        ret
+.blank:
+        mov     al, DISK_BLANK
+        ret
+.other:
+        mov     al, DISK_OTHER
+        ret
+
+; buf_zero - RSI = a buffer, ECX = its length in qwords. EAX = 1 if every
+; qword is zero, else 0. Preserves everything else.
+buf_zero:
+        push    rcx
+        push    rsi
+.qword:
+        cmp     qword [rsi], 0
+        jne     .no
+        add     rsi, 8
+        dec     ecx
+        jnz     .qword
+        mov     eax, 1
+        jmp     .out
+.no:
+        xor     eax, eax
+.out:
+        pop     rsi
+        pop     rcx
+        ret
+
+; gpt_validate - DISK.md's recognition rule on gpt_hdr (sector 1 of the
+; open port's disk, its signature already seen): revision, size, reserved,
+; the header's own CRC, MyLBA 1, the entries at LBA 2, 128 of 128 bytes,
+; the usable range inside the disk, the tail zero; the 32 array sectors
+; read into gpt_entries and their CRC; every entry either all zero or
+; inside the usable range; an entry of each GermOS type. AL = DISK_GERMOS
+; (the descriptors filled from the two entries), DISK_GPT (a valid table
+; without both), or DISK_TORN. Clobbers registers freely but R12, which
+; the caller's port loop keeps.
+gpt_validate:
+        push    r12
+        call    .body
+        pop     r12
+        ret
+.body:
+        lea     rsi, [gpt_hdr]
+        cmp     dword [rsi + 8], 0x00010000
+        jne     .torn
+        cmp     dword [rsi + 12], 92
+        jne     .torn
+        cmp     dword [rsi + 20], 0
+        jne     .torn
+        ; the header CRC: bytes 0-15, four zero bytes, bytes 20-91
+        mov     eax, 0xFFFFFFFF
+        mov     ecx, 16
+        call    crc32_update
+        push    rsi
+        lea     rsi, [crc_zero4]
+        mov     ecx, 4
+        call    crc32_update
+        pop     rsi
+        push    rsi
+        add     rsi, 20
+        mov     ecx, 72
+        call    crc32_update
+        pop     rsi
+        not     eax
+        cmp     eax, [rsi + 16]
+        jne     .torn
+        cmp     qword [rsi + 24], 1                     ; MyLBA
+        jne     .torn
+        cmp     dword [rsi + 36], 0                     ; AlternateLBA, high half
+        jne     .torn
+        mov     eax, [rsi + 32]
+        cmp     eax, [ahci_sectors]
+        jae     .torn
+        cmp     dword [rsi + 44], 0                     ; FirstUsable, high half
+        jne     .torn
+        cmp     dword [rsi + 52], 0                     ; LastUsable, high half
+        jne     .torn
+        mov     eax, [rsi + 40]
+        cmp     eax, GPT_FIRST_USABLE
+        jb      .torn
+        mov     [gpt_usable_first], eax
+        mov     edx, [rsi + 48]
+        cmp     edx, [ahci_sectors]
+        jae     .torn
+        cmp     edx, eax
+        jb      .torn
+        mov     [gpt_usable_last], edx
+        cmp     qword [rsi + 72], 2                     ; PartitionEntryLBA
+        jne     .torn
+        cmp     dword [rsi + 80], GPT_ENTRIES
+        jne     .torn
+        cmp     dword [rsi + 84], GPT_ENTRY
+        jne     .torn
+        push    rsi
+        add     rsi, 92
+        mov     ecx, (512 - 92) / 4                     ; 420 bytes: 105 dwords
+.tail:
+        cmp     dword [rsi], 0
+        jne     .torn_pop
+        add     rsi, 4
+        dec     ecx
+        jnz     .tail
+        pop     rsi
+
+        ; the array: 32 sectors from LBA 2
+        mov     ebx, 2
+        lea     rdi, [gpt_entries]
+.read:
+        mov     eax, VBLK_T_IN
+        call    ahci_rw
+        add     rdi, 512
+        inc     ebx
+        cmp     ebx, 2 + GPT_ENTRY_SECTORS
+        jb      .read
+        push    rsi
+        lea     rsi, [gpt_entries]
+        mov     eax, 0xFFFFFFFF
+        mov     ecx, GPT_ENTRIES * GPT_ENTRY
+        call    crc32_update
+        not     eax
+        pop     rsi
+        cmp     eax, [rsi + 88]
+        jne     .torn
+
+        ; the entries
+        mov     dword [part_notes + PART_SECTORS], 0
+        mov     dword [part_home + PART_SECTORS], 0
+        xor     r12d, r12d
+.entry:
+        cmp     r12d, GPT_ENTRIES
+        jae     .entries_done
+        lea     rsi, [gpt_entries]
+        mov     eax, r12d
+        shl     eax, 7
+        add     rsi, rax                                ; RSI = the entry
+        mov     ecx, 2
+        call    buf_zero                                ; the type GUID
+        test    eax, eax
+        jz      .used
+        mov     ecx, GPT_ENTRY / 8
+        call    buf_zero                                ; unused: all zero
+        test    eax, eax
+        jz      .torn
+        jmp     .entry_next
+.used:
+        cmp     dword [rsi + 36], 0                     ; FirstLBA, high half
+        jne     .torn
+        cmp     dword [rsi + 44], 0                     ; LastLBA, high half
+        jne     .torn
+        mov     eax, [rsi + 32]
+        mov     edx, [rsi + 40]
+        cmp     eax, [gpt_usable_first]
+        jb      .torn
+        cmp     edx, [gpt_usable_last]
+        ja      .torn
+        cmp     edx, eax
+        jb      .torn
+        sub     edx, eax
+        inc     edx                                     ; EDX = sectors
+        lea     rdi, [guid_notes_type]
+        call    guid_equal
+        jz      .not_notes
+        cmp     dword [part_notes + PART_SECTORS], 0
+        jne     .entry_next                             ; the first of each type wins
+        mov     [part_notes + PART_BASE], eax
+        mov     [part_notes + PART_SECTORS], edx
+        jmp     .entry_next
+.not_notes:
+        lea     rdi, [guid_home_type]
+        call    guid_equal
+        jz      .entry_next
+        cmp     dword [part_home + PART_SECTORS], 0
+        jne     .entry_next
+        mov     [part_home + PART_BASE], eax
+        mov     [part_home + PART_SECTORS], edx
+.entry_next:
+        inc     r12d
+        jmp     .entry
+.entries_done:
+        cmp     dword [part_notes + PART_SECTORS], 0
+        je      .gpt
+        cmp     dword [part_home + PART_SECTORS], 0
+        je      .gpt
+        mov     al, DISK_GERMOS
+        ret
+.gpt:
+        mov     al, DISK_GPT
+        ret
+.torn_pop:
+        pop     rsi
+.torn:
+        mov     al, DISK_TORN
+        ret
+
+; guid_equal - RSI = an entry (its type GUID at 0), RDI = a 16-byte GUID as
+; stored. ZF clear when equal. Preserves everything.
+guid_equal:
+        push    rax
+        push    rcx
+        mov     rax, [rsi]
+        cmp     rax, [rdi]
+        jne     .no
+        mov     rax, [rsi + 8]
+        cmp     rax, [rdi + 8]
+        jne     .no
+        or      eax, 1                  ; ZF clear: equal
+        jmp     .out
+.no:
+        xor     eax, eax                ; ZF set: different
+.out:
+        pop     rcx
+        pop     rax
+        ret
+
+; gpt_read - the chosen disk's table read again and validated; the two
+; descriptors are what gpt_validate filled. A disk chosen as germos is
+; germos; a disk just formatted must read back as germos too - anything
+; else is the writer's error, named. Clobbers registers freely.
+gpt_read:
+        call    disk_classify
+        cmp     al, DISK_GERMOS
+        je      .ok
+        lea     rsi, [err_gpt_readback]
+        call    serial_err
+.ok:
+        ret
+
+; crc32_update - EAX = the running CRC-32 in its inverted form (begin with
+; all ones, finish with NOT), RSI = bytes, ECX = how many. The reflected
+; polynomial 0xEDB88320, bit by bit - the UEFI specification's CRC, whose
+; check value over "123456789" is 0xCBF43926. Preserves everything but EAX.
+crc32_update:
+        push    rcx
+        push    rdx
+        push    rsi
+.byte:
+        test    ecx, ecx
+        jz      .done
+        movzx   edx, byte [rsi]
+        inc     rsi
+        xor     eax, edx
+        mov     edx, 8
+.bit:
+        shr     eax, 1
+        jnc     .no_xor
+        xor     eax, 0xEDB88320
+.no_xor:
+        dec     edx
+        jnz     .bit
+        dec     ecx
+        jmp     .byte
+.done:
+        pop     rsi
+        pop     rdx
+        pop     rcx
+        ret
+
+; gpt_write - item 10 writes DISK.md's table over the open blank disk and
+; prints "S7: gpt written". Item 9 has no writer: a blank disk is named
+; with the other ports and the machine halts.
+gpt_write:
+        jmp     disk_select.refuse
+
+; disk_rw / home_rw - EAX = VBLK_T_IN (read) or VBLK_T_OUT (write), EBX =
+; the sector within the partition, RDI = a 512-byte buffer, on the notes
+; partition or the home partition. Returns only on success; every failure
+; is a named ERR: line and a halt. Preserves everything. Both are blk_rw
+; on their partition descriptor - Stage 3's signature, unchanged.
+disk_rw:
+        push    rbp
+        lea     rbp, [part_notes]
+        call    blk_rw
+        pop     rbp
+        ret
+
+home_rw:
+        push    rbp
+        lea     rbp, [part_home]
+        call    blk_rw
+        pop     rbp
+        ret
+
+; blk_rw - RBP = a partition descriptor (PART_BASE, PART_SECTORS); EAX,
+; EBX, RDI as above. The sector must lie inside the partition; the base is
+; added and the port driven. Preserves everything.
+blk_rw:
+        push    rbx
+        cmp     ebx, [rbp + PART_SECTORS]
+        jae     .beyond
+        add     ebx, [rbp + PART_BASE]
+        call    ahci_rw
+        pop     rbx
+        ret
+.beyond:
+        lea     rsi, [err_disk_beyond]
+        call    serial_err
+
+; ---------------------------------------------------------------------------
+; The home image (stage6/HOME.md, ring 6b), on the home partition now: the
+; format is HOME.md's byte for byte, every sector number relative to the
+; partition. Always present on a GermOS disk (DISK.md).
+; ---------------------------------------------------------------------------
 
 ; home_init - HOME.md, "The disk": sector 0 recognised (GERMHOME, version
 ; 1) or the image formatted (the header written, sectors 1-8 zeroed); the
@@ -3004,7 +3627,7 @@ home_init:
         mov     qword [sector_buf + 16], HOME_TABLE_FIRST
         mov     qword [sector_buf + 24], HOME_TABLE_SECTORS
         mov     qword [sector_buf + 32], HOME_DATA_FIRST
-        mov     eax, [home_dev + VIO_SECTORS]
+        mov     eax, [part_home + PART_SECTORS]
         mov     [sector_buf + 40], rax                  ; capacity (RAX high half zero)
         mov     eax, VBLK_T_OUT
         xor     ebx, ebx
@@ -3177,7 +3800,7 @@ home_build_valid:
         jb      .no
         add     ecx, edx
         jc      .no
-        cmp     ecx, [home_dev + VIO_SECTORS]
+        cmp     ecx, [part_home + PART_SECTORS]
         ja      .no
         mov     eax, 1
         ret
@@ -3213,7 +3836,7 @@ home_install:
         mov     eax, [home_next]
         add     eax, r13d
         jc      .full
-        cmp     eax, [home_dev + VIO_SECTORS]
+        cmp     eax, [part_home + PART_SECTORS]
         ja      .full
         call    home_find_entry                         ; EAX = the entry, or -1
         cmp     eax, -1
@@ -7753,8 +8376,22 @@ msg_idt:        db      'S7: idt ready', 13, 10, 0
 msg_found:      db      'S7: cores found ', 0
 msg_woken:      db      'S7: cores woken ', 0
 msg_console:    db      'S7: console ', 0
-msg_disk:       db      'S7: disk ', 0
-msg_sectors:    db      ' sectors', 13, 10, 0
+msg_disk:       db      'S7: disk port ', 0
+msg_notes_at:   db      ' notes ', 0
+msg_home_at:    db      ' home ', 0
+msg_gpt_written: db     'S7: gpt written', 13, 10, 0
+msg_port:       db      'port ', 0
+msg_colon:      db      ': ', 0
+msg_comma:      db      ', ', 0
+word_germos:    db      'germos', 0
+word_blank:     db      'blank', 0
+word_gpt:       db      'gpt', 0
+word_torn:      db      'torn', 0
+word_other:     db      'other', 0
+crc_zero4:      dd      0
+; DISK.md's GUIDs as stored: the first three fields little-endian.
+guid_notes_type: db     0x57,0x55,0x84,0x50,0x34,0xee,0x31,0x47,0x8b,0x83,0xd1,0xd6,0xf1,0x4f,0xd8,0xc5
+guid_home_type: db      0x07,0x40,0x6d,0x45,0x03,0xd8,0xa0,0x41,0xa6,0x61,0xca,0x73,0x6d,0xdc,0xf9,0x6b
 msg_nb:         db      'S7: notebook ', 0
 msg_notes:      db      ' notes', 13, 10, 0
 msg_nb_fmt:     db      'S7: notebook formatted', 13, 10, 0
@@ -7836,7 +8473,13 @@ err_ap_high:    db      'ap_entry sits above 4GB - the trampoline cannot reach i
 err_shadow:     db      'console shadow too small for this mode - raise SHADOW_SIZE', 0
 err_one_core:   db      'the glass needs a second core - boot with -smp 2 or more', 0
 err_too_small:  db      'mode too small for the glass', 0
-err_no_vblk:    db      'no virtio-blk device on PCI bus 0', 0
+err_no_ahci:    db      'no AHCI controller on PCI bus 0', 0
+err_no_sata:    db      'no SATA disk on any AHCI port', 0
+err_ahci_stop:  db      'AHCI port would not stop', 0
+err_sector_size: db     'disk sector is not 512 bytes', 0
+err_no_germos:  db      'no GermOS disk and no blank disk - ', 0
+err_gpt_readback: db    'the table written does not read back as GermOS', 0
+err_disk_small: db      'disk too small for the two partitions', 0
 err_vio_cap:    db      'virtio device lacks a modern capability (common, notify or device)', 0
 err_bar_io:     db      'virtio capability names an I/O BAR or a BAR beyond 5 - not a modern device', 0
 err_bar_high:   db      'BAR lies beyond the physical address width', 0
@@ -7851,8 +8494,7 @@ err_disk_big:   db      'disk has 2^32 sectors or more - beyond this stage', 0
 err_vq_size:    db      'virtqueue size is 0, above VQ_MAX, or not a power of two', 0
 err_disk_beyond: db     'disk request beyond the capacity', 0
 err_disk_timeout: db    'disk request timed out', 0
-err_disk_id:    db      'disk completed a descriptor we did not submit', 0
-err_disk_failed: db     'disk request failed - status not OK', 0
+err_disk_failed: db     'disk request failed - task file error', 0
 
 ; The shared font, byte for byte the file the pixel checker renders from.
 ; 128 glyphs, 8 bytes each, row per byte, bit 0 leftmost - stage2/FONT.md.
@@ -8136,12 +8778,42 @@ edid_buf:       resb    EDID_BYTES
 spare_next:     resd    1               ; pages handed out of the spare pool
 phys_limit:     resq    1               ; 1 << physical address width
         alignb  16
-disk_dev:       resb    VIO_BLOCK_SIZE
-        alignb  16
 nic_dev:        resb    VIO_BLOCK_SIZE
+
+; The AHCI controller and the chosen port (DISK.md): the BDF and the ABAR,
+; the port's registers, the ports identified and their words, the two
+; partition descriptors, then the command list (1 KB aligned), the FIS
+; receive area (256-aligned), the command table (128-aligned), the IDENTIFY
+; data, and the table's sectors as read. One owner - the BSP.
         alignb  16
-home_dev:       resb    VIO_BLOCK_SIZE  ; the second virtio-blk (ring 6b)
-disk_sectors:   resd    1               ; the capacity, in 512-byte sectors
+ahci_bdf:       resd    1
+ahci_found:     resd    1
+ahci_abar:      resq    1
+ahci_port_regs: resq    1
+ahci_port:      resd    1               ; the chosen port's index
+ahci_pi:        resd    1
+ahci_sectors:   resd    1               ; the open port's disk, in 512-byte sectors
+ports_mask:     resd    1               ; the ports identified, one bit each
+gpt_usable_first: resd  1
+gpt_usable_last: resd   1
+        alignb  16
+port_sectors:   resd    MAX_PORTS
+port_word:      resb    MAX_PORTS
+        alignb  16
+part_notes:     resb    8               ; PART_BASE, PART_SECTORS
+part_home:      resb    8
+disk_sectors:   resd    1               ; the notes partition's capacity, in sectors
+        alignb  1024
+ahci_clb:       resb    1024            ; 32 command headers; slot 0 is the one used
+        alignb  256
+ahci_fb:        resb    256
+        alignb  128
+ahci_ct:        resb    256             ; the FIS, the ACMD, one PRD
+        alignb  512
+ahci_ident:     resb    512
+gpt_sec0:       resb    512             ; sector 0 and sector 1 of a disk, contiguous
+gpt_hdr:        resb    512
+gpt_entries:    resb    GPT_ENTRY_SECTORS * 512
 
 ; The home image's state (HOME.md): whether there is one, its table in
 ; RAM, which entries are valid, how many, and the next free sector.
@@ -8164,9 +8836,6 @@ sha_tail:       resb    128
 sha_digest:     resb    32
 say_buf:        resb    128
 
-        alignb  16
-req_hdr:        resb    16              ; type, reserved, sector
-req_status:     resb    1               ; the device's verdict, written last
         alignb  512
 sector_buf:     resb    512             ; one sector, for the notebook's reads
 rec_buf:        resb    512             ; the record being written
@@ -8179,25 +8848,9 @@ line_len:       resd    1               ; bytes typed since the prompt
         alignb  16
 line_buf:       resb    512             ; NOTE_MAX of them used at most
 
-; The disk's rings. 4 KB aligned - more than the spec's 16/2/4 - so each
-; sits in its own page and none straddles anything.
-        alignb  4096
-disk_vq_desc:   resb    VQ_MAX * 16
-        alignb  4096
-disk_vq_avail:  resb    6 + VQ_MAX * 2
-        alignb  4096
-disk_vq_used:   resb    6 + VQ_MAX * 8
-
-; The home image's rings, the same shape.
-        alignb  4096
-home_vq_desc:   resb    VQ_MAX * 16
-        alignb  4096
-home_vq_avail:  resb    6 + VQ_MAX * 2
-        alignb  4096
-home_vq_used:   resb    6 + VQ_MAX * 8
-
 ; The NIC: its address, its two queues' rings, its receive buffers and the
-; one transmit buffer. Rings 4 KB aligned as the disk's are.
+; one transmit buffer. Rings 4 KB aligned - more than the spec's 16/2/4 -
+; so each sits in its own page and none straddles anything.
         alignb  16
 nic_mac:        resb    6
         alignb  4096
