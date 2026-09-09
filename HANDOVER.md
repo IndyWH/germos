@@ -1527,6 +1527,40 @@ tested module; the CRC check value; the round trip at 131,072 sectors and
 at the minimum; `classify` on the built image, zeros, `esp.img`, a foreign
 type GUID and a flipped bit; the built image the one the two host
 witnesses read at item 1.
+**Item 3** — `broker/metal.py` (not frozen until item 10, A3): DISK.md's
+Python verbatim (its three imports included, so the block matches the
+document byte for byte); `twin_extra_args(workdir)` — `-cpu IvyBridge`
+and a 64 MB SATA disk on `ide.1` under the twin's scratch directory;
+`read_sata_notes` (A2: a missing file, a short file, a blank disk, a table
+without a notebook — each a `notebook: …` log line and `None`, never an
+exception); `rehearse_metal`, the frozen `twin.rehearse` transcribed with
+the `S7:` ready line, line regex and obs-page regex, the SATA disk created
+blank beside the frozen shape's virtio `notes.img`, the note read from the
+SATA notes partition, and a log line saying whether the virtio image
+stayed all zero — judged by the frozen `twin.judge`; `tests_hook_metal`
+(`plans.tests_hook` with the `S7:` regex); `rehearse_metal_plan` behind
+ring 6c's point-offset check; `Metal(Pointer)` swapping
+`plans.rehearse_plan` for this twin around the frozen `Installer.install`;
+`--rehearse-app` and `--rehearse` hand runs; Stage 7 defaults. Proven on
+the host with no guest and no call: the twin's command as built (three
+drives — the ESP, the frozen virtio notes disk, the SATA disk — the cage
+on 9998, the 1080p device, the `ide-hd`, `-cpu IvyBridge`); a bad point
+offset refused with no boot; the four A2 paths; a stub twin delivering
+GLASS.md's `point app` frame and the install swap reaching the stub with
+the plan and eighteen lines, `plans.rehearse_plan` restored after; the
+mock over the wire on a throwaway port with a twin pointed at a file that
+does not exist — `ping`/`pong`, `x` refused, `install nothing` refused at
+no cost, `install echo` refused `rehearsal failed: the twin did not boot`
+with two rehearsals recorded and the running call total 3 (ring 6b's
+gotcha: the count is the process's). **Then the twin for real on the item
+1 image** (`--rehearse-app stage6/app.bin 'test app' --lines 16`): sixteen
+`S7:` lines found, the obs page found, the app delivered and run (`mode 3`,
+`steps 324`, `frame_worst 3.1 ms`), both screens judged — **seven of nine
+criteria pass and the eighth fails on exactly A2's path**: `notebook: no
+EFI PART signature (the SATA disk holds blank)`, `virtio notes.img: WRITTEN
+- 24 non-zero bytes`, `fail: no live prompt after esc (the notebook holds
+None, want ['after'])`, 14 s. That failure is the ring's reason; item 9
+turns it green.
 
 ## Next action
 
