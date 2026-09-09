@@ -1561,6 +1561,13 @@ EFI PART signature (the SATA disk holds blank)`, `virtio notes.img: WRITTEN
 - 24 non-zero bytes`, `fail: no live prompt after esc (the notebook holds
 None, want ['after'])`, 14 s. That failure is the ring's reason; item 9
 turns it green.
+**Item 4** — `stage7/test.sh` with test 1: the machine spelled once
+(`-machine q35 -cpu IvyBridge -m 256M -bios OVMF`), the display, the cage
+with the 7a MAC `52:54:00:a1:07:01`, `sata_drive` (the `if=none` drive
+and the `ide-hd` on `ide.1`, spelled once), `fresh_disk` at 64 MB, the
+port refusals, the wipes, the build, the summary with the two commands at
+`-smp 4`. **Test 1 green** (deviation 10: the item 1 copy is a packed
+PE32+). Tests 2–4 do not exist yet.
 
 ## Next action
 
