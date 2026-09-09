@@ -189,6 +189,312 @@ else
 fi
 echo
 
+# ------------------------------------------------- the serial check ----------
+# serial_check <smp> <label> <disk> <mode> [virtio image]. Boots the image
+# headless inside the cage with the display, the patient's CPU and the
+# given SATA disk on ide.1 (and, for the one boot of test 2 that proves the
+# guest ignores it, a blank virtio disk too), and requires DISK.md's S7:
+# lines in order:
+#   blank    - EIGHTEEN lines: "S7: gpt written" tenth, the disk line
+#              eleventh with the sector count of the image the harness
+#              made, "S7: notebook formatted", "S7: home 0 apps";
+#   again    - SEVENTEEN lines: no "gpt written", the disk line tenth,
+#              "S7: notebook 0 notes", "S7: home 0 apps" - the disk
+#              recognised, not reformatted;
+#   foreign  - the nine lines to "S7: console", then the named refusal
+#              "ERR: no GermOS disk and no blank disk - port 0: other,
+#              port 1: gpt" and NO keyboard ready: a foreign table is never
+#              written (amendment A1).
+# In every mode: "S7: edid <W>x<H>" second and the gop line equal to it,
+# found = woken = the -smp value, the console geometry from the mode, the
+# NIC line with the harness's MAC, the component region 128 mod 4096, the
+# obs page page-aligned. The disk line's port, sector count and two LBAs
+# are captured into DISK_PORT, DISK_SECTORS, DISK_NOTES, DISK_HOME for the
+# caller. Around every boot the boot image is copied before and compared
+# after by checkdisk.py --esp: sector 0 unchanged, no table written over
+# it, BOOTX64.EFI still the build (OVMF's own NvVars write is not the
+# guest's). The guest waits for keystrokes forever, so exit 124 is the
+# expected outcome.
+
+DISK_PORT=""; DISK_SECTORS=""; DISK_NOTES=""; DISK_HOME=""
+
+serial_check() {
+  local smp="$1"
+  local label="$2"
+  local disk="$3"
+  local mode="$4"
+  local virtio="${5:-}"
+  local cap="$OUT/serial.$label.txt"
+  local qerr="$OUT/qemu.$label.err"
+  local lines_file="$OUT/s7.$label.txt"
+  local rc want_lines=18
+  local -a virtio_drive=()
+
+  rm -f "$cap" "$qerr" "$lines_file"
+  if [ -n "$virtio" ]; then
+    virtio_drive=(-drive "format=raw,file=$virtio,if=virtio")
+  fi
+  cp "$ESP" "$OUT/esp.before.img"
+
+  # shellcheck disable=SC2086
+  timeout -k 5 60 qemu-system-x86_64 \
+    $MACHINE -smp "$smp" \
+    $DISPLAY \
+    -drive format=raw,file="$ESP" \
+    $(sata_drive "$disk") \
+    "${virtio_drive[@]}" \
+    -netdev "$CAGE_NETDEV" \
+    -device "$CAGE_DEVICE" \
+    -display none -serial stdio \
+    </dev/null >"$cap" 2>"$qerr"
+  rc=$?
+
+  if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
+    echo "    $label: qemu exited $rc, expected 124 (killed by the 60s timeout)"
+    sed 's/^/      /' "$qerr"
+    return 1
+  fi
+
+  tr -d '\r' <"$cap" 2>/dev/null | grep -ao 'S7: .*' >"$lines_file" 2>/dev/null
+
+  local -a got=()
+  mapfile -t got <"$lines_file"
+
+  local bad=()
+
+  case "$mode" in
+    blank) want_lines=18 ;;
+    again) want_lines=17 ;;
+    foreign) want_lines=9 ;;
+  esac
+  if [ "${#got[@]}" -ne "$want_lines" ]; then
+    bad+=("expected exactly $want_lines S7: lines in mode $mode, found ${#got[@]}")
+  fi
+  if [ "$mode" != "foreign" ] && grep -aq 'ERR: ' "$cap"; then
+    bad+=("the guest reported: $(tr -d '\r' <"$cap" | grep -ao 'ERR: .*' | head -1)")
+  fi
+
+  local l w="" h="" ew="" eh=""
+  l="${got[0]:-}"; [ "$l" = "S7: alive" ] || bad+=("line 1: got '$l', want 'S7: alive'")
+
+  l="${got[1]:-}"
+  if [[ "$l" =~ ^S7:\ edid\ ([0-9]+)x([0-9]+)$ ]]; then
+    ew="${BASH_REMATCH[1]}"; eh="${BASH_REMATCH[2]}"
+  else
+    bad+=("line 2: got '$l', want 'S7: edid <W>x<H>' - the harness gave the device an EDID")
+  fi
+
+  l="${got[2]:-}"
+  if [[ "$l" =~ ^S7:\ gop\ ([0-9]+)x([0-9]+)\ fb\ 0x([0-9a-f]{16})$ ]]; then
+    w="${BASH_REMATCH[1]}"; h="${BASH_REMATCH[2]}"
+    [ "${BASH_REMATCH[3]}" != "0000000000000000" ] || bad+=("line 3: framebuffer address is zero")
+    if [ -n "$ew" ]; then
+      [ "$w" = "$ew" ] && [ "$h" = "$eh" ] || \
+        bad+=("line 3: the mode is ${w}x${h}, but the display's EDID prefers ${ew}x${eh}")
+    fi
+  else
+    bad+=("line 3: got '$l', want 'S7: gop <W>x<H> fb 0x<16 hex digits>'")
+  fi
+
+  l="${got[3]:-}"; [ "$l" = "S7: boot services exited" ] || bad+=("line 4: got '$l', want 'S7: boot services exited'")
+  l="${got[4]:-}"; [ "$l" = "S7: gdt and paging ours" ] || bad+=("line 5: got '$l', want 'S7: gdt and paging ours'")
+  l="${got[5]:-}"; [ "$l" = "S7: idt ready" ] || bad+=("line 6: got '$l', want 'S7: idt ready'")
+
+  local found="" woken=""
+  l="${got[6]:-}"
+  if [[ "$l" =~ ^S7:\ cores\ found\ ([0-9]+)$ ]]; then found="${BASH_REMATCH[1]}"; else bad+=("line 7: got '$l', want 'S7: cores found <N>'"); fi
+  l="${got[7]:-}"
+  if [[ "$l" =~ ^S7:\ cores\ woken\ ([0-9]+)$ ]]; then woken="${BASH_REMATCH[1]}"; else bad+=("line 8: got '$l', want 'S7: cores woken <N>'"); fi
+
+  l="${got[8]:-}"
+  if [[ "$l" =~ ^S7:\ console\ ([0-9]+)x([0-9]+)$ ]]; then
+    local cols="${BASH_REMATCH[1]}" rows="${BASH_REMATCH[2]}"
+    if [ -n "$w" ] && [ -n "$h" ]; then
+      [ "$cols" -eq $((w / 16)) ] || bad+=("line 9: $cols columns, but $w pixels / 16 = $((w / 16))")
+      [ "$rows" -eq $((h / 16)) ] || bad+=("line 9: $rows rows, but $h pixels / 16 = $((h / 16))")
+    fi
+  else
+    bad+=("line 9: got '$l', want 'S7: console <COLS>x<ROWS>'")
+  fi
+
+  [ -n "$found" ] && [ "$found" != "$smp" ] && bad+=("cores found is $found, but the machine was given -smp $smp")
+  [ -n "$woken" ] && [ "$woken" != "$smp" ] && bad+=("cores woken is $woken, but the machine was given -smp $smp")
+
+  if [ "$mode" = "foreign" ]; then
+    local err
+    err="$(tr -d '\r' <"$cap" | grep -ao 'ERR: .*' | head -1)"
+    [ "$err" = "ERR: no GermOS disk and no blank disk - port 0: other, port 1: gpt" ] || \
+      bad+=("the refusal: got '$err', want 'ERR: no GermOS disk and no blank disk - port 0: other, port 1: gpt'")
+    if grep -aq 'S7: keyboard ready' "$cap"; then
+      bad+=("the guest reached the keyboard on a disk it must refuse")
+    fi
+  else
+    local off=0
+    if [ "$mode" = "blank" ]; then
+      l="${got[9]:-}"; [ "$l" = "S7: gpt written" ] || bad+=("line 10: got '$l', want 'S7: gpt written' - the disk was blank")
+      off=1
+    else
+      if printf '%s\n' "${got[@]}" | grep -q '^S7: gpt written'; then
+        bad+=("'S7: gpt written' on a recognised disk - the table was rewritten")
+      fi
+    fi
+
+    l="${got[$((9 + off))]:-}"
+    if [[ "$l" =~ ^S7:\ disk\ port\ ([0-9]+)\ ([0-9]+)\ notes\ ([0-9]+)\ home\ ([0-9]+)$ ]]; then
+      DISK_PORT="${BASH_REMATCH[1]}"; DISK_SECTORS="${BASH_REMATCH[2]}"; DISK_NOTES="${BASH_REMATCH[3]}"; DISK_HOME="${BASH_REMATCH[4]}"
+      [ "$DISK_SECTORS" -eq $((DISK_BYTES / 512)) ] || \
+        bad+=("line $((10 + off)): the guest counted $DISK_SECTORS sectors, but the image is $((DISK_BYTES / 512)) sectors")
+    else
+      bad+=("line $((10 + off)): got '$l', want 'S7: disk port <p> <N> notes <lba> home <lba>'")
+    fi
+
+    l="${got[$((10 + off))]:-}"
+    if [ "$mode" = "blank" ]; then
+      [ "$l" = "S7: notebook formatted" ] || bad+=("line $((11 + off)): got '$l', want 'S7: notebook formatted' - the partition was blank")
+    else
+      [ "$l" = "S7: notebook 0 notes" ] || bad+=("line $((11 + off)): got '$l', want 'S7: notebook 0 notes' - a recognised, empty notebook")
+    fi
+    l="${got[$((11 + off))]:-}"; [ "$l" = "S7: home 0 apps" ] || bad+=("line $((12 + off)): got '$l', want 'S7: home 0 apps'")
+    l="${got[$((12 + off))]:-}"; [ "$l" = "S7: nic $MAC" ] || bad+=("line $((13 + off)): got '$l', want 'S7: nic $MAC'")
+
+    l="${got[$((13 + off))]:-}"
+    if [[ "$l" =~ ^S7:\ component\ region\ 0x([0-9a-f]{16})\ 1048576\ bytes$ ]]; then
+      local addr="${BASH_REMATCH[1]}"
+      [ "$addr" != "0000000000000000" ] || bad+=("the component region address is zero")
+      [ "${addr:0:8}" = "00000000" ] || bad+=("the component region 0x$addr is above 4 GB")
+      [ "${addr:13:3}" = "080" ] || bad+=("the component region 0x$addr is not 128 mod 4096")
+    else
+      bad+=("line $((14 + off)): got '$l', want 'S7: component region 0x<16 hex digits> 1048576 bytes'")
+    fi
+
+    l="${got[$((14 + off))]:-}"
+    if [[ "$l" =~ ^S7:\ obs\ page\ 0x([0-9a-f]{16})$ ]]; then
+      local obs="${BASH_REMATCH[1]}"
+      [ "$obs" != "0000000000000000" ] || bad+=("the obs page address is zero")
+      [ "${obs:0:8}" = "00000000" ] || bad+=("the obs page 0x$obs is above 4 GB")
+      [ "${obs:13:3}" = "000" ] || bad+=("the obs page 0x$obs is not page-aligned")
+    else
+      bad+=("line $((15 + off)): got '$l', want 'S7: obs page 0x<16 hex digits>'")
+    fi
+
+    l="${got[$((15 + off))]:-}"
+    [[ "$l" =~ ^S7:\ glass\ core\ [0-9]+$ ]] || bad+=("line $((16 + off)): got '$l', want 'S7: glass core <id>'")
+
+    l="${got[$((16 + off))]:-}"; [ "$l" = "S7: keyboard ready" ] || bad+=("line $((17 + off)): got '$l', want 'S7: keyboard ready'")
+  fi
+
+  if ! python3 "$REPO/stage7/checkdisk.py" --esp "$OUT/esp.before.img" "$ESP" "$EFI"; then
+    bad+=("the boot image was written during the boot (see above)")
+  fi
+
+  if [ "${#bad[@]}" -eq 0 ]; then
+    if [ "$mode" = "foreign" ]; then
+      echo "    $label: nine S7: lines to the console, then the named refusal of the foreign table, no keyboard; the boot image untouched"
+    else
+      echo "    $label: $want_lines S7: lines, in order, mode ${w}x${h}, found = woken = $smp, disk port $DISK_PORT $DISK_SECTORS sectors, notes $DISK_NOTES home $DISK_HOME, nic $MAC; the boot image untouched"
+    fi
+    return 0
+  fi
+
+  echo "    $label: the serial log is not what the spec asks for"
+  for b in "${bad[@]}"; do echo "      - $b"; done
+  echo "      whole capture follows (OVMF chatter included):"
+  if [ -s "$cap" ]; then
+    cat -v "$cap" | sed 's/^/        /'
+  else
+    echo "        (nothing was captured at all)"
+  fi
+  return 1
+}
+
+# ------------------------------------------------- test 2: the serial lines --
+# Five boots. blank at -smp 8 on a fresh 64 MB disk: eighteen lines, the
+# table written; then the disk parsed from the host by DISK.md - the
+# thirty-six table sectors byte-identical to the document's, the notes
+# partition a formatted empty notebook, the home partition a formatted
+# empty home, nothing else written. again at -smp 4 on the SAME disk:
+# seventeen lines, the disk byte-identical afterwards (recognised, not
+# reformatted). fresh at -smp 2 on a new blank disk: eighteen lines again.
+# virtio at -smp 2 on a new blank disk WITH a blank virtio disk beside it -
+# the frozen twin's shape: the same eighteen lines, the SATA disk formatted,
+# the virtio image all zero afterwards (the guest has no driver for it).
+# foreign at -smp 2 on a disk carrying a valid table with another type
+# GUID: the named refusal, the image byte-identical. Around every boot the
+# boot image is checked (serial_check).
+
+echo "Test 2 - Serial: eighteen S7: lines on a blank disk and the table byte-exact, seventeen on the same disk, the twin's shape, a foreign table refused"
+if [ ! -f "$ESP" ]; then
+  fail "test 2: no image was built"
+else
+  t2=0
+  fresh_disk "$DISK"
+  if serial_check 8 "blank" "$DISK" blank; then
+    if python3 "$REPO/stage7/checkdisk.py" --formatted "$DISK" "$DISK_SECTORS" "$DISK_NOTES" "$DISK_HOME"; then
+      echo "    blank: the disk parses from the host as DISK.md's table, byte for byte, with two freshly formatted stores and nothing else written"
+    else
+      echo "    blank: the disk is not what DISK.md says a first boot writes"
+      t2=1
+    fi
+  else
+    t2=1
+  fi
+  cp "$DISK" "$OUT/disk.after-first-boot.img"
+  if serial_check 4 "again" "$DISK" again; then
+    if ! python3 "$REPO/stage7/checkdisk.py" --recognised "$DISK" "$DISK_SECTORS" "$DISK_NOTES" "$DISK_HOME"; then
+      echo "    again: the disk line does not agree with the table on the disk"
+      t2=1
+    fi
+    if cmp -s "$DISK" "$OUT/disk.after-first-boot.img"; then
+      echo "    again: the disk is byte-identical after the second boot - recognised, not reformatted"
+    else
+      echo "    again: the disk changed on a second boot"
+      t2=1
+    fi
+  else
+    t2=1
+  fi
+  fresh_disk "$OUT/disk.fresh.img"
+  serial_check 2 "fresh" "$OUT/disk.fresh.img" blank || t2=1
+  fresh_disk "$OUT/disk.virtio.img"
+  rm -f "$OUT/notes.virtio.img"
+  truncate -s $((16 * 1024 * 1024)) "$OUT/notes.virtio.img"
+  if serial_check 2 "virtio" "$OUT/disk.virtio.img" blank "$OUT/notes.virtio.img"; then
+    if python3 "$REPO/stage7/checkdisk.py" --formatted "$OUT/disk.virtio.img" "$DISK_SECTORS" "$DISK_NOTES" "$DISK_HOME"; then
+      echo "    virtio: the SATA disk formatted as before with a virtio disk beside it"
+    else
+      echo "    virtio: the SATA disk is not what a first boot writes"
+      t2=1
+    fi
+    if [ "$(tr -d '\0' <"$OUT/notes.virtio.img" | wc -c)" -eq 0 ]; then
+      echo "    virtio: the virtio disk is all zero afterwards - the guest has no driver for it"
+    else
+      echo "    virtio: the virtio disk was written - virtio-blk code ran"
+      t2=1
+    fi
+  else
+    t2=1
+  fi
+  if python3 "$REPO/stage7/checkdisk.py" --foreign "$OUT/disk.foreign.img"; then
+    cp "$OUT/disk.foreign.img" "$OUT/disk.foreign.before.img"
+    serial_check 2 "foreign" "$OUT/disk.foreign.img" foreign || t2=1
+    if cmp -s "$OUT/disk.foreign.img" "$OUT/disk.foreign.before.img"; then
+      echo "    foreign: the foreign disk is byte-identical after the boot - refused, never written"
+    else
+      echo "    foreign: the foreign disk was written"
+      t2=1
+    fi
+  else
+    echo "    foreign: the checker could not build the foreign disk"
+    t2=1
+  fi
+  if [ "$t2" -eq 0 ]; then
+    pass "test 2: the serial log and the disk match DISK.md on a blank disk, a recognised one, the twin's shape, and a foreign table refused"
+  else
+    fail "test 2: the serial log or the disk does not match DISK.md"
+  fi
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then

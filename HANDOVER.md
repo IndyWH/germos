@@ -1568,6 +1568,32 @@ and the `ide-hd` on `ide.1`, spelled once), `fresh_disk` at 64 MB, the
 port refusals, the wipes, the build, the summary with the two commands at
 `-smp 4`. **Test 1 green** (deviation 10: the item 1 copy is a packed
 PE32+). Tests 2–4 do not exist yet.
+**Item 5** — `stage7/checkdisk.py`'s host side and test 2. The checker:
+DISK.md's Python through `import metal`; the two pattern lists (eighteen
+with `gpt written`, seventeen without — the expected count is the list's
+length), `check_boot_lines` (the disk line's sector count the image's, its
+LBAs the document's), `check_echo` under `S7:`, `extract_partition`,
+`check_notes_partition` (NOTEBOOK.md's worked-example bytes),
+`check_home_partition`, `check_formatted` (the table byte-exact, both
+stores freshly formatted, every other sector zero), `check_recognised`,
+`write_foreign` (a valid table with another type GUID, `classify` `gpt`),
+`check_esp` (sector 0 identical, still `other`, `BOOTX64.EFI` extracted
+identical, the size unchanged — A1's intent, given OVMF's NvVars write).
+Proven on synthetic images built by the same Python: a formatted image
+passes, a table without stores fails on both, a stray sector at 50000
+is named, wrong LBAs are named, the foreign image is `gpt`, the item 1
+boot's ESP passes `--esp` and a table written over it fails on all four
+counts. `test.sh`'s `serial_check` in three modes (`blank`, `again`,
+`foreign`, an optional virtio disk) with `--esp` around every boot, and
+test 2's five boots: `blank` at 8 then `--formatted`, `again` at 4 on the
+same disk byte-identical, `fresh` at 2, `virtio` at 2 (the SATA disk
+formatted, the virtio image all zero), `foreign` at 2 (the named refusal,
+the image byte-identical). **Red on the item 1 copy as it must be**: nine
+lines then `ERR: no virtio-blk device on PCI bus 0` in the four
+virtio-free boots; sixteen lines with `S7: disk 32768 sectors` tenth in
+the virtio boot; the wrong `ERR:` on the foreign disk; the boot image
+passed its check in every boot and the foreign disk stayed byte-identical.
+Test 1 green.
 
 ## Next action
 
