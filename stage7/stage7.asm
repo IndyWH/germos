@@ -211,6 +211,8 @@ org 0                           ; file offsets == RVAs
 %define GPT_ENTRY           128
 %define GPT_ENTRY_SECTORS   32
 %define GPT_MIN_SECTORS     67617       ; DISK.md: the smallest disk the two partitions fit
+%define GPT_NOTES_FIRST     2048        ; DISK.md: the partitions the writer makes
+%define GPT_HOME_FIRST      34816
 
 ; The NIC's receive buffers (plan decision 8): sixteen of 2048 bytes, each
 ; holding the 12-byte virtio-net header and a whole frame, since buffers do
@@ -3153,9 +3155,12 @@ disk_select:
         cmp     eax, -1
         je      .refuse
         call    ahci_port_open
+        lea     rdx, [port_sectors]     ; the blank disk's count, for the writer
+        mov     eax, [ahci_port]
+        mov     eax, [rdx + rax*4]
+        mov     [ahci_sectors], eax
         call    gpt_write               ; the table, then "S7: gpt written"
         mov     eax, [ahci_port]
-        jmp     .chosen
 .chosen:
         call    ahci_port_open          ; open again: another port may have held the list
         mov     eax, [ahci_port]
@@ -3531,11 +3536,154 @@ crc32_update:
         pop     rcx
         ret
 
-; gpt_write - item 10 writes DISK.md's table over the open blank disk and
-; prints "S7: gpt written". Item 9 has no writer: a blank disk is named
-; with the other ports and the machine halts.
+; gpt_write - DISK.md's table written over the open blank disk, one sector
+; a command: LBA 0 the protective MBR, LBA 1 the header, LBAs 2-33 the
+; entry array (entries 0 and 1 from the document's bytes, the rest zero),
+; LBAs N-33 .. N-2 the array again, LBA N-1 the backup header; then sector
+; 0 of each partition written as zeros, so both stores format themselves
+; on this boot; then "S7: gpt written". A disk too small for the two
+; partitions is a named error before anything is written. Clobbers
+; registers freely.
 gpt_write:
-        jmp     disk_select.refuse
+        mov     eax, [ahci_sectors]
+        cmp     eax, GPT_MIN_SECTORS
+        jb      .too_small
+
+        lea     rdi, [gpt_sec0]         ; LBA 0: the protective MBR
+        mov     ecx, 512 / 8
+        xor     eax, eax
+        rep     stosq
+        lea     rdi, [gpt_sec0]
+        mov     byte [rdi + 0x1C0], 0x02        ; starting CHS 00 02 00
+        mov     byte [rdi + 0x1C2], 0xEE        ; the protective type
+        mov     dword [rdi + 0x1C3], 0x00FFFFFF ; ending CHS FF FF FF, then
+        mov     dword [rdi + 0x1C6], 1          ; starting LBA 1
+        mov     eax, [ahci_sectors]
+        dec     eax
+        mov     [rdi + 0x1CA], eax              ; size in LBAs: N - 1 (below 2^32 here)
+        mov     word [rdi + 0x1FE], 0xAA55
+        mov     eax, VBLK_T_OUT
+        xor     ebx, ebx
+        call    ahci_rw
+
+        lea     rdi, [gpt_entries]      ; the array: the document's two entries, then zeros
+        mov     ecx, GPT_ENTRIES * GPT_ENTRY / 8
+        xor     eax, eax
+        rep     stosq
+        lea     rsi, [gpt_entry_image]
+        lea     rdi, [gpt_entries]
+        mov     ecx, 256 / 8
+        rep     movsq
+        lea     rsi, [gpt_entries]
+        mov     eax, 0xFFFFFFFF
+        mov     ecx, GPT_ENTRIES * GPT_ENTRY
+        call    crc32_update
+        not     eax
+        mov     [gpt_ecrc], eax
+
+        mov     r12d, 1                 ; the primary header: MyLBA 1,
+        mov     r13d, [ahci_sectors]    ; AlternateLBA N - 1,
+        dec     r13d
+        mov     r14d, 2                 ; the entries at 2
+        call    gpt_build_header
+        mov     eax, VBLK_T_OUT
+        mov     ebx, 1
+        lea     rdi, [gpt_hdr]
+        call    ahci_rw
+
+        mov     ebx, 2                  ; LBAs 2-33
+        lea     rdi, [gpt_entries]
+.array:
+        mov     eax, VBLK_T_OUT
+        call    ahci_rw
+        add     rdi, 512
+        inc     ebx
+        cmp     ebx, 2 + GPT_ENTRY_SECTORS
+        jb      .array
+        mov     ebx, [ahci_sectors]     ; LBAs N-33 .. N-2
+        sub     ebx, 33
+        lea     rdi, [gpt_entries]
+        mov     ecx, GPT_ENTRY_SECTORS
+.backup:
+        mov     eax, VBLK_T_OUT
+        call    ahci_rw
+        add     rdi, 512
+        inc     ebx
+        dec     ecx
+        jnz     .backup
+
+        mov     r12d, [ahci_sectors]    ; the backup header: MyLBA N - 1,
+        dec     r12d
+        mov     r13d, 1                 ; AlternateLBA 1,
+        mov     r14d, [ahci_sectors]    ; the entries at N - 33
+        sub     r14d, 33
+        call    gpt_build_header
+        mov     eax, VBLK_T_OUT
+        mov     ebx, [ahci_sectors]
+        dec     ebx
+        lea     rdi, [gpt_hdr]
+        call    ahci_rw
+
+        lea     rdi, [sector_buf]       ; sector 0 of each partition, zero
+        mov     ecx, 512 / 8
+        xor     eax, eax
+        rep     stosq
+        lea     rdi, [sector_buf]
+        mov     eax, VBLK_T_OUT
+        mov     ebx, GPT_NOTES_FIRST
+        call    ahci_rw
+        mov     eax, VBLK_T_OUT
+        mov     ebx, GPT_HOME_FIRST
+        call    ahci_rw
+
+        lea     rsi, [msg_gpt_written]
+        call    serial_puts
+        ret
+.too_small:
+        lea     rsi, [err_disk_small]
+        call    serial_err
+
+; gpt_build_header - R12D = MyLBA, R13D = AlternateLBA, R14D = the entry
+; array's LBA, gpt_ecrc the array's CRC: DISK.md's header built in gpt_hdr
+; with its CRC computed over the 92 bytes with the CRC field zero.
+; Clobbers registers freely.
+gpt_build_header:
+        lea     rdi, [gpt_hdr]
+        mov     ecx, 512 / 8
+        xor     eax, eax
+        rep     stosq
+        lea     rdi, [gpt_hdr]
+        mov     rax, 'EFI PART'
+        mov     [rdi], rax
+        mov     dword [rdi + 8], 0x00010000
+        mov     dword [rdi + 12], 92
+        mov     eax, r12d
+        mov     [rdi + 24], rax
+        mov     eax, r13d
+        mov     [rdi + 32], rax
+        mov     qword [rdi + 40], GPT_FIRST_USABLE
+        mov     eax, [ahci_sectors]
+        sub     eax, GPT_FIRST_USABLE
+        mov     [rdi + 48], rax
+        lea     rsi, [guid_disk]
+        push    rdi
+        add     rdi, 56
+        mov     ecx, 2
+        rep     movsq
+        pop     rdi
+        mov     eax, r14d
+        mov     [rdi + 72], rax
+        mov     dword [rdi + 80], GPT_ENTRIES
+        mov     dword [rdi + 84], GPT_ENTRY
+        mov     eax, [gpt_ecrc]
+        mov     [rdi + 88], eax
+        mov     rsi, rdi
+        mov     eax, 0xFFFFFFFF
+        mov     ecx, 92
+        call    crc32_update
+        not     eax
+        mov     [rdi + 16], eax
+        ret
 
 ; disk_rw / home_rw - EAX = VBLK_T_IN (read) or VBLK_T_OUT (write), EBX =
 ; the sector within the partition, RDI = a 512-byte buffer, on the notes
@@ -8392,6 +8540,26 @@ crc_zero4:      dd      0
 ; DISK.md's GUIDs as stored: the first three fields little-endian.
 guid_notes_type: db     0x57,0x55,0x84,0x50,0x34,0xee,0x31,0x47,0x8b,0x83,0xd1,0xd6,0xf1,0x4f,0xd8,0xc5
 guid_home_type: db      0x07,0x40,0x6d,0x45,0x03,0xd8,0xa0,0x41,0xa6,0x61,0xca,0x73,0x6d,0xdc,0xf9,0x6b
+guid_disk:      db      0x05,0xa5,0x74,0x2b,0x46,0xe2,0x9d,0x46,0x8d,0x73,0x3b,0xfd,0xc5,0x2a,0x8d,0xf0
+; DISK.md's entries 0 and 1, byte for byte from the document's own Python:
+; the notes partition at 2048-34815, the home at 34816-67583.
+gpt_entry_image:
+                db      0x57,0x55,0x84,0x50,0x34,0xee,0x31,0x47,0x8b,0x83,0xd1,0xd6,0xf1,0x4f,0xd8,0xc5
+                db      0x7e,0x29,0x5d,0x6e,0xcb,0x0e,0xc5,0x48,0x92,0xc8,0x4a,0x93,0xf4,0xe9,0x8d,0x44
+                db      0x00,0x08,0x00,0x00,0x00,0x00,0x00,0x00,0xff,0x87,0x00,0x00,0x00,0x00,0x00,0x00
+                db      0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x47,0x00,0x65,0x00,0x72,0x00,0x6d,0x00
+                db      0x4f,0x00,0x53,0x00,0x20,0x00,0x6e,0x00,0x6f,0x00,0x74,0x00,0x65,0x00,0x73,0x00
+                db      0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+                db      0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+                db      0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+                db      0x07,0x40,0x6d,0x45,0x03,0xd8,0xa0,0x41,0xa6,0x61,0xca,0x73,0x6d,0xdc,0xf9,0x6b
+                db      0x69,0x91,0xbc,0x82,0x31,0xce,0xd9,0x4f,0xbf,0x05,0x63,0xc7,0x52,0x17,0x26,0xeb
+                db      0x00,0x88,0x00,0x00,0x00,0x00,0x00,0x00,0xff,0x07,0x01,0x00,0x00,0x00,0x00,0x00
+                db      0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x47,0x00,0x65,0x00,0x72,0x00,0x6d,0x00
+                db      0x4f,0x00,0x53,0x00,0x20,0x00,0x68,0x00,0x6f,0x00,0x6d,0x00,0x65,0x00,0x00,0x00
+                db      0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+                db      0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+                db      0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
 msg_nb:         db      'S7: notebook ', 0
 msg_notes:      db      ' notes', 13, 10, 0
 msg_nb_fmt:     db      'S7: notebook formatted', 13, 10, 0
@@ -8796,6 +8964,7 @@ ahci_sectors:   resd    1               ; the open port's disk, in 512-byte sect
 ports_mask:     resd    1               ; the ports identified, one bit each
 gpt_usable_first: resd  1
 gpt_usable_last: resd   1
+gpt_ecrc:       resd    1
         alignb  16
 port_sectors:   resd    MAX_PORTS
 port_word:      resb    MAX_PORTS

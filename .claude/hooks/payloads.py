@@ -559,7 +559,7 @@ CASES += [
 QEMU7 = "qemu-system-x86_64 -machine q35 -cpu IvyBridge -m 256M -smp 4 -bios /usr/share/ovmf/OVMF.fd "
 SATA7 = "-drive if=none,id=d0,format=raw,file=stage7/out/disk.img -device ide-hd,drive=d0,bus=ide.1 "
 CAGE7 = "-netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9999' -device virtio-net-pci,netdev=n0,mac=52:54:00:a1:07:01 "
-FROZEN_7A = ["stage7/DISK.md", "stage7/test.sh", "stage7/checkdisk.py"]
+FROZEN_7A = ["stage7/DISK.md", "stage7/test.sh", "stage7/checkdisk.py", "broker/metal.py"]
 CASES += [(c, v, "ring 7a freeze: " + w) for c, v, w in freeze_cases(FROZEN_7A)]
 CASES += [
     (write("stage7/DISK.md"), DENY, "ring 7a freeze: the disk document"),
@@ -568,7 +568,11 @@ CASES += [
     (bash("python3 - <<'EOF'\nopen('stage7/checkdisk.py','w').write('x')\nEOF"), DENY, "ring 7a freeze: python writing the checker"),
     (bash("sed -i 's/18/17/' stage7/test.sh"), DENY, "ring 7a freeze: sed -i on the gate"),
     (bash("cat stage7/out/disk-section.md >> stage7/DISK.md"), DENY, "ring 7a freeze: appending to the document"),
-    (write("broker/metal.py"), ALLOW, "ring 7a freeze allows: the broker module, not frozen until item 10"),
+    (write("broker/metal.py"), DENY, "ring 7a freeze: the broker module, frozen at item 10 after nine of nine (A3)"),
+    (bash("python3 - <<'EOF'\nopen('broker/metal.py','w').write('x')\nEOF"), DENY, "ring 7a freeze: python writing the broker module"),
+    (bash("sed -i 's/IvyBridge/Haswell/' broker/metal.py"), DENY, "ring 7a freeze: sed -i on the twin's CPU"),
+    (bash("git add broker/metal.py"), ALLOW, "ring 7a freeze allows: git add at its freeze"),
+    (write("stage8/metal.py"), ALLOW, "ring 7a freeze allows: a later stage's file of the same name"),
     (write("stage7/stage7.asm"), ALLOW, "ring 7a freeze allows: Write the implementation"),
     (write("stage7/mkimage.sh"), ALLOW, "ring 7a freeze allows: the builder is not frozen"),
     (write("broker/claude_backend.py"), ALLOW, "ring 7a freeze allows: the Claude backend is not frozen"),

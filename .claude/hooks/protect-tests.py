@@ -160,13 +160,14 @@ PLAN_MARKER = "PLAN_APPROVED"
 # for the NOTEBOOK.md reason - the assembler writes and recognises the
 # table it describes and the checker parses by it, so an editable document
 # would be an editable criterion; and stage7/test.sh and
-# stage7/checkdisk.py, the gate itself. broker/metal.py - this ring's twin
-# and mock table - joins at item 10, after the gate has passed nine of nine
-# through it (four of the project's five freeze openings were in frozen
-# Python that could not be exercised before it froze). Everything Stage 6
-# froze stands. Deliberately NOT frozen: stage7/mkimage.sh (the recipe),
-# stage7/stage7.asm (the thing under test), broker/claude_backend.py,
-# stage7/plan-7a.md and stage7/spec.md (paperwork).
+# stage7/checkdisk.py, the gate itself; and, from item 10, broker/metal.py -
+# this ring's twin and mock table, whose verdicts test 4 judges by - frozen
+# only after the gate had passed nine of nine through it (four of the
+# project's five freeze openings were in frozen Python that could not be
+# exercised before it froze). Everything Stage 6 froze stands. Deliberately
+# NOT frozen: stage7/mkimage.sh (the recipe), stage7/stage7.asm (the thing
+# under test), broker/claude_backend.py, stage7/plan-7a.md and
+# stage7/spec.md (paperwork).
 PROTECTED = (
     "stage0/test.sh",
     "stage0/checkpixels.py",
@@ -220,6 +221,7 @@ PROTECTED = (
     "stage7/DISK.md",
     "stage7/test.sh",
     "stage7/checkdisk.py",
+    "broker/metal.py",
 )
 
 BASENAMES = sorted({os.path.basename(p) for p in PROTECTED})

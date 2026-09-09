@@ -1691,6 +1691,41 @@ tests 2, 3 and 4 FAIL on the writer alone** — every one starts from a
 blank disk and this binary refuses one by name; test 2's foreign boot
 already passes its own check (the refusal, the disk byte-identical, the
 boot image untouched).
+**Item 10** — the writer: `gpt_write` (a blank disk of fewer than 67,617
+sectors named `disk too small for the two partitions` before any write;
+the protective MBR built in a buffer, the entry array from the document's
+256 bytes and zeros with its CRC, the primary header by `gpt_build_header`
+— every field, the disk GUID, the CRC over the 92 bytes with its field
+zero — LBA 0, 1, 2–33, `N−33` … `N−2` and the backup header at `N−1`
+written one command each, sector 0 of both partitions written as zeros,
+`S7: gpt written`); the selection rule's second case takes the blank
+port's count for the writer and then re-opens and re-reads the disk
+(`gpt_read`: a table just written that does not read back as GermOS is a
+named error). **Probed by hand first** on private copies: a blank disk at
+`-smp 4` — eighteen lines, `check_boot_lines` clean, the thirty-six
+table sectors **byte-identical to `build_gpt`**, `remember me` on the
+notes partition byte-exact, the home formatted and empty, every other
+sector of the disk zero; the same disk at `-smp 2` — seventeen lines,
+`notebook 1 notes`, byte-identical across the reboot; a 32 MB disk —
+`ERR: disk too small for the two partitions`, the disk still all zero;
+**the twin through `metal.py` — nine of nine** in 14.1 s, `notebook:
+['after'] on the notes partition at LBA 2048`, `virtio notes.img:
+untouched, all zero`; the echo build against its plan's five tests in the
+same twin — all five `ok`, the hook found nothing, 17.2 s. Then
+`broker/metal.py` frozen (A3): `PROTECTED` gains it, `payloads.py` its
+battery, the `write` denial, a heredoc and a `sed -i` denied, `git add` at
+its freeze allowed, `stage8/metal.py` allowed — **1324 payloads, 910
+denied, 414 allowed, 0 wrong**, the freeze demonstrated live with one
+denied append. **The gate whole: ALL FOUR AUTOMATED TESTS GREEN** — test
+2's five boots (the table byte-exact on the blank disk, the recognised
+disk untouched, the virtio image beside the SATA disk all zero, the
+foreign table refused by name), test 3 at `-smp 2` and `-smp 8`, test 4
+at `-smp 4` (echo installed at LBA 34825 through a twin whose own disk
+held its note on SATA with its virtio image all zero; the launch with no
+broker from the partition; the liar refused; both extents of the undo
+hash-checked from the host; screen D the truth). **The regression chain
+on their own binaries: Stages 0–5, ring 6a, 6b and 6c all PASS** (14, 182,
+77, 92, 102, 230, 383, 395 and 207 s).
 
 ## Next action
 
