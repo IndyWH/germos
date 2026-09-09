@@ -522,6 +522,70 @@ else
 fi
 echo
 
+# --------------------------------------------- test 4: the store keeps its word
+# Two halves. First this harness inspects its OWN cage, machine, display
+# and disk strings, and the checker inspects its own QEMU argv and the
+# twin's as broker/metal.py builds it (the cage, -cpu IvyBridge, the
+# 1920x1080 device, the SATA disk on ide.1 under stage7/out/, no virtio
+# disk of the gate's own - one in the twin's, the frozen shape). Then
+# three boots at -smp 4, the patient's count: A installs echo with the
+# mock, rehearsed in this ring's twin on a SATA disk of its own; B reboots
+# the same disk with NO broker listening - "S7: home 1 apps", "! echo" on
+# the choices row, "! echo" run from the home partition with the wire
+# counters unchanged, an undo with nothing to undo refused, the disk
+# untouched; C, with the mock and the germline kept - "! install liar"
+# refused naming its failed test, "! install echo, but big" replacing the
+# build, "! install echo" served from the germline and replacing again,
+# "! undo install echo" swapping the previous build back, "! echo" running
+# it - the home partition parsed from the host with both extents
+# hash-checked, the record, the germline, the strip against the page. The
+# work is in stage7/checkdisk.py --store.
+
+echo "Test 4 - The store on SATA: a reboot with no broker, the launch from the home partition, the liar refused, the undo"
+cage_probs=()
+case "$CAGE_NETDEV" in
+  user,*) : ;;
+  *) cage_probs+=("the netdev is not slirp user mode: $CAGE_NETDEV") ;;
+esac
+case ",$CAGE_NETDEV," in
+  *,restrict=on,*) : ;;
+  *) cage_probs+=("the netdev lacks restrict=on: $CAGE_NETDEV") ;;
+esac
+n_fwd=$(printf '%s' "$CAGE_NETDEV" | grep -o 'guestfwd=' | wc -l)
+[ "$n_fwd" -eq 1 ] || cage_probs+=("expected exactly one guestfwd, found $n_fwd: $CAGE_NETDEV")
+printf '%s' "$CAGE_NETDEV" | grep -qE 'guestfwd=tcp:10\.0\.2\.4:9999-cmd:nc -N 127\.0\.0\.1 9999(,|$)' || \
+  cage_probs+=("the guestfwd is not tcp:10.0.2.4:9999 via 'nc -N 127.0.0.1 9999': $CAGE_NETDEV")
+case "$CAGE_NETDEV" in
+  *hostfwd*) cage_probs+=("the netdev opens a hostfwd: $CAGE_NETDEV") ;;
+esac
+[ "$CAGE_DEVICE" = "virtio-net-pci,netdev=n0,mac=$MAC" ] || \
+  cage_probs+=("the device is not a virtio-net-pci on netdev n0 with the harness's MAC: $CAGE_DEVICE")
+[ "$DISPLAY" = "-vga none -device VGA,edid=on,xres=1920,yres=1080" ] || \
+  cage_probs+=("the display is not the standard VGA device with the 1920x1080 EDID: $DISPLAY")
+[ "$MACHINE" = "-machine q35 -cpu IvyBridge -m 256M -bios $OVMF" ] || \
+  cage_probs+=("the machine is not q35 on the patient's CPU with OVMF: $MACHINE")
+[ "$(sata_drive "$DISK")" = "-drive if=none,id=d0,format=raw,file=$DISK -device ide-hd,drive=d0,bus=ide.1" ] || \
+  cage_probs+=("the disk is not the raw file under stage7/out/ on an ide-hd at ide.1: $(sata_drive "$DISK")")
+case "$DISK" in
+  "$OUT"/*) : ;;
+  *) cage_probs+=("the disk $DISK is not under stage7/out/") ;;
+esac
+
+if [ "${#cage_probs[@]}" -ne 0 ]; then
+  fail "test 4: this harness's own cage, machine, display or disk string is not the cage"
+  for p in "${cage_probs[@]}"; do echo "    - $p"; done
+else
+  echo "    the harness's own -netdev carries restrict=on and the single guestfwd to 10.0.2.4:9999 via nc to 127.0.0.1:9999; the machine is q35 on IvyBridge; the display is the VGA device with the 1920x1080 EDID; the disk is a raw file under stage7/out/ on ide.1"
+  if [ ! -f "$ESP" ]; then
+    fail "test 4: no image was built"
+  elif python3 "$REPO/stage7/checkdisk.py" --store; then
+    pass "test 4: the store kept its word on SATA - launched with no broker, the liar refused, the undo hash-checked"
+  else
+    fail "test 4: the store did not keep its word (see above)"
+  fi
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then

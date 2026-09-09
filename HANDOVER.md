@@ -1607,6 +1607,23 @@ the conversation panel through the frozen `check_region_rows`, and the
 disk byte-identical. `test.sh` gains test 3 at `-smp 2` and `-smp 8`.
 **Red on the item 1 copy**: run one never reaches ready — `ERR: no
 virtio-blk device on PCI bus 0` quoted.
+**Item 7** — `checkdisk.py --store` (test 4, `-smp 4`): `check_argv_7` (the
+cage, `-cpu IvyBridge`, the display, one `ide-hd` on `ide.1` and no other
+device, every drive under `stage7/out/`, no virtio drive — or exactly one
+for the twin's frozen shape), applied to the checker's own command and to
+the twin's as `metal.py` builds it; `start_mock` on `broker/metal.py`;
+`check_install_germline_7` (an eighteen-line `S7:` rehearsal log that also
+says the twin's virtio disk stayed all zero); `check_partitions` (both
+stores cut from the disk and judged by the frozen `check_image` and
+`check_home`); boots A, B and C with ring 6b's step lists and counts
+replayed on SATA, plus this ring's own: the table byte-exact after A and
+C, the twin's disk holding `after` on its notes partition with its virtio
+image all zero, the whole disk byte-identical across B. `test.sh` gains
+test 4 with its self-assertions on the cage, the machine, the display and
+the disk strings. Proven on the host: the two argv checks pass on the
+real commands and name a stray virtio drive. **Red on the item 1 copy**:
+both argv checks pass, the fixtures and plans pass, the mock comes up,
+boot A never reaches ready — `ERR: no virtio-blk device on PCI bus 0`.
 
 ## Next action
 
