@@ -1512,6 +1512,22 @@ copy of the source (never into `stage7/stage7.asm`, never committed):
 | **OVMF writes to `esp.img` on every boot, whether the guest touches the disk or not**: with `-bios OVMF.fd` and no separate variable store the firmware keeps its non-volatile variables in a file, **`NvVars`** (3,031 bytes), on the first FAT volume — 1,711 bytes differ between the image before and after a boot (FSInfo's free-cluster hints at sector 1, the FAT at sectors 32 and 788, the root directory at 1544, four data sectors), and no two boots leave the same bytes. **So A1's "`esp.img` byte-identical before and after" cannot be a criterion as worded**; what the guest must never do is write a table over it, and that is what test 2 will check: sector 0 (the FAT boot sector) byte-identical, `classify(esp)` still `other` (no protective MBR, no `EFI PART` at sector 1), `BOOTX64.EFI` extracted byte-identical to the build, and the refusal boot's error line naming port 0 as `other`. Recorded here for the owner and Cowork before item 5 writes the test | `md5sum` before and after each boot; `cmp -l`; `mdir` on the booted copy |
 | **`blkid -p` and `partx -s` read a table built by DISK.md's Python** (a 64 MB image on the host): `PTTYPE="gpt"`, `PTUUID` the disk GUID, partition 1 `GermOS notes` 2048–34815 and partition 2 `GermOS home` 34816–67583, each 16M, with their GUIDs — the host's two witnesses agree with the document before the guest exists (item 2's evidence, measured at item 1) | `blkid -p`, `partx -s` on `stage7/out/probe7a/host-gpt.img` |
 
+**Item 2** — `stage7/DISK.md` (505 lines): the controller and the port,
+A1's selection rule in the guest's five words (`germos`, `blank`, `gpt`,
+`torn`, `other`), the recognition rule, the table field by field with the
+five fixed GUIDs and their on-disk order, the partitions at 2048 and
+34816 (32,768 sectors each; the smallest disk 67,617 sectors), the frozen
+formats inside and the HOME.md paragraph superseded, the lines (eighteen
+on a formatting boot, seventeen recognising; `S7: disk port <p> <N> notes
+<lba> home <lba>`), the obs words at `0x2C0`, the errors by name, the
+worked example with every byte from the document's own Python, and the
+Python (`build_gpt`, `parse_gpt`, `classify`, `partition_bytes`,
+`check_table`). Proven on the host: the code block byte-identical to the
+tested module; the CRC check value; the round trip at 131,072 sectors and
+at the minimum; `classify` on the built image, zeros, `esp.img`, a foreign
+type GUID and a flipped bit; the built image the one the two host
+witnesses read at item 1.
+
 ## Next action
 
 **Ring 7a is open at item 0.** Next: item 1 — `stage7/` with the Stage 7
