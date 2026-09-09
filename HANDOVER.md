@@ -3,7 +3,7 @@
 Rolling state of the AI OS project. Read this first, then `ai-os-foundation.md`
 (the single source of truth), then the current stage's `spec.md` and `plan.md`.
 
-**Last updated:** 9 September 2026 — **Stage 7 — Metal — is OPEN, and ring
+**Last updated:** 9 September 2026 — **Stage 7 ring 7a, the disk, is CLOSED.** Wajira ran test 5 with the real broker on 9 September 2026: `S7: gpt written` then `S7: disk port 1 131072 notes 2048 home 34816` on a 64 MB SATA disk; `? Hi there.` answered over the wire (`w 001 005531`); `! install calculator` built by the real backend and rehearsed in the twin on a SATA disk of its own; a sum; then a reboot with no broker — `S7: home 2 apps` (echo from the gate's disk beside it), `! calculator` launched from the home partition with `w 000` and `io 000000/000000`. *Everything ran as expected.* The screenshots are `history/2026-09-09-ring7a-hi-there-sata.png` and `history/2026-09-09-ring7a-calculator-from-sata.png`. One trap found at the oracle, not a defect: `truncate -s 64M` on a file already 64 MB changes nothing, so the run started on the gate's disk (its note `last`, its echo) — remove the file first for a blank disk; the command below says so. Cowork's pre-oracle review of the AHCI driver, the selection rule and the GPT code found zero defects. **The model note, for the owner's comparison:** ring 7a was implemented on **Fable 5.1 at high effort**, one session, twelve commits, one per item; at the plan gate Cowork needed one blocking amendment (A1, the port selection rule — the twin's boot image sits on AHCI port 0 and the plan would have formatted it) and three others; no freeze opening; zero review defects; zero oracle defects. Next: **ring 7b, the wire** (e1000e, the relay), a fresh session for Cowork and for CC. Earlier — **Stage 7 — Metal — is OPEN, and ring
 7a, the disk, opened today.** `stage7/spec.md` was approved by the owner
 on 9 September 2026 (all recommendations taken, decision 5 amended: the
 HP plugs into the home switch; the policy gate re-checked the same day —
@@ -138,8 +138,8 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 
 | | |
 |---|---|
-| Stage | **7 — Metal — OPEN since 9 September 2026**: ring 7a (the disk) opened 9 September; rings 7b (the wire) and 7c (the metal) to follow, each a fresh session with its own plan gate. Stages 0–6 closed (Stage 6 on 5 September 2026) |
-| Status | Ring 7a: **tests 1–4 PASS** (item 10, 9 September 2026) at `-smp 2`, `4` and `8`; **test 5 pending** — Wajira's windowed run with the real broker, the two commands under "Next action". Stages 0–5 and the three ring 6 gates green on their own binaries. |
+| Stage | **7 — Metal — OPEN since 9 September 2026**: ring 7a (the disk) **closed 9 September**; rings 7b (the wire) and 7c (the metal) to follow, each a fresh session with its own plan gate. Stages 0–6 closed (Stage 6 on 5 September 2026) |
+| Status | Ring 7a: **all five tests PASS** (test 5 confirmed by Wajira, 9 September 2026). Next: the ring 7b kickoff in a fresh session. Stages 0–5 and the three ring 6 gates green on their own binaries. |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.261 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
@@ -1501,7 +1501,7 @@ item 4; tests 2, 3 and 4 go green together at item 10.
 | 2 | Serial — eighteen `S7:` lines on a blank disk with `gpt written` and the disk line, the table byte-identical to DISK.md's from the host and both stores freshly formatted; seventeen on the same disk, byte-identical afterwards; the twin's shape with a virtio disk beside the SATA disk, the virtio image all zero; a foreign table refused by name and never written; the boot image untouched around every boot; at `-smp 8`, `4`, `2`, `2` and `2` | **PASS** |
 | 3 | The notebook on SATA — `remember me` and `on sata` typed on a blank disk, the notes partition holding exactly them byte-exact per NOTEBOOK.md, a reboot with `S7: notebook 2 notes`, nothing on the wire, both above the prompt on screen, the disk untouched; at `-smp 2` and `-smp 8` | **PASS** |
 | 4 | The store on SATA — `! install echo` through the mock and a twin that formats its own SATA disk (its virtio image all zero), echo at LBA 34825 hash-checked; a reboot with no broker, `S7: home 1 apps`, `! echo` from the partition with the wire counters unchanged, the undo with nothing to undo refused; the liar refused, two re-installs, the undo swapping the builds back, both extents hash-checked from the host; screen D the truth; at `-smp 4` | **PASS** |
-| 5 | **Oracle — Wajira, real broker** — one note, one reboot, `! calculator` from a home partition the real broker installed | pending |
+| 5 | **Oracle — Wajira, real broker** — one note, one reboot, `! calculator` from a home partition the real broker installed | **PASS — confirmed 9 September 2026** |
 
 **On this build** (9 September 2026): the binary is 36,864 bytes, Stage
 6's size; the AHCI function is `00:1f.2` (`8086:2922`), its ABAR at
@@ -1789,9 +1789,7 @@ above for Wajira. The probe artefacts stay under `stage7/out/probe7a/`
 
 ## Next action
 
-**Ring 7a is green pending the oracle.** Tests 1–4 pass at `-smp 2`, `4`
-and `8` and every earlier gate passes on its own binary. **Test 5 is
-Wajira's** — two terminals at the repo root. The broker (it answers
+**Ring 7a is closed.** Next: **ring 7b, the wire** — the e1000e driver rehearsed on QEMU's `e1000e` with the HP's MAC, `broker/relay.py` in front of the frozen broker, the cage on the relay — per `stage7/spec.md`, a fresh Cowork session and a fresh CC session, Fable 5.1 at high effort by the spec's decision. Carry into 7b's handover: the HP's firmware may leave `CAP.SSS` set, so a port may need `PxCMD.SUD` before its disk appears (ring 7c). To click through ring 7a again at any time — two terminals at the repo root. The broker (it answers
 questions, grows requests, installs plans; every candidate rehearsed in
 the twin at 1920x1080 on IvyBridge with a 64 MB SATA disk of its own):
 
@@ -1799,7 +1797,7 @@ the twin at 1920x1080 on IvyBridge with a 64 MB SATA disk of its own):
 python3 broker/metal.py
 ```
 
-and the machine, windowed, with one SATA disk — the `truncate` only for a
+and the machine, windowed, with one SATA disk — for a blank disk remove `stage7/out/disk.img` first, then the `truncate` (on a file already 64 MB it changes nothing) — the `truncate` only for a
 blank disk (`./stage7/test.sh` overwrites `stage7/out/disk.img`; a disk
 worth keeping is copied to `stage7/out/disk.oracle.img`, a name the
 harness never touches):
