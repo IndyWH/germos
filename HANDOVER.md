@@ -1624,6 +1624,21 @@ the disk strings. Proven on the host: the two argv checks pass on the
 real commands and name a stray virtio drive. **Red on the item 1 copy**:
 both argv checks pass, the fixtures and plans pass, the mock comes up,
 boot A never reaches ready — `ERR: no virtio-blk device on PCI bus 0`.
+**Item 8** — the freeze: `PROTECTED` grows `stage7/DISK.md`,
+`stage7/test.sh` and `stage7/checkdisk.py` (A3: `broker/metal.py` joins at
+item 10); the hook's comment says why; `payloads.py` gains the ring 7a
+group — the battery on each path, the `write` denials, a heredoc and a
+`sed -i` denied, the allowances (the gate, the checker's modes, the mock
+and the real broker, the hand rehearsals, the Stage 7 QEMU lines of the
+oracle, the checker, the gate's virtio boot and the twin, the disk and its
+copies under `out/`, the two host witnesses, the probe) and the denials (a
+SATA drive outside `out/`, a shorthand); the "next stage's test file" case
+moved on to `stage8/test.sh`. **1302 payloads, 892 denied, 410 allowed, 0
+wrong**; the freeze demonstrated live with one denied append to DISK.md.
+The gate whole on the item 1 copy, for the record: test 1 PASS, tests 2,
+3 and 4 FAIL, exit 1. Part 1 is done: tests 1–4 exist, 2–4 are red, and
+every criterion but the twin's module is frozen. Part 2, the guest, begins
+at item 9.
 
 ## Next action
 

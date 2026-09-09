@@ -225,7 +225,7 @@ CASES += [
     # Was stage4/test.sh until Stage 4 froze it, then stage5/test.sh until
     # Stage 5 did, then stage6/test.sh until ring 6a did - the case moves on
     # a stage each time.
-    (write("stage7/test.sh"), ALLOW, "stage3 freeze allows: creating a later stage's test file"),
+    (write("stage8/test.sh"), ALLOW, "stage3 freeze allows: creating a later stage's test file"),
     (write("stage4/NOTEBOOK.md"), ALLOW, "stage3 freeze allows: a later stage's format document"),
     (bash("nasm -f bin stage3/stage3.asm -o stage3/out/BOOTX64.EFI"), ALLOW, "stage3 freeze allows: assembling"),
 ]
@@ -254,7 +254,7 @@ CASES += [
     (bash("sed -i 's/--bare//' broker/claude_backend.py"), ALLOW, "stage4 freeze allows: fixing the backend's flags"),
     (write("stage4/stage4.asm"), ALLOW, "stage4 freeze allows: Write the implementation"),
     (write("stage4/plan.md"), ALLOW, "stage4 freeze allows: the plan is paperwork"),
-    (write("stage7/test.sh"), ALLOW, "stage4 freeze allows: creating a later stage's test file"),
+    (write("stage8/test.sh"), ALLOW, "stage4 freeze allows: creating a later stage's test file"),
     (write("stage5/UMBILICAL.md"), ALLOW, "stage4 freeze allows: a later stage's document"),
     (bash("nasm -f bin stage4/stage4.asm -o stage4/out/BOOTX64.EFI"), ALLOW, "stage4 freeze allows: assembling"),
     (bash(QEMU + "-drive format=raw,file=stage4/out/esp.img -drive format=raw,file=stage4/out/notes.img,if=virtio "
@@ -307,7 +307,7 @@ CASES += [
     (write("broker/claude_backend.py"), ALLOW, "stage5 freeze allows: the Claude backend is not frozen"),
     (bash("sed -i 's/ASSEMBLY_ROUNDS = 3/ASSEMBLY_ROUNDS = 4/' broker/claude_backend.py"), ALLOW, "stage5 freeze allows: fixing the backend"),
     (write("stage5/plan.md"), ALLOW, "stage5 freeze allows: the plan is paperwork"),
-    (write("stage7/test.sh"), ALLOW, "stage5 freeze allows: creating the next stage's test file"),
+    (write("stage8/test.sh"), ALLOW, "stage5 freeze allows: creating the next stage's test file"),
     (write("stage6/GERMLINE.md"), ALLOW, "stage5 freeze allows: a later stage's document"),
     (write("stage6/component.bin"), ALLOW, "stage5 freeze allows: a later stage's component"),
     (bash("ls germline/"), ALLOW, "stage5 freeze allows: the germline directory is not the broker file"),
@@ -377,7 +377,7 @@ CASES += [
     (write("broker/claude_backend.py"), ALLOW, "stage6 freeze allows: the Claude backend is not frozen"),
     (write("stage6/plan-6a.md"), ALLOW, "stage6 freeze allows: the plan is paperwork"),
     (write("stage6/plan-6b.md"), ALLOW, "stage6 freeze allows: the next ring's plan"),
-    (write("stage7/test.sh"), ALLOW, "stage6 freeze allows: creating the next stage's test file"),
+    (write("stage8/test.sh"), ALLOW, "stage6 freeze allows: creating the next stage's test file"),
     # Were stage6/PLANS.md and stage6/HOME.md until ring 6b froze them - the
     # case moves on a ring, as the "later stage's test file" case does.
     (write("stage6/POINTER.md"), ALLOW, "stage6 freeze allows: a later ring's document"),
@@ -525,7 +525,7 @@ CASES += [
     (write("broker/claude_backend.py"), ALLOW, "ring 6c freeze allows: the Claude backend is not frozen"),
     (write("stage6/plan-6c.md"), ALLOW, "ring 6c freeze allows: the plan is paperwork"),
     (write("stage6/out/glass-6c-section.md"), ALLOW, "ring 6c freeze allows: the section's draft under out/"),
-    (write("stage7/test.sh"), ALLOW, "ring 6c freeze allows: creating the next stage's test file"),
+    (write("stage8/test.sh"), ALLOW, "ring 6c freeze allows: creating the next stage's test file"),
     (write("stage7/pointer.py"), ALLOW, "ring 6c freeze allows: a later stage's file of the same name"),
     (bash("rm -rf stage6/out/germline stage6/out/rehearsal stage6/out/probe6c"), ALLOW, "ring 6c freeze allows: clearing the gate's scratch and the probe"),
     (bash("git add stage6/pointer.asm stage6/pointer.bin broker/pointer.py stage6/test-6c.sh stage6/checkpointer.py"), ALLOW, "ring 6c freeze allows: git add"),
@@ -542,6 +542,83 @@ CASES += [
     (bash(QEMU + DISPLAY6B + "-drive format=raw,file=stage6/out/esp.img -drive format=raw,file=/home/indy/mouse.img,if=virtio " + CAGE6C),
      DENY, "bodyguard: a drive outside out/ is denied whatever the ring"),
     (bash("echo 'the pointer clicks the choices row and the strip says pt'"), ALLOW, "bodyguard allows: the ring's words in prose"),
+]
+
+
+# --- Stage 7 ring 7a: the freeze (plan item 8, amendment A3), the SATA disk --
+# The three paths frozen at item 8 (broker/metal.py joins at item 10, after
+# the gate has passed nine of nine through it - its cases are added then);
+# the mutation battery on each; the allowances measured before the plan -
+# the gate, the checker's modes, the mock and the real broker, the hand
+# rehearsals, the Stage 7 QEMU lines of the gate, the checker, the twin
+# (the frozen virtio notes disk beside the SATA disk) and the oracle, the
+# 64 MB disk and its copies under out/, the two host witnesses, the probe's
+# scratch - and the denials: a SATA drive whose file= lies outside out/, a
+# disk attached by a shorthand. The "next stage's test file" case above has
+# moved on to stage8/test.sh.
+QEMU7 = "qemu-system-x86_64 -machine q35 -cpu IvyBridge -m 256M -smp 4 -bios /usr/share/ovmf/OVMF.fd "
+SATA7 = "-drive if=none,id=d0,format=raw,file=stage7/out/disk.img -device ide-hd,drive=d0,bus=ide.1 "
+CAGE7 = "-netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9999' -device virtio-net-pci,netdev=n0,mac=52:54:00:a1:07:01 "
+FROZEN_7A = ["stage7/DISK.md", "stage7/test.sh", "stage7/checkdisk.py"]
+CASES += [(c, v, "ring 7a freeze: " + w) for c, v, w in freeze_cases(FROZEN_7A)]
+CASES += [
+    (write("stage7/DISK.md"), DENY, "ring 7a freeze: the disk document"),
+    (write("stage7/test.sh"), DENY, "ring 7a freeze: the gate"),
+    (write("stage7/checkdisk.py"), DENY, "ring 7a freeze: the checker"),
+    (bash("python3 - <<'EOF'\nopen('stage7/checkdisk.py','w').write('x')\nEOF"), DENY, "ring 7a freeze: python writing the checker"),
+    (bash("sed -i 's/18/17/' stage7/test.sh"), DENY, "ring 7a freeze: sed -i on the gate"),
+    (bash("cat stage7/out/disk-section.md >> stage7/DISK.md"), DENY, "ring 7a freeze: appending to the document"),
+    (write("broker/metal.py"), ALLOW, "ring 7a freeze allows: the broker module, not frozen until item 10"),
+    (write("stage7/stage7.asm"), ALLOW, "ring 7a freeze allows: Write the implementation"),
+    (write("stage7/mkimage.sh"), ALLOW, "ring 7a freeze allows: the builder is not frozen"),
+    (write("broker/claude_backend.py"), ALLOW, "ring 7a freeze allows: the Claude backend is not frozen"),
+    (write("stage7/plan-7a.md"), ALLOW, "ring 7a freeze allows: the plan is paperwork"),
+    (write("stage7/spec.md"), ALLOW, "ring 7a freeze allows: the spec is paperwork"),
+    (write("stage8/DISK.md"), ALLOW, "ring 7a freeze allows: a later stage's document of the same name"),
+    (bash("./stage7/test.sh"), ALLOW, "ring 7a freeze allows: running the gate"),
+    (bash("./stage7/test.sh > stage7/out/gate.log 2>&1"), ALLOW, "ring 7a freeze allows: gate output redirected"),
+    (bash("./stage6/test.sh && ./stage6/test-6b.sh && ./stage6/test-6c.sh"), ALLOW, "ring 7a freeze allows: the three ring 6 gates as regressions"),
+    (bash("python3 stage7/checkdisk.py --formatted stage7/out/disk.img 131072 2048 34816"), ALLOW, "ring 7a freeze allows: the checker's host mode"),
+    (bash("python3 stage7/checkdisk.py --foreign stage7/out/disk.foreign.img"), ALLOW, "ring 7a freeze allows: the checker writing the foreign disk under out/"),
+    (bash("python3 stage7/checkdisk.py --esp stage7/out/esp.before.img stage7/out/esp.img stage7/out/BOOTX64.EFI"), ALLOW, "ring 7a freeze allows: the checker's boot-image check"),
+    (bash("python3 stage7/checkdisk.py --persist 2"), ALLOW, "ring 7a freeze allows: the checker"),
+    (bash("python3 stage7/checkdisk.py --store"), ALLOW, "ring 7a freeze allows: the checker"),
+    (bash("python3 broker/metal.py --mock --port 9999 --germline stage7/out/germline --image stage7/out/esp.img "
+          "--workdir stage7/out/rehearsal/twin --record stage7/out/broker.store.a.jsonl --plans plans"),
+     ALLOW, "ring 7a freeze allows: the mock with the gate's germline"),
+    (bash("python3 broker/metal.py"), ALLOW, "ring 7a freeze allows: the real broker"),
+    (bash("python3 broker/metal.py --rehearse-app stage6/app.bin 'test app'"), ALLOW, "ring 7a freeze allows: a hand rehearsal in this ring's twin"),
+    (bash("python3 broker/metal.py --rehearse stage6/echo.bin plans/echo.md"), ALLOW, "ring 7a freeze allows: a hand rehearsal against a plan"),
+    (bash("truncate -s 64M stage7/out/disk.img"), ALLOW, "bodyguard allows: the 64 MB disk under out/"),
+    (bash("cp stage7/out/disk.img stage7/out/disk.oracle.img"), ALLOW, "bodyguard allows: the oracle's keepsake, out/ to out/"),
+    (bash("cp stage7/out/esp.img stage7/out/rehearsal/twin/esp.img"), ALLOW, "bodyguard allows: the twin's copy, out/ to out/"),
+    (bash("blkid -p stage7/out/disk.img"), ALLOW, "bodyguard allows: the host witness on an image file"),
+    (bash("partx -s stage7/out/disk.img"), ALLOW, "bodyguard allows: the host witness on an image file"),
+    (bash("cmp stage7/out/disk.img stage7/out/disk.after-first-boot.img"), ALLOW, "bodyguard allows: comparing two images under out/"),
+    (bash("grep -n 'EFI PART' stage7/DISK.md broker/metal.py stage7/checkdisk.py"), ALLOW, "ring 7a freeze allows: grepping"),
+    (bash("rm -rf stage7/out/germline stage7/out/rehearsal stage7/out/probe7a"), ALLOW, "ring 7a freeze allows: clearing the gate's scratch and the probe"),
+    (bash("git add stage7/DISK.md stage7/test.sh stage7/checkdisk.py .claude/hooks/protect-tests.py .claude/hooks/payloads.py"), ALLOW, "ring 7a freeze allows: git add"),
+    (bash(QEMU7 + DISPLAY6B + "-drive format=raw,file=stage7/out/esp.img " + SATA7 + CAGE7 + "-serial stdio"),
+     ALLOW, "bodyguard allows: the oracle's Stage 7 command - the ESP and the SATA disk"),
+    (bash(QEMU7 + DISPLAY6B + "-drive format=raw,file=stage7/out/esp.img " + SATA7 + CAGE7
+          + "-display none -serial file:stage7/out/serial.store.a.txt -monitor stdio"),
+     ALLOW, "bodyguard allows: the checker's Stage 7 command"),
+    (bash("timeout -k 5 60 " + QEMU7.replace("-smp 4", "-smp 8") + DISPLAY6B + "-drive format=raw,file=stage7/out/esp.img " + SATA7
+          + "-drive format=raw,file=stage7/out/notes.virtio.img,if=virtio " + CAGE7 + "-display none -serial stdio"),
+     ALLOW, "bodyguard allows: the gate's virtio boot - the one if=virtio in a Stage 7 command"),
+    (bash("qemu-system-x86_64 -machine q35 -m 256M -smp 2 -bios /usr/share/ovmf/OVMF.fd " + DISPLAY6B
+          + "-drive format=raw,file=stage7/out/rehearsal/twin/esp.img -drive format=raw,file=stage7/out/rehearsal/twin/notes.img,if=virtio "
+          + TWIN_CAGE + "-cpu IvyBridge -drive if=none,id=d0,format=raw,file=stage7/out/rehearsal/twin/disk.img -device ide-hd,drive=d0,bus=ide.1 "
+          + "-display none -serial file:stage7/out/rehearsal/twin/serial.txt -monitor stdio"),
+     ALLOW, "bodyguard allows: the twin's command as broker/metal.py builds it"),
+    (bash(QEMU7 + DISPLAY6B + "-drive format=raw,file=stage7/out/probe7a/probe.img " + SATA7.replace("stage7/out/disk.img", "stage7/out/probe7a/disk.probe4.img")
+          + CAGE7 + "-display none -serial stdio"),
+     ALLOW, "bodyguard allows: the item 1 probe under out/"),
+    (bash(QEMU7 + DISPLAY6B + "-drive format=raw,file=stage7/out/esp.img -drive if=none,id=d0,format=raw,file=/home/indy/disk.img -device ide-hd,drive=d0,bus=ide.1 " + CAGE7),
+     DENY, "bodyguard: a SATA drive outside out/ is denied like any other drive"),
+    (bash(QEMU7 + DISPLAY6B + "-drive format=raw,file=stage7/out/esp.img -hdb stage7/out/disk.img " + CAGE7),
+     DENY, "bodyguard: a disk attached by a shorthand is denied even under out/"),
+    (bash("echo 'one sata disk with a gpt, two partitions, the notebook and the home inside'"), ALLOW, "bodyguard allows: the ring's words in prose"),
 ]
 
 
