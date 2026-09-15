@@ -2219,10 +2219,31 @@ edid none` and 1920x1080 on virtio-vga, as before. **`./stage7/test.sh`
 and `./stage7/test-7b.sh` on this binary: all four PASS each**
 (`stage7/out/gate7a.item7.log`, `gate7b.item7.log`).
 
+**Item 8** (`stage7/stage7.asm`): **the i8042 cold init** — after the two
+disables and the drain, the controller's self-test `0xAA` must answer
+`0x55` within the bound (a timeout or another byte: `ERR: i8042 self-test
+failed`, a halt), then **`i8042: self-test ok`**; the command byte read
+*after* the self-test (a controller that passed and then falls silent:
+`ERR: i8042 command byte not answered`), the read-modify-write, the
+read-back and `0xA8` as ring 6c wrote them; the mouse's reset, defaults
+and reporting with every failure going to **`i8042: mouse none`** and
+`mouse_id` 0 — a line, never an error — and success printing **`i8042:
+mouse reset ok`**; `i8042_wait_ibf`'s exhaustion `ERR: i8042 input buffer
+never emptied`. `I8042_WAIT_TRIES` 100 (deviation 9, decided at item 1).
+The binary is 36,864 bytes still. **Probed on private copies:** the
+expected self-test byte changed to `0x56` — eighteen lines, the named
+error, no keyboard, one `S7: alive` (a halt); the expected reset byte
+changed to `0xAB` — `self-test ok`, `mouse none`, nineteen lines, the
+keyboard ready. **The gate: tests 1, 2 and 3 PASS** (the pair on every
+boot on serial and on the glass; every stage re-proven in one run with
+the arrow and the click); test 4 red on the hook alone. **`./stage7/test.sh`
+and `./stage7/test-7b.sh`: all four PASS each** (`stage7/out/gate7c.item8.log`,
+`gate7a.item8.log`, `gate7b.item8.log`).
+
 ## Next action
 
-**Ring 7c is open at item 7.** Next: item 8, the i8042 cold init, then
-items 9–14 as `stage7/plan-7c.md` says. The HP's day: three
+**Ring 7c is open at item 8 — tests 1–3 green.** Next: item 9, `PxCMD.SUD`
+under `CAP.SSS`, then items 10–14 as `stage7/plan-7c.md` says. The HP's day: three
 terminals at the repo root, `python3 broker/wire.py`, `python3
 broker/relay.py`, and the serial reader on the adapter's port, all written
 out in `stage7/METAL.md` at item 12.

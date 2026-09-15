@@ -103,7 +103,10 @@ org 0                           ; file offsets == RVAs
 %define ME_CELL         8               ; u32  row << 16 | col
 %define ME_BUTTONS      12              ; u8   bits 0-2 held after the packet
 %define ME_PRESSED      13              ; u8   bits newly set by the packet
-%define I8042_WAIT_TRIES 50             ; x 10 ms: the bound on one mouse answer
+%define I8042_WAIT_TRIES 100            ; x 10 ms: the bound on one controller or mouse answer
+                                        ; (ring 7c: a second - a PS/2 mouse's self-test after
+                                        ; a reset is specified at up to 500 ms; the twin
+                                        ; answers on the first poll)
 
 ; The choices row's click targets (ring 6c, GLASS.md "The click on the
 ; choices row"): rebuilt by choices_update with the row, one entry per item -
@@ -2178,13 +2181,18 @@ irq15_spurious:
         iretq
 
 ; ---------------------------------------------------------------------------
-; The i8042 configured, and the mouse (ring 6c, GLASS.md "The device"). All
-; of it polled with interrupts off at boot, before the ready line. Every
-; wait on the controller is bounded: a missing mouse costs half a second per
-; answer and nothing more.
+; The i8042 configured cold, and the mouse (ring 6c, GLASS.md "The device";
+; ring 7c, the cold init - stage7/spec.md). All of it polled with
+; interrupts off at boot, before the ready line. Every wait is bounded and
+; every failure named: the controller's - a self-test not answered by 0x55,
+; a command byte not answered, an input buffer that never empties - is an
+; ERR: line and a halt; the mouse's - no ACK, no 0xAA, no ID - is the line
+; "i8042: mouse none" and the boot goes on, a keyboard-only machine being a
+; machine. The two lines carry their own prefix so no S7: count moves.
 ; ---------------------------------------------------------------------------
 
-; i8042_wait_ibf - spin until the input buffer is empty (bounded).
+; i8042_wait_ibf - spin until the input buffer is empty (bounded); a
+; controller that never empties it is a named halt.
 i8042_wait_ibf:
         push    rax
         push    rcx
@@ -2194,6 +2202,8 @@ i8042_wait_ibf:
         jz      .ok
         dec     ecx
         jnz     .w
+        lea     rsi, [err_i8042_ibf]
+        call    serial_err
 .ok:    pop     rcx
         pop     rax
         ret
@@ -2272,12 +2282,16 @@ mouse_cmd:
 .out:
         ret
 
-; mouse_init - the section's sequence: both ports off, drained; the command
-; byte read, bits 0 and 1 set (both interrupts), 4 and 5 cleared (both ports
-; enabled), the rest kept (translation above all), written and read back;
-; the auxiliary port enabled; the mouse reset (FA AA and its ID), defaults,
-; reporting enabled; drained. The pointer starts at the screen's centre.
-; Records i8042_cmd and mouse_id in the obs page. Clobbers RAX, RCX, RDX.
+; mouse_init - the cold init: both ports off, drained; the controller's
+; self-test (0xAA, answered 0x55 - or a named halt) and its line; the
+; command byte read AFTER the self-test (which may reset it), bits 0 and 1
+; set (both interrupts), 4 and 5 cleared (both ports enabled), the rest
+; kept (translation above all), written and read back; the auxiliary port
+; enabled; the mouse reset (FA AA and its ID), defaults, reporting enabled,
+; and its line - or "i8042: mouse none" and mouse_id 0; drained. The
+; pointer starts at the screen's centre. Records i8042_cmd (as read after
+; the self-test, as written) and mouse_id in the obs page. Clobbers RAX,
+; RCX, RDX, RSI.
 mouse_init:
         mov     eax, [fb_width]
         shr     eax, 1
@@ -2296,10 +2310,18 @@ mouse_init:
         mov     al, 0xA7                ; the auxiliary port off
         call    i8042_cmd
         call    i8042_drain
-        mov     al, 0x20                ; read the command byte
+        mov     al, 0xAA                ; the controller's self-test (ring 7c)
         call    i8042_cmd
         call    i8042_read
-        jc      .done                   ; no controller answering: leave it be
+        jc      .self_test_failed       ; no answer within the bound
+        cmp     al, 0x55
+        jne     .self_test_failed       ; an answer that is not "passed"
+        lea     rsi, [msg_i8042_ok]
+        call    serial_puts
+        mov     al, 0x20                ; read the command byte - after the
+        call    i8042_cmd               ; self-test, which may have reset it
+        call    i8042_read
+        jc      .no_cmd_byte            ; a controller that passed and then fell silent
         movzx   edx, al                 ; DL = as read
         or      al, 0x03                ; both interrupts on
         and     al, 0xCF                ; both ports enabled
@@ -2321,24 +2343,39 @@ mouse_init:
 
         mov     al, 0xFF                ; reset: FA, then AA, then the ID
         call    mouse_cmd
-        jc      .done
+        jc      .no_mouse
         call    i8042_read_mouse
-        jc      .done
+        jc      .no_mouse
         cmp     al, 0xAA
-        jne     .done
+        jne     .no_mouse
         call    i8042_read_mouse
-        jc      .done
+        jc      .no_mouse
         movzx   eax, al
         inc     eax                     ; 1 + the ID byte: 1 for a standard mouse
         mov     [obs_page + OBS_MOUSE_ID], rax
         mov     al, 0xF6                ; defaults
         call    mouse_cmd
-        jc      .done
+        jc      .mouse_lost
         mov     al, 0xF4                ; enable reporting
         call    mouse_cmd
+        jc      .mouse_lost
+        lea     rsi, [msg_mouse_ok]
+        call    serial_puts
 .done:
         call    i8042_drain
         ret
+.mouse_lost:                            ; answered its reset, then not: the page tells the truth
+        mov     qword [obs_page + OBS_MOUSE_ID], 0
+.no_mouse:
+        lea     rsi, [msg_mouse_none]   ; a line, not an error: the boot goes on
+        call    serial_puts
+        jmp     .done
+.self_test_failed:
+        lea     rsi, [err_i8042_self]
+        call    serial_err
+.no_cmd_byte:
+        lea     rsi, [err_i8042_cmd]
+        call    serial_err
 
 ; serial_raw_puts - RSI = a NUL-terminated string, to the UART only: no
 ; mirror, no tee. The one line that goes out after the ready line without
@@ -9041,6 +9078,12 @@ msg_bad_frame:  db      'bad component frame', 0
 spin_chars:     db      '-', '\', '|', '/'
 msg_kbd:        db      'S7: keyboard ready', 13, 10, 0
 msg_mouse:      db      'S7: mouse ready', 13, 10, 0
+msg_i8042_ok:   db      'i8042: self-test ok', 13, 10, 0      ; ring 7c: their own prefix, no S7: count moves
+msg_mouse_ok:   db      'i8042: mouse reset ok', 13, 10, 0
+msg_mouse_none: db      'i8042: mouse none', 13, 10, 0
+err_i8042_self: db      'i8042 self-test failed', 0
+err_i8042_cmd:  db      'i8042 command byte not answered', 0
+err_i8042_ibf:  db      'i8042 input buffer never emptied', 0
 hex_digits:     db      '0123456789abcdef'
 
 msg_err:        db      'ERR: ', 0
