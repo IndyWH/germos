@@ -3,7 +3,7 @@
 Rolling state of the AI OS project. Read this first, then `ai-os-foundation.md`
 (the single source of truth), then the current stage's `spec.md` and `plan.md`.
 
-**Last updated:** 15 September 2026 — **Stage 7 ring 7b, the wire, is CLOSED.** Wajira ran test 5 on 15 September 2026 with the real broker behind the relay on `127.0.0.1:9997`: a blank 64 MB disk; nineteen `S7:` lines in order with `S7: nic 6c:3b:e5:3b:86:45` then `S7: link up`; `? ping` answered over the e1000e through the relay ("pong. I hear you, GermOS. The link is up and I am ready for your next line."); `! make me a clock` written by the real backend, rehearsed in the wire twin, and running in its panel with its own choices row (`h 12/24 hour`, `d date on/off`, `Esc exit`, `Tab prompt`). The strip: `w 002 002941`, `g 000/001`, `err 000`, `io 002040/000676`. *"Save the screenshot and test 5 is passed."* — the owner's words. The screenshot is `history/2026-09-15-ring7b-clock-e1000e.png`. Cowork's pre-oracle review of the driver and the relay found zero defects. **The model note, for the owner's comparison:** ring 7b was implemented on **Fable 5.1 at high effort**, one session, thirteen commits plus 10b, one per item; at the plan gate Cowork needed no blocking amendment (A1–A5 adopted); one freeze opening, in the frozen checker, of ring 6b item 10b's class (a count written from arithmetic, not from a run); zero review defects; zero oracle defects. Next: **ring 7c, the metal**, a fresh session for Cowork and for CC, medium effort by the spec. Earlier — **ring 7b was green pending the oracle.** All four automated tests pass on `./stage7/test-7b.sh` (314 s, ten boots plus two rehearsals, mock only): nineteen `S7:` lines on an e1000e carrying the HP's MAC with `S7: link up`, eighteen on the same disk, the e1000e preferred beside a virtio-net, the link taken down through the monitor ending in `ERR: nic link did not come up within 10 s` and a halt; `? ping`, a note and `? hello` through `broker/relay.py` on 9997 to the mock at `-smp 2`, `4` and `8` with the relay's log agreeing with the record and the strip's wire counters; the cage — both argv checks, the relay's bind rule on the host, a mock-down run ending in a console message, `! test app` and `! install echo` through the relay with nineteen-line rehearsal logs in the twin, the launch with nothing on the wire. Ring 7a's gate on the same binary and the three ring 6 gates and Stages 0–5 on their own: all green. **One session, twelve commits plus one (item 10b, the project's fifth freeze opening, by the owner's hand: a count in the frozen checker written from arithmetic — ring 6b item 10b's class again); tests red before code; the driver worked on the first probe.** Test 5 is Wajira's, the three commands under "Next action". **The model note, for the owner's comparison:** ring 7b was implemented on **Fable 5.1 at high effort**; at the plan gate Cowork needed no blocking amendment (A1–A5 adopted). Earlier — **Stage 7 ring 7b opened.** `stage7/plan-7b.md` was approved at the plan gate on 15 September 2026 with Cowork's five amendments, none blocking (A1 the relay sets `SO_REUSEADDR` and flushes each log line as the connection ends; A2 its teardown never raises, and a RST or a FIN on a refused broker are both "no answer" by UMBILICAL.md; A3 the relay's bind battery is three fixed addresses, no hostname lookup; A4 `e1k_poll` honours a received descriptor's errors byte; A5 the ports as this ring settled them carried to ring 7c — the relay on 9997 in the twin, `python3 broker/relay.py` with no flags on the HP's day, the spec's 7c command corrected at the 7c gate) and all eleven deviations accepted. **The model for this ring: Fable 5.1 at high effort, the owner's decision in the spec.** Item 0 (this record, the plan's commit) is done; the items follow one commit each, exactly as the plan says. Earlier — **Stage 7 ring 7a, the disk, is CLOSED.** Wajira ran test 5 with the real broker on 9 September 2026: `S7: gpt written` then `S7: disk port 1 131072 notes 2048 home 34816` on a 64 MB SATA disk; `? Hi there.` answered over the wire (`w 001 005531`); `! install calculator` built by the real backend and rehearsed in the twin on a SATA disk of its own; a sum; then a reboot with no broker — `S7: home 2 apps` (echo from the gate's disk beside it), `! calculator` launched from the home partition with `w 000` and `io 000000/000000`. *Everything ran as expected.* The screenshots are `history/2026-09-09-ring7a-hi-there-sata.png` and `history/2026-09-09-ring7a-calculator-from-sata.png`. One trap found at the oracle, not a defect: `truncate -s 64M` on a file already 64 MB changes nothing, so the run started on the gate's disk (its note `last`, its echo) — remove the file first for a blank disk; the command below says so. Cowork's pre-oracle review of the AHCI driver, the selection rule and the GPT code found zero defects. **The model note, for the owner's comparison:** ring 7a was implemented on **Fable 5.1 at high effort**, one session, twelve commits, one per item; at the plan gate Cowork needed one blocking amendment (A1, the port selection rule — the twin's boot image sits on AHCI port 0 and the plan would have formatted it) and three others; no freeze opening; zero review defects; zero oracle defects. Next: **ring 7b, the wire** (e1000e, the relay), a fresh session for Cowork and for CC. Earlier — **Stage 7 — Metal — is OPEN, and ring
+**Last updated:** 15 September 2026 — **Stage 7 ring 7c, the metal, is OPEN.** `stage7/plan-7c.md` was approved at the plan gate on 15 September 2026 with Cowork's seven amendments, A1–A3 required and A4–A7 adopted as cheap (A1 `chart.py` opens the port non-blocking, sets termios with `CLOCAL`, then clears the flag — a three-wire null-modem cable never asserts DCD; A2 under `CAP.SSS` a port's `DET 0` right after `SUD` is given a second to leave 0 before it is passed, then ten seconds to reach 3 or a named halt; A3 the flash procedure checks for exactly one USB line by SIZE and MODEL, unmounts the stick's partitions with `udisksctl` before the write and powers it off after `sync`; A4 the bodyguard's widened `/dev` mention stops at a word boundary so `/devel` and `/devices` stay allowed; A5 the mode-loop bound mirrors every mode-only limit `surf_describe` enforces, `SURF_ROWS_MAX` included; A6 the `i8042:` pair is asserted on all three of test 2's boots; A7 METAL.md says what `nmcli` does to the connection and how to undo it) and all eleven deviations accepted. **The model for this ring: Fable 5.1 at medium effort, the owner's decision in the spec.** Item 0 (this record, the plan's commit) is done; the items follow one commit each, exactly as the plan says — the builder and the acceptance machinery first (the stick, the three boots over USB, every stage re-proven in the twin of the HP in one scripted run, the bodyguard extended), the freeze, then the EDID guard, the i8042 cold init, `PxCMD.SUD`, the relay's grace close, `chart.py`, `METAL.md`. Test 5 is Wajira's, on the HP; his word closes the ring and the stage. Earlier — **Stage 7 ring 7b, the wire, is CLOSED.** Wajira ran test 5 on 15 September 2026 with the real broker behind the relay on `127.0.0.1:9997`: a blank 64 MB disk; nineteen `S7:` lines in order with `S7: nic 6c:3b:e5:3b:86:45` then `S7: link up`; `? ping` answered over the e1000e through the relay ("pong. I hear you, GermOS. The link is up and I am ready for your next line."); `! make me a clock` written by the real backend, rehearsed in the wire twin, and running in its panel with its own choices row (`h 12/24 hour`, `d date on/off`, `Esc exit`, `Tab prompt`). The strip: `w 002 002941`, `g 000/001`, `err 000`, `io 002040/000676`. *"Save the screenshot and test 5 is passed."* — the owner's words. The screenshot is `history/2026-09-15-ring7b-clock-e1000e.png`. Cowork's pre-oracle review of the driver and the relay found zero defects. **The model note, for the owner's comparison:** ring 7b was implemented on **Fable 5.1 at high effort**, one session, thirteen commits plus 10b, one per item; at the plan gate Cowork needed no blocking amendment (A1–A5 adopted); one freeze opening, in the frozen checker, of ring 6b item 10b's class (a count written from arithmetic, not from a run); zero review defects; zero oracle defects. Next: **ring 7c, the metal**, a fresh session for Cowork and for CC, medium effort by the spec. Earlier — **ring 7b was green pending the oracle.** All four automated tests pass on `./stage7/test-7b.sh` (314 s, ten boots plus two rehearsals, mock only): nineteen `S7:` lines on an e1000e carrying the HP's MAC with `S7: link up`, eighteen on the same disk, the e1000e preferred beside a virtio-net, the link taken down through the monitor ending in `ERR: nic link did not come up within 10 s` and a halt; `? ping`, a note and `? hello` through `broker/relay.py` on 9997 to the mock at `-smp 2`, `4` and `8` with the relay's log agreeing with the record and the strip's wire counters; the cage — both argv checks, the relay's bind rule on the host, a mock-down run ending in a console message, `! test app` and `! install echo` through the relay with nineteen-line rehearsal logs in the twin, the launch with nothing on the wire. Ring 7a's gate on the same binary and the three ring 6 gates and Stages 0–5 on their own: all green. **One session, twelve commits plus one (item 10b, the project's fifth freeze opening, by the owner's hand: a count in the frozen checker written from arithmetic — ring 6b item 10b's class again); tests red before code; the driver worked on the first probe.** Test 5 is Wajira's, the three commands under "Next action". **The model note, for the owner's comparison:** ring 7b was implemented on **Fable 5.1 at high effort**; at the plan gate Cowork needed no blocking amendment (A1–A5 adopted). Earlier — **Stage 7 ring 7b opened.** `stage7/plan-7b.md` was approved at the plan gate on 15 September 2026 with Cowork's five amendments, none blocking (A1 the relay sets `SO_REUSEADDR` and flushes each log line as the connection ends; A2 its teardown never raises, and a RST or a FIN on a refused broker are both "no answer" by UMBILICAL.md; A3 the relay's bind battery is three fixed addresses, no hostname lookup; A4 `e1k_poll` honours a received descriptor's errors byte; A5 the ports as this ring settled them carried to ring 7c — the relay on 9997 in the twin, `python3 broker/relay.py` with no flags on the HP's day, the spec's 7c command corrected at the 7c gate) and all eleven deviations accepted. **The model for this ring: Fable 5.1 at high effort, the owner's decision in the spec.** Item 0 (this record, the plan's commit) is done; the items follow one commit each, exactly as the plan says. Earlier — **Stage 7 ring 7a, the disk, is CLOSED.** Wajira ran test 5 with the real broker on 9 September 2026: `S7: gpt written` then `S7: disk port 1 131072 notes 2048 home 34816` on a 64 MB SATA disk; `? Hi there.` answered over the wire (`w 001 005531`); `! install calculator` built by the real backend and rehearsed in the twin on a SATA disk of its own; a sum; then a reboot with no broker — `S7: home 2 apps` (echo from the gate's disk beside it), `! calculator` launched from the home partition with `w 000` and `io 000000/000000`. *Everything ran as expected.* The screenshots are `history/2026-09-09-ring7a-hi-there-sata.png` and `history/2026-09-09-ring7a-calculator-from-sata.png`. One trap found at the oracle, not a defect: `truncate -s 64M` on a file already 64 MB changes nothing, so the run started on the gate's disk (its note `last`, its echo) — remove the file first for a blank disk; the command below says so. Cowork's pre-oracle review of the AHCI driver, the selection rule and the GPT code found zero defects. **The model note, for the owner's comparison:** ring 7a was implemented on **Fable 5.1 at high effort**, one session, twelve commits, one per item; at the plan gate Cowork needed one blocking amendment (A1, the port selection rule — the twin's boot image sits on AHCI port 0 and the plan would have formatted it) and three others; no freeze opening; zero review defects; zero oracle defects. Next: **ring 7b, the wire** (e1000e, the relay), a fresh session for Cowork and for CC. Earlier — **Stage 7 — Metal — is OPEN, and ring
 7a, the disk, opened today.** `stage7/spec.md` was approved by the owner
 on 9 September 2026 (all recommendations taken, decision 5 amended: the
 HP plugs into the home switch; the policy gate re-checked the same day —
@@ -138,12 +138,12 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 
 | | |
 |---|---|
-| Stage | **7 — Metal — OPEN since 9 September 2026**: ring 7a (the disk) **closed 9 September**; ring 7b (the wire) **closed 15 September**; ring 7c (the metal) to follow, a fresh session with its own plan gate, medium effort by the spec. Stages 0–6 closed (Stage 6 on 5 September 2026) |
-| Status | Ring 7b: **all five tests PASS** (test 5 confirmed by Wajira, 15 September 2026). Next: the ring 7c kickoff in a fresh session. Ring 7a: **all five tests PASS** (test 5 confirmed by Wajira, 9 September 2026). Stages 0–5 and the three ring 6 gates green on their own binaries. |
+| Stage | **7 — Metal — OPEN since 9 September 2026**: ring 7a (the disk) **closed 9 September**; ring 7b (the wire) **closed 15 September**; **ring 7c (the metal) OPEN since 15 September 2026** — `stage7/plan-7c.md` approved with Cowork's seven amendments, medium effort by the spec. Stages 0–6 closed (Stage 6 on 5 September 2026) |
+| Status | Ring 7c: **item 0 done** (the plan committed, this record); items 1–14 follow, one commit each; no ring 7c test exists yet. Ring 7b: **all five tests PASS** (test 5 confirmed by Wajira, 15 September 2026). Ring 7a: **all five tests PASS** (test 5 confirmed by Wajira, 9 September 2026). Stages 0–5 and the three ring 6 gates green on their own binaries; both Stage 7 gates green on the 7b binary. |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.261 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
-| Model | **Ring 7b: Fable 5.1 at high effort** — one session, thirteen commits plus 10b, one freeze opening of ring 6b item 10b's class, zero review defects, zero oracle defects; ring 7c is medium effort by the spec. The owner's decision, recorded at item 0 (the spec sets high for 7a and 7b, medium for 7c, decided at each gate). Ring 7a was Fable 5.1 at high effort. Ring 6c was Fable 5.1 at high; ring 6b Fable 5.1 at medium, the owner's experiment, to be compared with Opus at high (Stages 0 and 1) and Fable at high (Stages 2 to 6a, 6c); Cowork reviews to the same standard as every ring |
+| Model | **Ring 7c: Fable 5.1 at medium effort** — the owner's decision in the spec, recorded at item 0 (the spec sets high for 7a and 7b, medium for 7c, decided at each gate); to be compared with ring 6b, the earlier medium-effort ring. Ring 7b was Fable 5.1 at high effort — one session, thirteen commits plus 10b, one freeze opening of ring 6b item 10b's class, zero review defects, zero oracle defects. Ring 7a was Fable 5.1 at high effort. Ring 6c was Fable 5.1 at high; ring 6b Fable 5.1 at medium, the owner's experiment, to be compared with Opus at high (Stages 0 and 1) and Fable at high (Stages 2 to 6a, 6c); Cowork reviews to the same standard as every ring |
 
 ## The project in three lines
 
@@ -2010,9 +2010,101 @@ probe artefacts stay under `stage7/out/probe7b/` (gitignored) for the
 review; nothing frozen touched.
 
 
+## Ring 7c — the metal · opened 15 September 2026
+
+`stage7/plan-7c.md` was approved on 15 September 2026 with Cowork's seven
+amendments (A1 `chart.py`'s non-blocking open before termios, DCD never
+asserted on a three-wire cable; A2 under `CAP.SSS` a second for `DET` to
+leave 0 after `SUD`, then ten seconds to `DET 3` or a named halt; A3 the
+flash procedure's single-USB-line check, the `udisksctl` unmount before the
+write and the power-off after `sync`; A4 the `/dev` mention bounded by `\b`;
+A5 the mode-loop bound mirroring `surf_describe`'s mode-only limits; A6 the
+`i8042:` pair on all three test 2 boots; A7 what `nmcli` does and how it is
+undone) and every deviation accepted. **The model for this ring: Fable 5.1
+at medium effort**, the owner's decision in the spec; Cowork reviews to the
+same standard as every ring. Item 0 (this record, the plan's commit) is
+done; the items follow one commit each, exactly as the plan says.
+
+**The shape, from the plan** (its environment table holds the measured facts
+behind every choice): **procedure and a guard, no new driver.** The EDID
+guard — BAR2 read as an EDID only when the display is QEMU's VGA
+(`1234:1111`), `S7: edid none` and the highest mode by area on any other,
+plus a bound in the mode loop mirroring the console's fixed limits (A5); the
+i8042 cold init — the controller self-test before the command byte is
+written, `i8042: self-test ok` and `i8042: mouse reset ok` (or `i8042:
+mouse none`, a line not an error) before `keyboard ready`, `ERR: i8042 …`
+and a halt only for the controller, **no new `S7:` line** so every frozen
+counter (18/17, 19/18) holds; `PxCMD.SUD` under `CAP.SSS` in the AHCI probe
+(A2), unexercisable in the twin whose `CAP` is `0xc0141f05` with bit 27
+clear; `stage7/mkstick.py` (unfrozen) writing `stage7/out/stick.img` — a
+protective MBR, a GPT, one 64 MB ESP with `EFI/BOOT/BOOTX64.EFI` through
+mtools' `image@@offset` form, no loop device, no `/dev`; the gate booting a
+**copy** of it over `qemu-xhci` + `usb-storage` with no `esp.img` on SATA
+(OVMF writes `NvVars` to the stick's FAT, so the file as built is the thing
+test 1 parses and the owner flashes); the relay's grace close (the guest
+side closed two seconds after the broker has finished, `WIRE.md` untouched);
+`broker/chart.py` (the serial port at 115200 8N1 through `termios`, teed to
+a file with timestamps, proven on a pty pair); the bodyguard extended
+(`dd`, `of=`, `by-id`, `ttyUSB`, `nmcli` and every `/dev` spelling denied in
+Bash, prose included; `/dev/tty*` narrowed to `/dev/tty`; one Stage 3
+allowance flipped); `stage7/METAL.md`, the owner's document, unfrozen, in
+the spec's step order with Cowork's A3 and A7. **The ports:** the relay on
+**9997** in the twin (`python3 broker/relay.py --bind 127.0.0.1 --port
+9997`), not the spec's 9998 — 9998 is the frozen twin's own listener; on
+the HP's day `python3 broker/relay.py` with no flags (`10.0.2.4:9999 →
+127.0.0.1:9999`) beside `python3 broker/wire.py` (not the spec's
+`pointer.py`: `wire.py`'s twin rehearses on SATA over an e1000e). The gate
+`stage7/test-7c.sh` and `stage7/checkmetal.py`, frozen at item 6: test 1
+the stick parsed from the host; test 2 three boots over USB (`blank` at
+`-smp 8`, `again` at 4, `novga` at 2 on `virtio-vga` for `edid none`); test
+3 every stage re-proven in one scripted run of two boots at `-smp 4`
+(Stage 2's typing, Stage 3's note across the reboot, Stage 4's `? ping`,
+ring 6a's `! test app`, ring 6b's `! install echo` in `wire.py`'s twin, and
+in the no-broker boot ring 6c's click on `! echo` doing ring 6b's launch);
+test 4 the strings, the argv checks, the frozen bind battery and the
+payload table. Test 1 is green from item 3; test 2 whole and test 3 from
+item 8; test 4 from item 13.
+
+| # | Test | Status |
+|---|---|---|
+| 1 | Artefact — the standing PE32+ checks, plus `stick.img` parsed from the host: protective MBR, a valid GPT, one ESP of the type GUID, `EFI/BOOT/BOOTX64.EFI` byte-identical to the build | not yet written |
+| 2 | Serial, the metal configuration — the stick over USB with the SATA disk and the e1000e: nineteen lines at `-smp 8`, eighteen at 4, `edid none` and the highest mode on a display that is not QEMU's at 2; the `i8042:` pair on every boot | not yet written |
+| 3 | Every stage re-proven in the twin of the HP — one scripted run, two boots, `-smp 4` | not yet written |
+| 4 | The bodyguard, extended — the payload table 0 wrong, the harness's strings, the argv checks, the bind rule | not yet written |
+| 5 | **Oracle — Wajira, on the HP** — the stick, the lines on the chart, the glass at native, a note across a power cycle, `? ping` over the LAN, `! install calculator` and its launch with the broker off, a click | pending |
+
+**Caveats carried forward:**
+
+- **Everything ring 7b carried** — the 82579LM's PHY, legacy descriptors on
+  one queue with no link-change handling, plaintext on the home LAN, TLS at
+  Stage 8 or the ring where traffic first crosses a network the owner does
+  not own.
+- **`CAP.SSS`:** written to the AHCI spec with A2's two-stage wait; the
+  twin cannot exercise it (`SSS` clear); the HP's first `S7: disk` line is
+  its test.
+- **The i8042's real timing, AMI's GOP's mode list, the x2APIC path and the
+  trampoline:** the twin approximates or never reaches them; test 2 on the
+  HP will say.
+- **The relay's grace close** is a tool's behaviour recorded here and in
+  `METAL.md`, not a frozen criterion (deviation 7).
+
+### Ring 7c — the build, item by item
+
+**Item 0** — this record; `stage7/plan-7c.md` committed verbatim.
+
 ## Next action
 
-**Ring 7b is closed.** Next: **ring 7c, the metal** — the EDID guard, the i8042 cold init, the stick, the flash by the owner's hand, every stage re-proven on the HP — per `stage7/spec.md`, a fresh Cowork session and a fresh CC session, **medium effort by the spec's decision**. Carry into 7c's handover:
+**Ring 7c is open at item 0.** Next: item 1, the environment measured on
+private copies under `stage7/out/probe7c/` — the stick over USB and its time
+to `alive` and `ready`, the display that is not QEMU's VGA and its mode
+list, `CAP` and port 1's `PxCMD` through the monitor, the i8042's answers,
+the pty's termios, the `/dev` spelling table through a scratch payload
+script — then items 2–14 as `stage7/plan-7c.md` says. The HP's day: three
+terminals at the repo root, `python3 broker/wire.py`, `python3
+broker/relay.py`, and the serial reader on the adapter's port, all written
+out in `stage7/METAL.md` at item 12.
+
+Earlier — **Ring 7b is closed.** Next: **ring 7c, the metal** — the EDID guard, the i8042 cold init, the stick, the flash by the owner's hand, every stage re-proven on the HP — per `stage7/spec.md`, a fresh Cowork session and a fresh CC session, **medium effort by the spec's decision**. Carry into 7c's handover:
 
 - **`CAP.SSS` and `PxCMD.SUD`:** the HP's firmware may leave staggered spin-up set, so a port may need `PxCMD.SUD` before its disk appears (ring 7a's carried note; no code yet).
 - **The ports as A5 settled them:** in the twin the relay is `python3 broker/relay.py --bind 127.0.0.1 --port 9997` and every 7c QEMU line's `guestfwd` names 9997, not the spec's 9998; on the HP's day the relay is `python3 broker/relay.py` with no flags (its defaults `10.0.2.4` and 9999) beside the broker on `127.0.0.1:9999`, and `METAL.md` step 5 says so; **the spec's ring 7c twin command is to be corrected at the 7c gate.**
