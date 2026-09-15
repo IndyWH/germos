@@ -139,7 +139,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | | |
 |---|---|
 | Stage | **7 — Metal — OPEN since 9 September 2026**: ring 7a (the disk) **closed 9 September**; **ring 7b (the wire) OPEN since 15 September 2026**; ring 7c (the metal) to follow, a fresh session with its own plan gate. Stages 0–6 closed (Stage 6 on 5 September 2026) |
-| Status | Ring 7b: **items 0–9 done; item 10 STOPPED for a freeze opening** — tests 1–3 PASS, test 4 red on one wrong number in the frozen checker (`stage7/out/checkwire.item10b.diff`, unapplied, the owner's hand); the regression chain green. Ring 7a: **all five tests PASS** (test 5 confirmed by Wajira, 9 September 2026). Stages 0–5 and the three ring 6 gates green on their own binaries. |
+| Status | Ring 7b: **items 0–10b done — ALL FOUR AUTOMATED TESTS PASS** (test 4 after the fifth freeze opening, item 10b, by the owner's hand); item 11 in progress; test 5 pending. Ring 7a: **all five tests PASS** (test 5 confirmed by Wajira, 9 September 2026). Stages 0–5 and the three ring 6 gates green on their own binaries. |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.261 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
@@ -1949,6 +1949,21 @@ regression chain, all green on their own binaries and this one:**
 `./stage7/test.sh` (458 s, the virtio path), `./stage6/test.sh` (383),
 `test-6b.sh` (395), `test-6c.sh` (207), Stages 5–0 (230, 102, 92, 76,
 183, 13 s).
+
+**Item 10b — the freeze opening, by the owner's hand.** Wajira applied
+`stage7/out/checkwire.item10b.diff` exactly, at the repo root:
+`stage7/checkwire.py`'s one wrong number, `grows_served` 2, became 0 —
+the count GLASS.md's rule gives after two generated frames — and ran
+`./stage7/test-7b.sh` whole: **all four automated tests PASS.** The
+payload table re-run, 1444 cases, 0 wrong, no path changed. **This is the
+project's fifth freeze opening**, after Stage 5 item 8b, ring 6a item
+12b, ring 6b item 10b and ring 6c item 11b, and its class is ring 6b
+item 10b's again: a count in a frozen test written from arithmetic, not
+from a run. The gotcha already stands in CLAUDE.md ("write the
+expectation from a run, never from arithmetic"); this ring adds its
+second form at item 11 — a counter whose rule lives in a frozen document
+is looked up there before the number is typed, and a number no run can
+give before the freeze is written as the rule, not as a guess.
 
 
 ## Next action

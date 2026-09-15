@@ -949,7 +949,7 @@ def run_cage():
         problems.append("the obs page could not be read after the install")
     else:
         problems += check_counts(reads["e"], {"mode": 0, "wire_conns": len(entries_relay), "grows_generated": 2,
-                                              "grows_served": 2, "errors": 0}, "after the install")
+                                              "grows_served": 0, "errors": 0}, "after the install")
     ok &= report("screen A or the obs page after the install is not the truth", problems)
     if not problems:
         say("screen A: the test app's strips with 'key: k' and 'running test app'; the obs page: wire_conns %d = the relay's connections, "
