@@ -2256,10 +2256,22 @@ first `S7: disk` line is the real test. **The gate: tests 1–3 PASS;
 `./stage7/test.sh` and `./stage7/test-7b.sh` all four PASS each**
 (`stage7/out/gate7c.item9.log`, `gate7a.item9.log`, `gate7b.item9.log`).
 
+**Item 10** (`broker/relay.py`, unfrozen): **the grace close** (decision 5)
+— once the broker has finished, the guest side is given `GRACE` 2.0 s to
+close; if it has not, the relay shuts and closes it and serves the next
+connection; the log line's bytes as counted, `error` null, a stderr note.
+WIRE.md untouched. **Proven on the host** (`stage7/out/probe7c/relay_grace.py`):
+a client holding its socket after reading `pong` whole; the next client
+served **2.00 s** after the first's answer; three log lines, every error
+null, `up 8 down 8`; a closing client logged at once; ring 7b's relay
+proof re-run, every assertion held. `./stage7/test-7b.sh` all four PASS;
+the 7c gate tests 1–3 PASS (`stage7/out/gate7b.item10.log`,
+`gate7c.item10.log`).
+
 ## Next action
 
-**Ring 7c is open at item 9.** Next: item 10, the relay's grace close,
-then items 11–14 as `stage7/plan-7c.md` says. The HP's day: three
+**Ring 7c is open at item 10.** Next: item 11, `broker/chart.py`, then
+items 12–14 as `stage7/plan-7c.md` says. The HP's day: three
 terminals at the repo root, `python3 broker/wire.py`, `python3
 broker/relay.py`, and the serial reader on the adapter's port, all written
 out in `stage7/METAL.md` at item 12.

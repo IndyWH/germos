@@ -19,6 +19,13 @@ Prints "relay listening on <addr>:<port> -> 127.0.0.1:<broker-port>" to
 stdout once bound, so a harness can wait for exactly that line. Exits 2
 with a message before any socket exists when --bind is neither address;
 exits 2 when the host refuses the bind. Standard library only.
+
+One connection is served at a time (the broker's own discipline). Once the
+broker has finished - its close forwarded to the guest as a FIN - the
+guest is given GRACE seconds to close its side; a guest that dies
+mid-connection without closing (a machine powered off on the day) is then
+closed from here, so it never holds the relay (ring 7c, plan-7c.md
+decision 5). The exchange was complete, so the log line's error is null.
 """
 
 import argparse
@@ -34,6 +41,7 @@ DEFAULT_BIND = "10.0.2.4"
 DEFAULT_PORT = 9999
 DEFAULT_BROKER_PORT = 9999
 CHUNK = 65536
+GRACE = 2.0     # seconds the guest may hold its side open after the broker has finished (ring 7c)
 
 
 def log(msg):
@@ -99,8 +107,18 @@ def handle(conn, peer, broker_port, logfile):
     t_down = threading.Thread(target=pump, args=(broker, conn, counter, "down", down_done), daemon=True)
     t_up.start()
     t_down.start()
+    t_down.join()                       # the broker has finished: its bytes are forwarded, the guest side has SHUT_WR
+    if not up_done.wait(GRACE):
+        # Ring 7c (plan-7c.md decision 5): a guest that dies mid-connection
+        # without closing would hold this one-connection-at-a-time relay
+        # for ever. The exchange is complete - the guest has its whole
+        # answer - so after the grace the guest side is closed here, the
+        # up pump's recv ends, and the next connection is served. Not an
+        # error: the log line carries the bytes as counted and error null.
+        log("%s: the guest did not close within %.0f s of the broker's end - closing its side" % (peer_text, GRACE))
+        quiet(conn.shutdown, socket.SHUT_RDWR)
+        quiet(conn.close)
     t_up.join()
-    t_down.join()
     quiet(broker.close)
     quiet(conn.close)
     log("%s: %d bytes up, %d bytes down in %.1f s" % (peer_text, counter["up"], counter["down"], time.time() - t0))
