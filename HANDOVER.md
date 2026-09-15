@@ -2198,11 +2198,31 @@ append into the checker denied live. The gate whole on ring 7b's binary
 (`stage7/out/gate7c.item5.log`): test 1 PASS, tests 2–4 FAIL by design on
 the `i8042:` pair and today's hook.
 
+**Part 2 — item 7** (`stage7/stage7.asm`): **the EDID guard and the mode
+bound.** `edid_read` keeps register 0's device:vendor word in `R10D` and,
+after the class matches, compares it with `EDID_QEMU_VGA` (`0x11111234`) —
+any other display goes to `.none` and prints `S7: edid none` without BAR2
+ever being read. The mode loop, before a mode is a candidate, mirrors the
+console's fixed limits (A5) — at least 8 cells each way, at most
+`STRIP_CELLS/2` columns, the panels' rows (rows − 4) at most
+`SURF_ROWS_MAX`, the cells in all at most `SHADOW_SIZE` — and skips a mode
+that fails one; `PANEL_CELLS` is judged as before. The binary is 36,864
+bytes still. **Probed on private copies of the source (never committed),
+each booted from its own stick copy:** (a) the guard's constant changed —
+QEMU's VGA, with its valid EDID at BAR2, prints **`S7: edid none`** and
+takes the highest by area, **2048x2048**, `console 128x128`; (b) the cell
+bound lowered to 8000 with the guard off — 1920x1080 (8040 cells) skipped
+for **1600x1200** (7500 cells, the next by area); (c) the rows bound
+lowered to 60 with the guard off — 1920x1080 (67 rows) skipped for
+**1600x900**. The real binary: `S7: edid 1920x1080` on QEMU's VGA, `S7:
+edid none` and 1920x1080 on virtio-vga, as before. **`./stage7/test.sh`
+and `./stage7/test-7b.sh` on this binary: all four PASS each**
+(`stage7/out/gate7a.item7.log`, `gate7b.item7.log`).
+
 ## Next action
 
-**Ring 7c is open at item 6 — Part 1 is done, the machinery is frozen.**
-Next: item 7, the EDID guard and the mode bound in `stage7/stage7.asm`,
-then items 8–14 as `stage7/plan-7c.md` says. The HP's day: three
+**Ring 7c is open at item 7.** Next: item 8, the i8042 cold init, then
+items 9–14 as `stage7/plan-7c.md` says. The HP's day: three
 terminals at the repo root, `python3 broker/wire.py`, `python3
 broker/relay.py`, and the serial reader on the adapter's port, all written
 out in `stage7/METAL.md` at item 12.

@@ -342,6 +342,7 @@ org 0                           ; file offsets == RVAs
 ; The display's EDID (GLASS.md, "The screen"): 128 bytes read from the VGA
 ; device's BAR2, the preferred mode from the first detailed timing
 ; descriptor at byte 54.
+%define EDID_QEMU_VGA       0x11111234  ; device 0x1111 : vendor 0x1234 - the one display whose BAR2 is an EDID
 %define EDID_BYTES          128
 %define EDID_DTD1           54
 
@@ -711,6 +712,33 @@ efi_main:
         jz      .free_and_next
         test    ecx, ecx
         jz      .free_and_next
+
+        ; Ring 7c (plan decision 2, A5): the console's fixed limits, judged
+        ; here before a mode is a candidate - the same limits surf_describe
+        ; and console_init enforce later with a halt, mirrored so that a
+        ; GOP listing a mode the console cannot hold (Intel's on the HP
+        ; lists the monitor's own) skips it and takes the next, instead of
+        ; dying on it: at least 8 cells each way, at most STRIP_CELLS/2
+        ; columns, the panels' rows (rows - 4) at most SURF_ROWS_MAX, the
+        ; cells in all at most SHADOW_SIZE. PANEL_CELLS depends on the
+        ; split and is judged as before.
+        mov     edx, eax
+        shr     edx, 4                  ; cells across
+        cmp     edx, 8
+        jb      .free_and_next
+        cmp     edx, STRIP_CELLS / 2
+        ja      .free_and_next
+        mov     r8d, ecx
+        shr     r8d, 4                  ; cells down
+        cmp     r8d, 8
+        jb      .free_and_next
+        lea     r9d, [r8d - 4]          ; the panels' rows
+        cmp     r9d, SURF_ROWS_MAX
+        ja      .free_and_next
+        imul    edx, r8d                ; cells in all
+        cmp     edx, SHADOW_SIZE
+        ja      .free_and_next
+
         cmp     eax, [edid_w]           ; the display's preferred mode, if this
         jne     .not_preferred          ; is it (edid_w is 0 when none was stated)
         cmp     ecx, [edid_h]
@@ -2438,11 +2466,18 @@ edid_read:
         call    pci_cfg_read32
         cmp     ax, 0xFFFF
         je      .next_fn
+        mov     r10d, eax               ; device:vendor, kept for the guard
         mov     ecx, 0x08
         call    pci_cfg_read32          ; class code in bits 31..8
         shr     eax, 16
         cmp     ax, 0x0300
         jne     .next_fn
+        ; The EDID guard (ring 7c, spec decision 3): BAR2 is an EDID only on
+        ; QEMU's VGA (vendor 0x1234, device 0x1111). Any other display -
+        ; Intel's, whose BAR2 is its graphics aperture - is "edid none", and
+        ; the mode loop keeps the highest mode by area, Stage 1's rule.
+        cmp     r10d, EDID_QEMU_VGA
+        jne     .none
         mov     ecx, 0x18               ; BAR2
         call    pci_cfg_read32
         test    al, 1
