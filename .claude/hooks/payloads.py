@@ -626,6 +626,91 @@ CASES += [
 ]
 
 
+# --- Stage 7 ring 7b: the freeze (plan item 8, deviation 10), the e1000e, the relay --
+# The three paths frozen at item 8 (broker/wire.py joins at item 10, after
+# the gate has passed nine of nine through it - its cases are added then);
+# the mutation battery on each; the allowances measured before the plan -
+# the gate, the checker's three modes, the mock and the real broker, the
+# hand rehearsals, the relay with each of its flags (the refusal of a bad
+# address is the relay's own, not the hook's), the Stage 7 QEMU lines of
+# the gate (the e1000e cage), the "both" boot (a second cage), the "down"
+# boot (started paused, the monitor on stdio), the twin (two cages), the
+# oracle and the probe, the scratch under out/ - and the denials: a SATA
+# drive or a boot image outside out/ on an e1000e line, a shorthand.
+WIRE7B = "-drive if=none,id=d0,format=raw,file=stage7/out/wire/disk.img -device ide-hd,drive=d0,bus=ide.1 "
+CAGE7B = "-netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9997' -device e1000e,netdev=n0,mac=6c:3b:e5:3b:86:45 "
+CAGE7B_2 = "-netdev 'user,id=n1,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9997' -device virtio-net-pci,netdev=n1,mac=52:54:00:a1:07:02 "
+TWIN_CAGE_7B = "-netdev 'user,id=n1,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9998' -device e1000e,netdev=n1,mac=6c:3b:e5:3b:86:45 "
+FROZEN_7B = ["stage7/WIRE.md", "stage7/test-7b.sh", "stage7/checkwire.py"]
+CASES += [(c, v, "ring 7b freeze: " + w) for c, v, w in freeze_cases(FROZEN_7B)]
+CASES += [
+    (write("stage7/WIRE.md"), DENY, "ring 7b freeze: the wire document"),
+    (write("stage7/test-7b.sh"), DENY, "ring 7b freeze: the gate"),
+    (write("stage7/checkwire.py"), DENY, "ring 7b freeze: the checker"),
+    (bash("python3 - <<'EOF'\nopen('stage7/checkwire.py','w').write('x')\nEOF"), DENY, "ring 7b freeze: python writing the checker"),
+    (bash("sed -i 's/19/18/' stage7/test-7b.sh"), DENY, "ring 7b freeze: sed -i on the gate"),
+    (bash("cat stage7/out/wire-section.md >> stage7/WIRE.md"), DENY, "ring 7b freeze: appending to the document"),
+    (write("broker/relay.py"), ALLOW, "ring 7b freeze allows: the relay is a tool, not frozen (the spec)"),
+    (bash("sed -i 's/CHUNK = 65536/CHUNK = 32768/' broker/relay.py"), ALLOW, "ring 7b freeze allows: fixing the relay"),
+    (write("stage7/stage7.asm"), ALLOW, "ring 7b freeze allows: Write the implementation"),
+    (write("stage7/mkimage.sh"), ALLOW, "ring 7b freeze allows: the builder is not frozen"),
+    (write("broker/claude_backend.py"), ALLOW, "ring 7b freeze allows: the Claude backend is not frozen"),
+    (write("stage7/plan-7b.md"), ALLOW, "ring 7b freeze allows: the plan is paperwork"),
+    (write("stage8/WIRE.md"), ALLOW, "ring 7b freeze allows: a later stage's document of the same name"),
+    (write("stage8/checkwire.py"), ALLOW, "ring 7b freeze allows: a later stage's checker of the same name"),
+    (write("stage8/test-7b.sh"), ALLOW, "ring 7b freeze allows: a later stage's file of the same name"),
+    (bash("./stage7/test-7b.sh"), ALLOW, "ring 7b freeze allows: running the gate"),
+    (bash("./stage7/test-7b.sh > stage7/out/wire.gate.log 2>&1"), ALLOW, "ring 7b freeze allows: gate output redirected"),
+    (bash("./stage7/test.sh && ./stage7/test-7b.sh"), ALLOW, "ring 7b freeze allows: both Stage 7 gates in turn"),
+    (bash("python3 stage7/checkwire.py --down 2"), ALLOW, "ring 7b freeze allows: the checker's link-down mode"),
+    (bash("python3 stage7/checkwire.py --question 8"), ALLOW, "ring 7b freeze allows: the checker"),
+    (bash("python3 stage7/checkwire.py --cage"), ALLOW, "ring 7b freeze allows: the checker"),
+    (bash("python3 broker/wire.py --mock --port 9999 --germline stage7/out/wire/germline --image stage7/out/esp.img "
+          "--workdir stage7/out/wire/rehearsal/twin --record stage7/out/wire/broker.cage.jsonl --plans plans"),
+     ALLOW, "ring 7b freeze allows: the mock with the gate's germline"),
+    (bash("python3 broker/wire.py"), ALLOW, "ring 7b freeze allows: the real broker"),
+    (bash("python3 broker/wire.py --rehearse-app stage6/app.bin 'test app'"), ALLOW, "ring 7b freeze allows: a hand rehearsal in this ring's twin"),
+    (bash("python3 broker/wire.py --rehearse stage6/echo.bin plans/echo.md"), ALLOW, "ring 7b freeze allows: a hand rehearsal against a plan"),
+    (bash("python3 broker/relay.py"), ALLOW, "ring 7b freeze allows: the relay on the HP's day"),
+    (bash("python3 broker/relay.py --bind 127.0.0.1 --port 9997 --log stage7/out/wire/relay.question.2.jsonl"),
+     ALLOW, "ring 7b freeze allows: the relay in the twin"),
+    (bash("python3 broker/relay.py --bind 0.0.0.0 --port 9997"), ALLOW, "ring 7b freeze allows: the relay's refusal is its own, not the hook's"),
+    (bash("printf 'set_link e1000e.0 off\\ncont\\n'"), ALLOW, "bodyguard allows: the monitor's words in prose"),
+    (bash("grep -n 'link up' stage7/WIRE.md stage7/checkwire.py broker/wire.py"), ALLOW, "ring 7b freeze allows: grepping"),
+    (bash("rm -rf stage7/out/wire stage7/out/probe7b"), ALLOW, "ring 7b freeze allows: clearing the gate's scratch and the probe"),
+    (bash("git add stage7/WIRE.md stage7/test-7b.sh stage7/checkwire.py .claude/hooks/protect-tests.py .claude/hooks/payloads.py"), ALLOW, "ring 7b freeze allows: git add"),
+    (bash("timeout -k 5 60 " + QEMU7.replace("-smp 4", "-smp 8") + DISPLAY6B + "-drive format=raw,file=stage7/out/esp.img " + WIRE7B + CAGE7B
+          + "-display none -serial stdio"),
+     ALLOW, "bodyguard allows: the gate's e1000e boot"),
+    (bash("timeout -k 5 60 " + QEMU7.replace("-smp 4", "-smp 2") + DISPLAY6B + "-drive format=raw,file=stage7/out/esp.img "
+          + WIRE7B.replace("disk.img", "disk.both.img") + CAGE7B + CAGE7B_2 + "-display none -serial stdio"),
+     ALLOW, "bodyguard allows: the gate's both-NICs boot - two cages"),
+    (bash(QEMU7.replace("-smp 4", "-smp 2") + DISPLAY6B + "-drive format=raw,file=stage7/out/esp.img "
+          + WIRE7B.replace("disk.img", "disk.down.img") + CAGE7B + "-S -display none -serial file:stage7/out/wire/serial.down.2.txt -monitor stdio"),
+     ALLOW, "bodyguard allows: the checker's link-down boot, started paused"),
+    (bash(QEMU7 + DISPLAY6B + "-drive format=raw,file=stage7/out/esp.img " + WIRE7B + CAGE7B
+          + "-display none -serial file:stage7/out/wire/serial.cage.grow.txt -monitor stdio"),
+     ALLOW, "bodyguard allows: the checker's e1000e command"),
+    (bash("qemu-system-x86_64 -machine q35 -m 256M -smp 2 -bios /usr/share/ovmf/OVMF.fd " + DISPLAY6B
+          + "-drive format=raw,file=stage7/out/wire/rehearsal/twin/esp.img -drive format=raw,file=stage7/out/wire/rehearsal/twin/notes.img,if=virtio "
+          + TWIN_CAGE + "-cpu IvyBridge -drive if=none,id=d0,format=raw,file=stage7/out/wire/rehearsal/twin/disk.img -device ide-hd,drive=d0,bus=ide.1 "
+          + TWIN_CAGE_7B + "-display none -serial file:stage7/out/wire/rehearsal/twin/serial.txt -monitor stdio"),
+     ALLOW, "bodyguard allows: the twin's command as broker/wire.py builds it - two cages"),
+    (bash(QEMU7 + DISPLAY6B + "-drive format=raw,file=stage7/out/esp.img " + SATA7 + CAGE7B + "-serial stdio"),
+     ALLOW, "bodyguard allows: the oracle's ring 7b command"),
+    (bash(QEMU7 + DISPLAY6B + "-drive format=raw,file=stage7/out/probe7b/esp.probe.img " + SATA7.replace("stage7/out/disk.img", "stage7/out/probe7b/disk.4.img")
+          + CAGE7B + "-display none -serial file:stage7/out/probe7b/serial.4.txt -monitor stdio"),
+     ALLOW, "bodyguard allows: the item 1 probe under out/"),
+    (bash(QEMU7 + DISPLAY6B + "-drive format=raw,file=stage7/out/esp.img -drive if=none,id=d0,format=raw,file=/home/indy/disk.img -device ide-hd,drive=d0,bus=ide.1 " + CAGE7B),
+     DENY, "bodyguard: a SATA drive outside out/ is denied on an e1000e line too"),
+    (bash(QEMU7 + DISPLAY6B + "-drive format=raw,file=/tmp/esp.img " + WIRE7B + CAGE7B),
+     DENY, "bodyguard: a boot image outside out/ is denied whatever the NIC"),
+    (bash(QEMU7 + DISPLAY6B + "-drive format=raw,file=stage7/out/esp.img -hdb stage7/out/wire/disk.img " + CAGE7B),
+     DENY, "bodyguard: a disk attached by a shorthand is denied even under out/"),
+    (bash("echo 'the e1000e on the home switch behind the relay, link up on the metal'"), ALLOW, "bodyguard allows: the ring's words in prose"),
+]
+
+
 def run(case):
     tool, tool_input = case
     payload = json.dumps({"tool_name": tool, "tool_input": tool_input})

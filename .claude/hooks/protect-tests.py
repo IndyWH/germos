@@ -168,6 +168,21 @@ PLAN_MARKER = "PLAN_APPROVED"
 # NOT frozen: stage7/mkimage.sh (the recipe), stage7/stage7.asm (the thing
 # under test), broker/claude_backend.py, stage7/plan-7a.md and
 # stage7/spec.md (paperwork).
+#
+# Stage 7 ring 7b (plan decision 7, deviation 10) freezes stage7/WIRE.md
+# for the NOTEBOOK.md reason - the assembler prints the lines it names,
+# the relay keeps the contract it states and the checker parses by both,
+# so an editable document would be an editable criterion; and
+# stage7/test-7b.sh and stage7/checkwire.py, the gate itself; and, from
+# item 10, broker/wire.py - this ring's twin (the e1000e on a second cage,
+# nineteen lines), whose command and verdicts test 4 judges by - frozen
+# only after the gate has passed nine of nine through it (A3's precedent).
+# Everything ring 7a froze stands: the same binary must keep ring 7a's
+# gate green on the virtio path. Deliberately NOT frozen: broker/relay.py
+# (the spec's word - a tool, held to WIRE.md by the checker: a bent relay
+# is a red gate, not a bent criterion), stage7/mkimage.sh (the recipe),
+# stage7/stage7.asm (the thing under test), broker/claude_backend.py and
+# stage7/plan-7b.md (paperwork).
 PROTECTED = (
     "stage0/test.sh",
     "stage0/checkpixels.py",
@@ -222,6 +237,9 @@ PROTECTED = (
     "stage7/test.sh",
     "stage7/checkdisk.py",
     "broker/metal.py",
+    "stage7/WIRE.md",
+    "stage7/test-7b.sh",
+    "stage7/checkwire.py",
 )
 
 BASENAMES = sorted({os.path.basename(p) for p in PROTECTED})
