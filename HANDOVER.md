@@ -2128,10 +2128,27 @@ the file. Proven on the host: `classify` says `gpt`; `mtype` at the offset
 extracts the build byte-identical; a second run overwrites cleanly; with
 `BOOTX64.EFI` absent it exits 1 with a message and writes nothing.
 
+**Item 3** — `stage7/test-7c.sh` with test 1 and test 2, and
+`stage7/checkmetal.py`'s first two modes: `--stick` (the built stick parsed
+from the host — the protective MBR, both headers and both arrays with their
+CRCs, exactly one ESP-type entry at 2048..133119, `classify` `gpt`, every
+table sector as `mkstick.build_table` spells it, `mdir` and `mtype` at the
+offset); `--serial blank|again|novga SMP` (the checker's `qemu_argv` — the
+stick copy over xhci + usb-storage, the SATA disk, the e1000e cage, no
+`esp.img`; its `drive` with ring 6c's mouse steps; ring 7b's pattern lists
+with the EDID line in either form; `check_i8042_lines` — the pair once, in
+order, between the glass core's line and the keyboard's; the stick copy's
+tables compared to the built file after the boot; the screen's last log
+rows above the prompt). **The gate on ring 7b's binary: test 1 PASS; test 2
+FAIL on exactly one thing in all three boots — the `i8042:` lines are `[]`
+on serial and absent from the glass.** The `novga` boot passes its EDID and
+mode criteria already (item 1's finding); the `again` boot's disk is
+byte-identical; every stick copy's tables unchanged. `stage7/out/gate7c.item3.log`.
+
 ## Next action
 
-**Ring 7c is open at item 2.** Next: item 3, `stage7/test-7c.sh` with test
-1 and test 2's three boots, then items 4–14 as `stage7/plan-7c.md` says. The HP's day: three
+**Ring 7c is open at item 3.** Next: item 4, `checkmetal.py --stages` (test
+3), then items 5–14 as `stage7/plan-7c.md` says. The HP's day: three
 terminals at the repo root, `python3 broker/wire.py`, `python3
 broker/relay.py`, and the serial reader on the adapter's port, all written
 out in `stage7/METAL.md` at item 12.
