@@ -212,6 +212,27 @@ else
 fi
 echo
 
+# ------------------------------------ test 3: every stage in one run -------
+# One scripted run of two boots at -smp 4 from one stick copy on one disk
+# (checkmetal.py --stages). Boot A with the relay and the mock: Stage 2's
+# typing and the note, Stage 4's "? ping", ring 6a's "! test app" in its
+# panel, ring 6b's "! install echo" rehearsed in wire.py's twin - the
+# record, the relay's log, the germline, both partitions, the twin's disk,
+# screen A, the obs page. Boot B with 9999 and 9997 closed: the note back
+# (Stage 3), the arrow on the first move and a click on "! echo" launching
+# it from the home partition (ring 6c's click, ring 6b's launch), a key to
+# it, the strip's pointer field, Esc; the disk and the stick copy untouched.
+
+echo "Test 3 - Every stage re-proven in the twin of the HP: one scripted run, two boots at -smp 4 - typing, the note across the reboot, the question, the test app, the install, the click launching echo with nothing on the wire"
+if [ ! -f "$STICK" ] || [ ! -f "$EFI" ]; then
+  fail "test 3: no stick was built"
+elif python3 "$REPO/stage7/checkmetal.py" --stages; then
+  pass "test 3: every stage re-proven in the twin of the HP in one run"
+else
+  fail "test 3: a stage is not re-proven (see above)"
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then

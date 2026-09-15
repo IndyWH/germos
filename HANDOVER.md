@@ -2145,10 +2145,31 @@ on serial and absent from the glass.** The `novga` boot passes its EDID and
 mode criteria already (item 1's finding); the `again` boot's disk is
 byte-identical; every stick copy's tables unchanged. `stage7/out/gate7c.item3.log`.
 
+**Item 4** — `checkmetal.py --stages` (test 3, deviation 6) and test 3 in
+`test-7c.sh`: the relay and mock lifecycles bound to `stage7/out/metal/`;
+boot A — `first note`, `? ping`, `! test app` with `k` and screen A, `!
+install echo`, obs E — judged by the frozen `check_question_entry`,
+`check_grow_entry` (call 1), `check_install_entry` (call 2), the relay's
+three entries by `question_bytes` and the frame lengths, the two `_7b`
+germline transcriptions, the notes partition `["first note"]`, echo on the
+home partition, the twin's disk, screen A, obs E with `grows_served 0` by
+GLASS.md's rule and the i8042 command byte by `check_i8042`; boot B with
+9999 and 9997 closed — screen N (`first note` above the prompt, `! echo`
+on the row), the arrow, a click on `! echo` at the column
+`pointer.choice_targets` gives, `b`, the arrow parked, obs L, screen L,
+obs L2, Esc — judged by `strip_mouse_line`, eighteen lines with `notebook
+1 notes` and `home 1 apps`, the echo exactly `! echo` (the line the click types, as ring 6c made it), `check_one_cell_panel`,
+`check_mode_field`, `check_choices`, the obs counters (`wire_conns 0`,
+the bytes unchanged, the packets, one click, one hit), `check_arrow_at`,
+`check_strip_6c`, the disk and the stick copy untouched. **On ring 7b's
+binary (`stage7/out/stages.item4.log`): every check passes except the two
+serial-log checks, each on the `i8042:` pair alone** — the ring adds two
+lines and takes nothing away.
+
 ## Next action
 
-**Ring 7c is open at item 3.** Next: item 4, `checkmetal.py --stages` (test
-3), then items 5–14 as `stage7/plan-7c.md` says. The HP's day: three
+**Ring 7c is open at item 4.** Next: item 5, `checkmetal.py --cage` and
+test 4's self-assertions, then items 6–14 as `stage7/plan-7c.md` says. The HP's day: three
 terminals at the repo root, `python3 broker/wire.py`, `python3
 broker/relay.py`, and the serial reader on the adapter's port, all written
 out in `stage7/METAL.md` at item 12.

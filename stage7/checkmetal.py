@@ -81,6 +81,7 @@ from checkglass import (say, report, dump_capture, check_region_rows, record_cou
                         check_app_panel, check_mode_field, check_choices, check_counts,
                         fixture_self_check, germline_entries, port_state, stop_mock)
 from checkplans import (check_install_entry, check_one_cell_panel, DATA_FIRST, CHOICES_ECHO_RUNNING,  # noqa: E402
+                        CHOICES_PROMPT_ECHO,
                         ECHO_TESTS_OK)
 from checkpointer import (Pointer, expected_counts, check_arrow_at, check_pointer_counts, check_i8042,  # noqa: E402
                           check_strip_6c, target_col, park_cell, CELL)
@@ -611,6 +612,299 @@ def run_serial(mode, smp):
     return 0 if ok else 1
 
 
+# ------------------------------------------------ the relay and the mock ---
+# checkwire's lifecycles, bound to this ring's scratch: the relay on 9997
+# logging, forwarding to the mock on 9999; broker/wire.py --mock with the
+# metal germline (wiped), the gate's esp.img as the twin's image, the
+# twin's own workdir, its record file.
+
+def start_relay(log_path):
+    if port_state(RELAY_PORT) == "open":
+        return None, "something is already listening on 127.0.0.1:%d - the gate talks only to its own relay" % RELAY_PORT
+    if os.path.exists(log_path):
+        os.remove(log_path)
+    errlog = open(os.path.join(METAL_OUT, "relay.stderr.txt"), "ab")
+    proc = subprocess.Popen(
+        [sys.executable, RELAY, "--bind", "127.0.0.1", "--port", str(RELAY_PORT),
+         "--broker-port", str(BROKER_PORT), "--log", log_path],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=errlog)
+    deadline = time.time() + 10.0
+    line = b""
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            return proc, "the relay exited %d before listening" % proc.returncode
+        r, _, _ = select.select([proc.stdout], [], [], 0.2)
+        if r:
+            line = proc.stdout.readline()
+            break
+    want = "relay listening on 127.0.0.1:%d -> 127.0.0.1:%d" % (RELAY_PORT, BROKER_PORT)
+    if line.strip() != want.encode():
+        stop_mock(proc)
+        return None, "the relay did not say it was listening (got %r, want %r)" % (line, want)
+    return proc, None
+
+
+def start_mock(record_path, wipe_germline=True):
+    for port in (BROKER_PORT, REHEARSAL_PORT):
+        if port_state(port) == "open":
+            return None, ("something is already listening on 127.0.0.1:%d - the gate talks only "
+                          "to its own mock and its own twin; stop it first" % port)
+    if wipe_germline and os.path.isdir(GERMLINE):
+        shutil.rmtree(GERMLINE)
+    if os.path.isdir(REHEARSAL):
+        shutil.rmtree(REHEARSAL)
+    if os.path.exists(record_path):
+        os.remove(record_path)
+    log = open(os.path.join(METAL_OUT, "mock.wire.stderr.txt"), "ab")
+    proc = subprocess.Popen(
+        [sys.executable, BROKER, "--mock", "--port", str(BROKER_PORT), "--record", record_path,
+         "--germline", GERMLINE, "--image", ESP, "--workdir", TWIN_WORKDIR,
+         "--rehearsal-port", str(REHEARSAL_PORT), "--plans", PLANS_DIR],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=log)
+    deadline = time.time() + 10.0
+    line = b""
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            return proc, "the mock broker exited %d before listening" % proc.returncode
+        r, _, _ = select.select([proc.stdout], [], [], 0.2)
+        if r:
+            line = proc.stdout.readline()
+            break
+    if line.strip() != ("listening on 127.0.0.1:%d" % BROKER_PORT).encode():
+        stop_mock(proc)
+        return None, "the mock broker did not say it was listening (got %r)" % line
+    return proc, None
+
+
+# ------------------------------------- test 3: every stage in one run -----
+# plan-7c.md deviation 6: two boots at -smp 4 from one stick copy on one
+# disk. Boot A, the relay and the mock up: Stage 2's typing and the note,
+# Stage 4's "? ping", ring 6a's "! test app" in its panel, ring 6b's
+# "! install echo" rehearsed in wire.py's twin. Boot B, nothing on the
+# wire: the note back (Stage 3), the arrow on the first move and a click on
+# "! echo" launching it from the home partition (ring 6c's click, ring 6b's
+# launch), a key to it, the strip with the pointer field, Esc.
+
+STAGES_SMP = 4
+FIRST_NOTE = "first note"
+
+
+def run_stages():
+    smp = STAGES_SMP
+    blobs = {}
+    for name in ("app", "echo"):
+        blob, problems = fixture_self_check(name)
+        if not report("the %s fixture is not what the repository says" % name, problems):
+            return 1
+        blobs[name] = blob
+    app, echo = blobs["app"], blobs["echo"]
+    say("the two fixtures reproduce their binaries")
+
+    record = os.path.join(METAL_OUT, "broker.stages.jsonl")
+    rlog = os.path.join(METAL_OUT, "relay.stages.jsonl")
+    shots = {k: os.path.join(METAL_OUT, "screen.stages.%s.ppm" % k) for k in ("a", "n", "l")}
+    relay, err = start_relay(rlog)
+    if err:
+        say(err)
+        return 1
+    mock, err = start_mock(record)
+    if err:
+        say(err)
+        stop_mock(relay)
+        return 1
+    say("boot A: the relay on %d -> the mock on %d (germline wiped), a fresh disk, a fresh stick copy, -smp %d; "
+        "%r, '? ping', '! test app', a key, Esc, '! install echo', Esc" % (RELAY_PORT, BROKER_PORT, smp, FIRST_NOTE))
+    copy = fresh_stick(os.path.join(METAL_OUT, "stick.stages.img"))
+    try:
+        fresh_disk(DISK)
+        steps = [
+            ("type", FIRST_NOTE + "\n"), ("sleep", 1.5),
+            ("type", "? ping\n"), ("wait_record", record, 1, 20.0), ("sleep", SETTLE),
+            ("type", "! test app\n"), ("wait_record", record, 2, 150.0), ("sleep", 3.0),
+            ("type", "k"), ("sleep", 1.0), ("shot", shots["a"]),
+            ("type", "\x1b"), ("sleep", 2.0),
+            ("type", "! install echo\n"), ("wait_record", record, 3, 150.0), ("sleep", 3.0),
+            ("type", "\x1b"), ("sleep", 1.0),
+            ("obs", "e"),
+        ]
+        capture, reads, events, err = drive(smp, DISK, copy, steps, os.path.join(METAL_OUT, "serial.stages.a.txt"))
+    finally:
+        stop_mock(mock)
+        entries_relay = read_relay_log(rlog, want=3)
+        stop_mock(relay)
+    if err:
+        say(err)
+        if capture:
+            dump_capture(capture)
+        return 1
+
+    ok = True
+    problems, geometry = check_boot_lines(capture, smp, True, "formatted", 0, DISK_SECTORS)
+    problems += check_echo(capture, (FIRST_NOTE + "\r\n? ping\r\n! test app\r\n! install echo\r\n").encode())
+    ok &= report("boot A's serial log is not what plan-7c.md asks for", problems, capture)
+    if not problems:
+        say("boot A: %d S7: lines with the i8042: pair, nic %s, link up; the wire after ready carries exactly the four typed lines"
+            % (len(PATTERNS_BLANK), MAC))
+
+    app_answer = app_frame(app, b"test app", TEST_CHOICES, 0)
+    echo_answer = app_frame(echo, b"echo", [], 0, installed=1)
+    entries, problems = read_record(record)
+    if entries is not None:
+        if len(entries) != 3:
+            problems.append("the broker saw %d connection(s), want 3" % len(entries))
+        if len(entries) >= 1:
+            problems += check_question_entry(1, entries[0], "ping")
+        if len(entries) >= 2:
+            problems += check_grow_entry(2, entries[1], "test app", "generated", 1, ["pass"], "app", app_answer, name="test app")
+        if len(entries) >= 3:
+            problems += check_install_entry(3, entries[2], "install echo", "generated", 2, ["pass"], "app", echo_answer,
+                                            plan="echo", tests=ECHO_TESTS_OK)
+    ok &= report("the record is not what UMBILICAL.md, GLASS.md and PLANS.md ask for", problems)
+    if not problems:
+        say("the record: 'ping' answered; 'test app' generated (call 1), rehearsed once, the app frame; 'install echo' generated "
+            "(call 2), rehearsed once against the plan's five tests, the frame with installed 1")
+
+    wants = [question_bytes("ping"),
+             (len(grow_request(b"test app")), len(app_answer)),
+             (len(grow_request(b"install echo")), len(echo_answer))]
+    problems = check_relay_log(entries_relay, wants, "the relay")
+    if entries is not None and len(entries_relay) != len(entries):
+        problems.append("the relay logged %d connection(s) but the broker recorded %d" % (len(entries_relay), len(entries)))
+    ok &= report("the relay's log does not agree with the record (WIRE.md, the relay)", problems)
+    if not problems:
+        say("the relay logged the same three connections: the question's frames, GERMLINE.md's two request frames and the two app frames")
+
+    problems = check_germline_entry_7b(GERMLINE, "test app", app, "test app", TEST_CHOICES)
+    problems += check_install_germline_7b(GERMLINE, "echo", echo, tests=ECHO_TESTS_OK)
+    names = germline_entries(GERMLINE)
+    if len(names) != 2:
+        problems.append("the germline holds %d entries %r, want exactly 2" % (len(names), names))
+    ok &= report("the germline is not what WIRE.md asks for", problems)
+    if not problems:
+        say("the germline holds exactly two entries, each with a %d-line S7: rehearsal log carrying 'S7: link up' and the virtio disk untouched"
+            % len(PATTERNS_BLANK))
+
+    data = read_image(DISK)
+    problems = ["the disk: " + p for p in check_table(data)]
+    if not problems:
+        problems += check_notes_partition(data, [FIRST_NOTE], "the notebook")
+    more, _ = check_partitions(DISK, [FIRST_NOTE], {"echo": {"current": (echo, DATA_FIRST), "previous": None, "choices": []}}, "the install")
+    problems += more
+    tdisk = metal.twin_disk(TWIN_WORKDIR)
+    try:
+        tdata = read_image(tdisk)
+        ttable = metal.parse_gpt(tdata)
+        tnotes = checkdisk.parse_notebook(metal.partition_bytes(tdata, ttable["notes"]))
+        if tnotes != ["after"]:
+            problems.append("the twin's SATA disk holds notes %r, want ['after']" % (tnotes,))
+        problems += ["the twin's table: " + p for p in check_table(tdata)]
+    except (OSError, ValueError) as exc:
+        problems.append("the twin's SATA disk is not a GermOS disk with a notebook: %s" % exc)
+    try:
+        if any(read_image(os.path.join(TWIN_WORKDIR, "notes.img"))):
+            problems.append("the twin's virtio notes.img was written - virtio-blk code ran in the twin")
+    except OSError as exc:
+        problems.append("the twin's virtio notes.img: %s" % exc)
+    problems += check_stick_tables_unchanged(copy, "boot A")
+    ok &= report("the disks after boot A are not what DISK.md, NOTEBOOK.md, HOME.md and the twin ask for", problems)
+    if not problems:
+        say("the notes partition holds exactly %r - the question and the requests were not journaled; the home partition holds echo at "
+            "partition sector %d hash-checked; the twin's disk formatted with 'after' on SATA and its virtio image all zero; "
+            "the stick copy's tables unchanged" % (FIRST_NOTE, DATA_FIRST))
+    shutil.copyfile(DISK, os.path.join(METAL_OUT, "disk.after-a.img"))
+
+    if None in geometry:
+        say("no picture to judge - boot A's boot lines were wrong")
+        return 1
+    problems = check_app_panel(shots["a"], geometry, "k")
+    problems += check_mode_field(shots["a"], geometry, "running test app")
+    if "e" not in reads:
+        problems.append("the obs page could not be read after the install")
+    else:
+        problems += check_counts(reads["e"], {"mode": 0, "questions": 1, "notes": 1, "wire_conns": len(entries_relay),
+                                              "grows_generated": 2, "grows_served": 0, "errors": 0}, "after the install")
+        problems += check_i8042(reads["e"], "after the install")
+    ok &= report("screen A or the obs page after the install is not the truth", problems)
+    if not problems:
+        say("screen A: the test app's strips with 'key: k' and 'running test app'; the obs page: questions 1, notes 1, wire_conns %d = "
+            "the relay's connections, grows_generated 2, grows_served 0 (GLASS.md: frames whose source byte is 1 - both were generated), "
+            "the i8042 command byte as GLASS.md says" % len(entries_relay))
+
+    # ------------------------------------------------ boot B: nothing on the wire
+    for port in (BROKER_PORT, RELAY_PORT):
+        if port_state(port) == "open":
+            say("something is listening on 127.0.0.1:%d - the no-wire boot cannot run" % port)
+            return 1
+    w, h, cols, rows = geometry
+    regs = regions(cols, rows)
+    crow = regs["choices"][0]
+    park = park_cell(geometry)
+    launch_col = target_col(choice_targets(False, 0, [], ["echo"]), "launch", "echo")
+    say("boot B: %d and %d closed; the same disk and stick copy; the arrow, a click on '! echo' at (%d, %d), 'b', a screendump, Esc"
+        % (BROKER_PORT, RELAY_PORT, crow, launch_col))
+    steps = [
+        ("sleep", 0.5), ("shot", shots["n"]),
+        ("obs", "r"),
+        ("mouse", 1, 0), ("sleep", 0.5),
+        ("moveto", crow, launch_col),
+        ("button", 1, "hit"), ("button", 0), ("sleep", 2.0),
+        ("type", "b"), ("sleep", 1.0),
+        ("moveto", park[0], park[1]), ("sleep", 0.5),
+        ("obs", "l"), ("shot", shots["l"]), ("obs", "l2"),
+        ("type", "\x1b"), ("sleep", 1.0),
+    ]
+    capture, reads, events, err = drive(smp, DISK, copy, steps, os.path.join(METAL_OUT, "serial.stages.b.txt"))
+    if err:
+        say(err)
+        if capture:
+            dump_capture(capture)
+        return 1
+    problems, stripped = strip_mouse_line(capture)
+    more, geometry_b = check_boot_lines(stripped, smp, False, "1 notes", 1, DISK_SECTORS)
+    problems += more
+    problems += check_echo(stripped, b"! echo\r\n")          # the click types the launch line, as ring 6c made it
+    if geometry_b != geometry:
+        problems.append("boot B's geometry %r differs from boot A's %r" % (geometry_b, geometry))
+    ok &= report("boot B's serial log is not what plan-7c.md asks for", problems, capture)
+    if not problems:
+        say("boot B: %d lines with 'S7: notebook 1 notes' and 'S7: home 1 apps', the i8042: pair, '%s' once after ready, and the wire "
+            "carrying exactly '! echo' - the line the click typed" % (len(PATTERNS_AGAIN), MOUSE_LINE))
+
+    problems = check_region_rows(shots["n"], geometry, regs["conversation"], [FIRST_NOTE, PROMPT])
+    problems += check_choices(shots["n"], geometry, CHOICES_PROMPT_ECHO)
+    problems += check_mode_field(shots["n"], geometry, "prompt")
+    ok &= report("screen N does not show the remembered note and the installed app", problems)
+    if not problems:
+        say("screen N: %r above the prompt (Stage 3), '! echo' on the choices row (ring 6b), before any packet" % FIRST_NOTE)
+
+    problems = check_one_cell_panel(shots["l"], geometry, "b")
+    problems += check_mode_field(shots["l"], geometry, "running echo")
+    problems += check_choices(shots["l"], geometry, CHOICES_ECHO_RUNNING)
+    if "r" not in reads or "l" not in reads or "l2" not in reads:
+        problems.append("the obs page could not be read around the launch")
+    else:
+        r, l, l2 = reads["r"], reads["l"], reads["l2"]
+        problems += check_counts(l, {"mode": 3, "name": "echo", "focus": 1, "wire_conns": 0, "requests": 0,
+                                     "errors": 0, "bytes_in": r["bytes_in"], "bytes_out": r["bytes_out"]}, "the launch")
+        problems += check_pointer_counts(l, reads["counts"]["l"], "the launch", mouse_id=1)
+        problems += check_i8042(l, "the launch")
+        row, col = reads["model"]["l"]
+        problems += check_arrow_at(shots["l"], geometry, row, col, "screen L")
+        problems += check_strip_6c(shots["l"], geometry, l, l2, "screen L")
+    if read_image(DISK) != read_image(os.path.join(METAL_OUT, "disk.after-a.img")):
+        problems.append("the disk changed during the no-wire boot - a launch must not write")
+    problems += check_stick_tables_unchanged(copy, "boot B")
+    ok &= report("the launch by a click with nothing on the wire is not what plan-7c.md asks for", problems)
+    if not problems:
+        l = reads["l"]
+        say("screen L: echo launched by the click from the home partition, showing 'b' with 'running echo' and its choices; the page: "
+            "wire_conns 0, the byte counters unchanged, %d packets, 1 click, 1 hit, mouse_id 1; the arrow at %r and the strip's pointer "
+            "field the page's; the disk and the stick copy untouched" % (l["packets"], reads["model"]["l"]))
+
+    say("the stages: %s" % ("every stage re-proven in the twin of the HP in one run" if ok else "not re-proven"))
+    return 0 if ok else 1
+
+
 # --------------------------------------------------------------- main ------
 
 def main(argv):
@@ -622,6 +916,8 @@ def main(argv):
             return run_serial(argv[1], int(argv[2]))
         except ValueError:
             pass
+    if argv == ["--stages"]:
+        return run_stages()
     say("usage: checkmetal.py --stick | --serial blank|again|novga SMP | --stages | --cage")
     return 1
 
