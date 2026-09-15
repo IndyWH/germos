@@ -2118,10 +2118,20 @@ and its gop literal `1920x1080`; the stick's constants are the probe's
 by the `novga` boot, which is green on its EDID criterion already on ring
 7b's binary (its red at item 3 is the missing `i8042:` pair alone).
 
+**Item 2** — `stage7/mkstick.py` (unfrozen, the builder): the probe's
+shape as decision 8 — `STICK_SECTORS` 135168, the ESP at LBA 2048 for
+131072 sectors (64 MB), the protective MBR, both headers and both entry
+arrays with their CRCs, `build_table()` returning every table sector for
+the checker to compare a booted copy against; `mformat -F -T 131072`,
+`mmd`, `mcopy` at `@@1048576`; exit 0 only if `mdir` at the offset lists
+the file. Proven on the host: `classify` says `gpt`; `mtype` at the offset
+extracts the build byte-identical; a second run overwrites cleanly; with
+`BOOTX64.EFI` absent it exits 1 with a message and writes nothing.
+
 ## Next action
 
-**Ring 7c is open at item 1.** Next: item 2, `stage7/mkstick.py` from the
-probe's shape, then items 3–14 as `stage7/plan-7c.md` says. The HP's day: three
+**Ring 7c is open at item 2.** Next: item 3, `stage7/test-7c.sh` with test
+1 and test 2's three boots, then items 4–14 as `stage7/plan-7c.md` says. The HP's day: three
 terminals at the repo root, `python3 broker/wire.py`, `python3
 broker/relay.py`, and the serial reader on the adapter's port, all written
 out in `stage7/METAL.md` at item 12.
