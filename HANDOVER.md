@@ -2283,10 +2283,27 @@ timestamp's shape, exit 0; a path under `out/` that does not exist, exit
 2 with the reason. The usage text names the adapter's usual path once,
 inside the file.
 
+**Item 12** — `stage7/METAL.md`, the owner's document (decision 10, A3,
+A7), unfrozen: step 0 once before the day (the `dialout` group, the build
+the gate passed, the network thought through); step 1 `lsblk` with
+exactly one `usb` line by SIZE and MODEL; step 2 the by-id path and the
+`udisksctl unmount -b` of every mounted partition, and why; step 3 the
+flash by the owner's hand with `conv=fsync`, `sync`, `udisksctl power-off
+-b`; step 4 the wiring; step 5 the LAN port's second address by `nmcli`
+(the bounce, the persistence) with the `ip addr add` fallback (gone at
+reboot), then the three terminals — `python3 broker/wire.py`, `python3
+broker/relay.py` with no flags, `python3 broker/chart.py` on the adapter's
+port started before power-on; step 6 power on; step 7 the debugging
+table, line by line from `nothing at all` to `keyboard ready and no
+prompt`; step 8 test 5 in order; step 9 the chart and the photograph into
+`history/` and the second address's removal; a closing section on what
+the twin could not prove. Written with the Write tool; every command
+copied from the files as they stand.
+
 ## Next action
 
-**Ring 7c is open at item 11.** Next: item 12, `stage7/METAL.md`, then
-items 13–14 as `stage7/plan-7c.md` says. The HP's day: three
+**Ring 7c is open at item 12.** Next: item 13, the bodyguard extended and
+the payload table (test 4), then item 14 as `stage7/plan-7c.md` says. The HP's day: three
 terminals at the repo root, `python3 broker/wire.py`, `python3
 broker/relay.py`, and the serial reader on the adapter's port, all written
 out in `stage7/METAL.md` at item 12.
