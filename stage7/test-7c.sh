@@ -233,6 +233,66 @@ else
 fi
 echo
 
+# ----------------------------------------- test 4: the bodyguard, extended --
+# Two halves. First this harness inspects its OWN cage, machine, display,
+# stick and disk strings - and that no line of its own names esp.img; then
+# stage7/checkmetal.py --cage: the checker's argv (the stick over xhci, no
+# esp.img) and the twin's as broker/wire.py builds it, the relay's bind
+# rule on the host, the payload table 0 wrong, and the spot checks - the
+# flash's words and every /dev spelling denied, the harmless sources and
+# sinks and this ring's tools allowed.
+
+echo "Test 4 - The bodyguard, extended: the harness's strings, the argv checks, the relay's bind rule, the payload table 0 wrong, the flash's words and every device spelling denied to CC"
+cage_probs=()
+case "$CAGE_NETDEV" in
+  user,*) : ;;
+  *) cage_probs+=("the netdev is not slirp user mode: $CAGE_NETDEV") ;;
+esac
+case ",$CAGE_NETDEV," in
+  *,restrict=on,*) : ;;
+  *) cage_probs+=("the netdev lacks restrict=on: $CAGE_NETDEV") ;;
+esac
+n_fwd=$(printf '%s' "$CAGE_NETDEV" | grep -o 'guestfwd=' | wc -l)
+[ "$n_fwd" -eq 1 ] || cage_probs+=("expected exactly one guestfwd, found $n_fwd: $CAGE_NETDEV")
+printf '%s' "$CAGE_NETDEV" | grep -qE "guestfwd=tcp:10\.0\.2\.4:9999-cmd:nc -N 127\.0\.0\.1 ${RELAY_PORT}(,|\$)" || \
+  cage_probs+=("the guestfwd is not tcp:10.0.2.4:9999 via 'nc -N 127.0.0.1 ${RELAY_PORT}': $CAGE_NETDEV")
+case "$CAGE_NETDEV" in
+  *hostfwd*) cage_probs+=("the netdev opens a hostfwd: $CAGE_NETDEV") ;;
+esac
+[ "$CAGE_DEVICE" = "e1000e,netdev=n0,mac=$MAC" ] || \
+  cage_probs+=("the device is not an e1000e on netdev n0 with the patient's MAC: $CAGE_DEVICE")
+[ "$MAC" = "6c:3b:e5:3b:86:45" ] || cage_probs+=("the MAC is not the patient's: $MAC")
+[ "$DISPLAY" = "-vga none -device VGA,edid=on,xres=1920,yres=1080" ] || \
+  cage_probs+=("the display is not the standard VGA device with the 1920x1080 EDID: $DISPLAY")
+[ "$NOVGA" = "-vga none -device virtio-vga,edid=on" ] || \
+  cage_probs+=("the other display is not virtio-vga, a device that is not QEMU's VGA: $NOVGA")
+[ "$MACHINE" = "-machine q35 -cpu IvyBridge -m 256M -bios $OVMF" ] || \
+  cage_probs+=("the machine is not q35 on the patient's CPU with OVMF: $MACHINE")
+[ "$(sata_drive "$METAL/disk.img")" = "-drive if=none,id=d0,format=raw,file=$METAL/disk.img -device ide-hd,drive=d0,bus=ide.1" ] || \
+  cage_probs+=("the disk is not the raw file under stage7/out/metal/ on an ide-hd at ide.1: $(sata_drive "$METAL/disk.img")")
+[ "$(stick_drive "$METAL/stick.x.img")" = "-device qemu-xhci -drive if=none,id=stick,format=raw,file=$METAL/stick.x.img -device usb-storage,drive=stick" ] || \
+  cage_probs+=("the stick is not a raw copy under stage7/out/metal/ on usb-storage behind qemu-xhci: $(stick_drive "$METAL/stick.x.img")")
+case "$METAL" in
+  "$OUT"/*) : ;;
+  *) cage_probs+=("the scratch $METAL is not under stage7/out/") ;;
+esac
+if grep -qE 'qemu-system-x86_64.*esp\.img' "${BASH_SOURCE[0]}"; then
+  cage_probs+=("a QEMU line of this harness names esp.img - the stick is the only boot medium on the twin of the HP")
+fi
+
+if [ "${#cage_probs[@]}" -ne 0 ]; then
+  fail "test 4: this harness's own cage, machine, display, stick or disk string is not the twin of the HP"
+  for p in "${cage_probs[@]}"; do echo "    - $p"; done
+else
+  echo "    the harness's own -netdev string carries restrict=on and the single guestfwd to 10.0.2.4:9999 via nc to the relay on 127.0.0.1:$RELAY_PORT; the NIC is the e1000e with the patient's MAC; the machine is q35 on IvyBridge; the displays are the VGA device with the 1920x1080 EDID and virtio-vga; the stick is a copy on usb-storage behind qemu-xhci and the disk a raw file on ide.1, both under stage7/out/metal/; no QEMU line names esp.img"
+  if python3 "$REPO/stage7/checkmetal.py" --cage; then
+    pass "test 4: the bodyguard holds - the argv checks, the relay's rule, the payload table 0 wrong, the flash denied to CC"
+  else
+    fail "test 4: the bodyguard is not proven (see above)"
+  fi
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then

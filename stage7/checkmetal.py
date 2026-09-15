@@ -905,6 +905,178 @@ def run_stages():
     return 0 if ok else 1
 
 
+# ------------------------------------------------- test 4: the bodyguard ---
+# (a) is test-7c.sh's own strings. Here: (b) the argv assertions on this
+# checker's command (the stick over xhci, no esp.img) and the twin's as
+# broker/wire.py builds it, through the frozen check_argv_7b; (c) the
+# relay's bind rule, the frozen battery; (d) the payload table as a
+# subprocess, 0 wrong, and the spot checks held as data - the flash's words
+# and every /dev spelling denied, the harmless sources and sinks allowed.
+
+def check_argv_7c(argv, port, want_mac):
+    """A QEMU command inspected for the twin of the HP: one restricted cage
+    to the relay on the given port; the e1000e on n0 with the patient's MAC;
+    -cpu IvyBridge; -vga none and one display device; a qemu-xhci and a
+    usb-storage on a drive named stick; one ide-hd on ide.1; exactly two
+    drives, both raw files under stage7/out/, neither if=virtio, neither
+    the boot image esp.img, one the stick's copy and one the SATA disk."""
+    problems = []
+    netdevs = [argv[i + 1] for i, a in enumerate(argv) if a == "-netdev"]
+    devices = [argv[i + 1] for i, a in enumerate(argv) if a == "-device"]
+    drives = [argv[i + 1] for i, a in enumerate(argv) if a == "-drive"]
+    if len(netdevs) != 1:
+        problems.append("expected exactly one -netdev, found %d: %r" % (len(netdevs), netdevs))
+    for nd in netdevs:
+        if not nd.startswith("user,"):
+            problems.append("the netdev is not slirp's user mode: %r" % nd)
+        if "restrict=on" not in nd.split(","):
+            problems.append("the netdev lacks restrict=on: %r" % nd)
+        if nd.count("guestfwd=") != 1:
+            problems.append("expected exactly one guestfwd, found %d in %r" % (nd.count("guestfwd="), nd))
+        if not re.search(r"guestfwd=tcp:10\.0\.2\.4:9999-cmd:nc -N 127\.0\.0\.1 %d(,|$)" % port, nd):
+            problems.append("the guestfwd is not tcp:10.0.2.4:9999 delivered by 'nc -N 127.0.0.1 %d': %r" % (port, nd))
+        if "hostfwd" in nd:
+            problems.append("the netdev opens a hostfwd: %r" % nd)
+    for flag in ("-nic", "-net", "-hda", "-hdb", "-cdrom", "-blockdev", "-pflash", "-usb", "-usbdevice"):
+        if flag in argv:
+            problems.append("the command carries %s" % flag)
+    nics = [d for d in devices if d.startswith("e1000e")]
+    if nics != ["e1000e,netdev=n0,mac=%s" % want_mac]:
+        problems.append("expected one e1000e on n0 with the patient's MAC %s, found %r" % (want_mac, nics))
+    if [d for d in devices if d.startswith("virtio-net")]:
+        problems.append("a virtio-net device on the twin of the HP: %r" % devices)
+    vgas = [d for d in devices if d.startswith("VGA") or d.startswith("virtio-vga")]
+    if len(vgas) != 1 or "-vga" not in argv or argv[argv.index("-vga") + 1] != "none":
+        problems.append("the display is not -vga none with exactly one display device: %r" % vgas)
+    if [d for d in devices if d == "qemu-xhci"] != ["qemu-xhci"]:
+        problems.append("expected exactly one qemu-xhci, found %r" % devices)
+    if [d for d in devices if d.startswith("usb-storage")] != ["usb-storage,drive=stick"]:
+        problems.append("expected exactly one usb-storage on the drive named stick, found %r" % devices)
+    if [d for d in devices if d.startswith("ide-hd")] != ["ide-hd,drive=d0,bus=ide.1"]:
+        problems.append("expected exactly one ide-hd on ide.1 as drive d0, found %r" % devices)
+    if len(devices) != 5:
+        problems.append("expected exactly five devices (the display, the xhci, the usb-storage, the ide-hd, the e1000e), found %r" % devices)
+    if "-cpu" not in argv or argv[argv.index("-cpu") + 1] != "IvyBridge":
+        problems.append("the command does not carry -cpu IvyBridge")
+    if len(drives) != 2:
+        problems.append("expected exactly two drives, found %d: %r" % (len(drives), drives))
+    for d in drives:
+        m = re.search(r"(?:^|,)file=([^,]*)", d)
+        path = m.group(1) if m else ""
+        if not path.startswith(OUT + os.sep):
+            problems.append("a drive is not a file under stage7/out/: %r" % d)
+        if os.path.basename(path) == "esp.img":
+            problems.append("the boot image esp.img is on the twin of the HP - the stick is the only boot medium: %r" % d)
+        if os.path.abspath(path) == os.path.abspath(STICK):
+            problems.append("the drive is stick.img itself - every boot is of a copy: %r" % d)
+        if "if=virtio" in d.split(","):
+            problems.append("a virtio drive on the twin of the HP: %r" % d)
+        if "format=raw" not in d.split(","):
+            problems.append("a drive that is not format=raw: %r" % d)
+    if len([d for d in drives if d.startswith("if=none,id=stick,")]) != 1:
+        problems.append("expected exactly one if=none,id=stick drive for the usb-storage, found %r" % drives)
+    if len([d for d in drives if d.startswith("if=none,id=d0,")]) != 1:
+        problems.append("expected exactly one if=none,id=d0 drive for the ide-hd, found %r" % drives)
+    return problems
+
+
+# The bodyguard's spot checks, held as data (never on a command line): the
+# flash's words and every /dev spelling plan-7c.md decision 7 and A4 name,
+# each fed to the hook as a Bash payload. The device directory's name is
+# assembled so that this file's own text never spells a path the hook
+# would deny in a command that mentions it.
+_D = "/" + "dev"
+SPOT_DENY = [
+    "ls %s/sda" % _D, "ls /%s/sda" % _D, "ls %s//sda" % _D, "ls %s/./sda" % _D,
+    "ls %s/disk/by-id/usb-x" % _D, "ls %s/serial/by-id/x" % _D,
+    'ls "%s"/sda' % _D, 'ls "%s/sda"' % _D, "ls '%s/'sda" % _D, "ls /de\\v/sda", "ls \\/dev\\/sda",
+    "ls $'%s/sda'" % _D, "ls %s" % _D, "ls %s/" % _D,
+    "ls %s/ttyUSB0" % _D, "ls %s/ttyS0" % _D, "ls %s/ttyACM0" % _D,
+    "echo dd", "dd if=stage7/out/stick.img of=stage7/out/x.img", "echo of=x", "echo by-id", "echo ttyUSB", "echo nmcli",
+    "git commit -m 'flashed with dd by the by-id path'",
+]
+SPOT_ALLOW = [
+    "cat %s/null" % _D, "head -c 16 %s/urandom" % _D, "cat %s/zero" % _D, "cat %s/random" % _D,
+    "cmd < %s/stdin" % _D, "cmd > %s/stdout" % _D, "cmd 2> %s/stderr" % _D, "ls %s/fd/0" % _D,
+    "echo x > %s/tty" % _D, "ls %s/pts/3" % _D, "cmd </dev/null >x", 'echo x > "/dev/null"',
+    "ls /devel/x", "cat stage7/out/devices.txt",
+    "echo add odd dd-x", "echo lsblk", "python3 stage7/mkstick.py", "python3 broker/chart.py",
+    "mformat -i stage7/out/stick.img@@1048576 -F -T 131072 -v GERMOS ::",
+    "cp stage7/out/stick.img stage7/out/metal/stick.blank.img",
+    "./stage7/test-7c.sh", "python3 stage7/checkmetal.py --stages", "git commit -F msg.txt",
+]
+
+
+def hook_verdict(command):
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})
+    r = subprocess.run([sys.executable, HOOK], input=payload.encode(), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                       env=dict(os.environ, CLAUDE_PROJECT_DIR=REPO))
+    return {0: "ALLOW", 2: "DENY"}.get(r.returncode, "EXIT %d" % r.returncode)
+
+
+def check_bodyguard():
+    problems = []
+    r = subprocess.run([sys.executable, PAYLOADS], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    last = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else ""
+    m = re.fullmatch(r"(\d+) payloads: (\d+) must be denied, (\d+) must be allowed, (\d+) wrong", last)
+    if r.returncode != 0 or not m or m.group(4) != "0":
+        problems.append("the payload table: exit %d, last line %r - want exit 0 and 0 wrong" % (r.returncode, last))
+        for line in r.stdout.splitlines():
+            if line.startswith("  WRONG"):
+                problems.append("  " + line.strip())
+    else:
+        say("the payload table: %s" % last)
+    for c in SPOT_DENY:
+        v = hook_verdict(c)
+        if v != "DENY":
+            problems.append("the hook %ss %r - the flash's words and every device spelling must be denied" % (v.lower(), c))
+    for c in SPOT_ALLOW:
+        v = hook_verdict(c)
+        if v != "ALLOW":
+            problems.append("the hook %ss %r - the harmless sources and sinks and this ring's tools must be allowed" % (v.lower(), c))
+    return problems
+
+
+def run_cage():
+    # ------------------------------------------------ (b) the argv checks --
+    argv = qemu_argv(4, DISK, os.path.join(METAL_OUT, "stick.x.img"), os.path.join(METAL_OUT, "x"))
+    problems = check_argv_7c(argv, RELAY_PORT, MAC)
+    if not report("the checker's own QEMU command is not the twin of the HP", problems):
+        return 1
+    say("the checker's QEMU command carries one restricted cage to the relay on %d, the e1000e on n0 with %s, -cpu IvyBridge, "
+        "the display, the stick copy on usb-storage behind qemu-xhci, the SATA disk on ide.1, two drives under stage7/out/, "
+        "no esp.img, no virtio" % (RELAY_PORT, MAC))
+    rargv = twin.qemu_argv(ESP, os.path.join(TWIN_WORKDIR, "notes.img"), os.path.join(TWIN_WORKDIR, "serial.txt"),
+                           REHEARSAL_PORT, extra_args=wire.twin_extra_args(TWIN_WORKDIR, REHEARSAL_PORT))
+    problems = check_argv_7b(rargv, REHEARSAL_PORT, MAC, 3, True, 2, "n1")
+    if wire.LINES != len(PATTERNS_BLANK) or wire.MAC != MAC or wire.RELAY_PORT != RELAY_PORT or metal.READY != READY:
+        problems.append("the broker module disagrees with this checker: lines %d, mac %r, relay port %d, ready %r"
+                        % (wire.LINES, wire.MAC, wire.RELAY_PORT, metal.READY))
+    if twin.VGA_ARGS != DISPLAY:
+        problems.append("the twin's display is %r" % (twin.VGA_ARGS,))
+    if twin.DEFAULT_PORT != REHEARSAL_PORT:
+        problems.append("the twin's default port is %d, not %d" % (twin.DEFAULT_PORT, REHEARSAL_PORT))
+    if not report("the twin's QEMU command, as broker/wire.py builds it, is not ring 7b's", problems):
+        return 1
+    say("the twin's command is ring 7b's, unchanged: two restricted cages to 127.0.0.1:%d, the frozen virtio-net on n0, the e1000e "
+        "on n1 with %s, -cpu IvyBridge, the same display, esp.img, the frozen virtio notes disk and the SATA disk" % (REHEARSAL_PORT, MAC))
+
+    # ------------------------------------------------ (c) the bind rule ----
+    os.makedirs(checkwire.WIRE_OUT, exist_ok=True)     # the frozen battery logs under ring 7b's scratch
+    problems = check_bind_rule()
+    if not report("the relay's bind rule is not WIRE.md's", problems):
+        return 1
+    say("the relay refuses %s before any socket exists and listens on 127.0.0.1:%d" % (", ".join(checkwire.BAD_BINDS), RELAY_PORT))
+
+    # ------------------------------------------------ (d) the bodyguard ----
+    problems = check_bodyguard()
+    ok = report("the bodyguard is not what plan-7c.md decision 7 and A4 ask for", problems)
+    if ok:
+        say("the bodyguard: %d spellings and words denied, %d harmless sources, sinks and tools allowed" % (len(SPOT_DENY), len(SPOT_ALLOW)))
+    say("the cage: %s" % ("held on the twin of the HP, and the flash denied to CC" if ok else "not proven"))
+    return 0 if ok else 1
+
+
 # --------------------------------------------------------------- main ------
 
 def main(argv):
@@ -918,6 +1090,8 @@ def main(argv):
             pass
     if argv == ["--stages"]:
         return run_stages()
+    if argv == ["--cage"]:
+        return run_cage()
     say("usage: checkmetal.py --stick | --serial blank|again|novga SMP | --stages | --cage")
     return 1
 

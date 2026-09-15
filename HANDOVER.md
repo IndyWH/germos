@@ -2166,10 +2166,28 @@ binary (`stage7/out/stages.item4.log`): every check passes except the two
 serial-log checks, each on the `i8042:` pair alone** — the ring adds two
 lines and takes nothing away.
 
+**Item 5** — `checkmetal.py --cage` (test 4) and test 4's self-assertions
+in `test-7c.sh`: (a) the harness's strings — the cage, the MAC, both
+displays, the machine, the SATA disk and the stick helper under
+`stage7/out/metal/`, and no QEMU line of its own naming `esp.img`; (b)
+`check_argv_7c` on the checker's command (one cage to 9997, five devices —
+the display, the xhci, the usb-storage on the drive named `stick`, the
+`ide-hd` on `ide.1`, the e1000e on `n0` with the MAC; two raw drives under
+`stage7/out/`, neither virtio, neither `esp.img`, neither `stick.img`
+itself) and the frozen `check_argv_7b` on the twin's as `wire.py` builds
+it, unchanged; (c) the frozen bind battery; (d) the payload table as a
+subprocess, exit 0 and `0 wrong` required, plus the spot checks held as
+data — the flash's words and every `/dev` spelling of decision 7 and A4
+denied, the harmless sources and sinks and this ring's tools allowed.
+**On today's hook (`stage7/out/cage.item5.log`): (a), (b) and (c) pass,
+the table is 1444 cases 0 wrong, and (d) names exactly the fourteen
+spellings and words the hook allows today** — item 13's flips.
+
 ## Next action
 
-**Ring 7c is open at item 4.** Next: item 5, `checkmetal.py --cage` and
-test 4's self-assertions, then items 6–14 as `stage7/plan-7c.md` says. The HP's day: three
+**Ring 7c is open at item 5.** Next: item 6, the freeze of
+`stage7/test-7c.sh` and `stage7/checkmetal.py`, then items 7–14 as
+`stage7/plan-7c.md` says. The HP's day: three
 terminals at the repo root, `python3 broker/wire.py`, `python3
 broker/relay.py`, and the serial reader on the adapter's port, all written
 out in `stage7/METAL.md` at item 12.
