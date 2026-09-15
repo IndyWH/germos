@@ -1855,6 +1855,20 @@ nine of nine through it.
 ### Ring 7b — the build, item by item
 
 **Item 0** — this record; `stage7/plan-7b.md` committed verbatim.
+**Item 1** — the environment, measured on private copies under
+`stage7/out/probe7b/` (gitignored) with a temporary probe spliced into a
+copy of the source (never into `stage7/stage7.asm`, never committed); no
+source changed, nothing frozen touched:
+
+| Fact | Measured how |
+|---|---|
+| **Ring 7a's binary boots in this ring's twin shape** — `-cpu IvyBridge`, the SATA disk on `ide.1`, the frozen virtio notes disk, the frozen `virtio-net-pci` on `n0` and **the e1000e on a second restricted cage `n1`** (mac `6c:3b:e5:3b:86:45`), 1920x1080 — to `S7: keyboard ready` with **eighteen** lines at `-smp 2`, `4` and `8`, the nic line the virtio device's `52:54:00:12:34:56`, the e1000e ignored, `console 120x67`, the disk formatted as ring 7a's. **`S7: alive` at 1.25–1.30 s and ready at 1.45–1.55 s from QEMU's start with iPXE's option ROM present; 1.10 s and 1.20 s with `rombar=0`** — the ROM costs about 0.15 s and changes no line and no boot order, so the gate keeps it (the faithful twin: the HP's firmware carries an Intel driver of its own) | `stage7/out/probe7b/boot.py`, four boots |
+| **The e1000e is `00:03.0`** (BDF `0x1800`), device id **`0x10d3`**, command register **`0x0007` — memory, I/O and bus mastering already on**, left so by the firmware; **BAR0 = `0x810a0000`**, a 32-bit memory BAR below 4 GB (inside the identity map; `map_mmio_2m` remaps its 2 MB pages uncached), the write-ones probe answering `0xfffe0000`: **a 128 KB region** | the probe's PCI scan by vendor and class |
+| **What the firmware and iPXE's ROM left in the registers:** `CTRL` `0x00140261` (FD, ASDE, SLU, speed 1000), **`STATUS` `0x00080283` — `LU` already set**, FD, speed 1000; `CTRL_EXT` 0; **`IMS` 0, `RCTL` 0, `TCTL` 0, every ring register 0** — nothing initialised the device for traffic, or it was torn down cleanly; `TIPG` `0x00602008` (the reset default, the value the plan writes); `RXDCTL` `0x00010000`, `TXDCTL` 0; `RXCSUM` `0x0300`; **`RFCTL` 0 (legacy descriptors) and `MRQC` 0 (one queue)** as the plan assumes; **`RAL0` `0x3be53b6c`, `RAH0` `0x80004586` — `AV` set, the six bytes the harness's MAC** `6c:3b:e5:3b:86:45` | the probe, BAR0 mapped uncached |
+| **The reset:** `CTRL.RST` self-clears within the first read (**0 breaths**); `ICR` reads 0 after; `CTRL` after reset `0x00140241` (ASDE cleared, **SLU still set** — QEMU's reset default), `STATUS` **`0x00080283` — `LU` set at once, 0 breaths after the reset alone and 0 after SLU is written**; `RAL0`/`RAH0` unchanged by the reset (`AV` still set, the MAC intact) — the reset-then-read order the plan chose is safe | the probe: `IMC`, `RST` awaited, `IMC`, `ICR`, then `STATUS.LU` polled |
+| **`set_link e1000e.0 off` before `cont` holds the link down for good:** `STATUS` `0x00080681` at handover and `0x00080281` after the reset — **`LU` clear** — and both link polls ran to their bound: **`0xc350` = 50000 breaths each**, `LU` still clear after; the two ten-second waits took the guest from 1.30 s to ready at 21.69 s, so **50000 breaths of `PIT_200US` is ten seconds on this host**, the bound the plan wrote | the probe booted paused, the link taken down through the monitor, then `cont` |
+| The probe's guestfwd used a throwaway port (9996); the gate's ports were never touched; no packet left the cage | `boot.py` |
+
 
 ## Next action
 
