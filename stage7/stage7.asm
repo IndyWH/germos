@@ -221,6 +221,76 @@ org 0                           ; file offsets == RVAs
 %define NIC_RX_BUF          2048
 %define VNET_HDR_LEN        12          ; struct virtio_net_hdr with num_buffers
 
+; The e1000e (stage7/WIRE.md, ring 7b): the NIC the metal has, beside the
+; virtio-net driver above. Found by vendor, class and a table of three
+; device ids; BAR0 is the 128 KB register set, mapped uncached. Legacy
+; descriptors, sixteen bytes each: the receive ring over the virtio
+; driver's sixteen buffers (offset by its twelve-byte header, so the
+; frame arithmetic is shared), the transmit ring over the one transmit
+; buffer. Polled, interrupts masked, every wait bounded.
+%define PCI_VENDOR_INTEL    0x8086
+%define E1K_CLASS           0x020000    ; class 02, subclass 00, interface 00: bits 31:8 of register 8
+%define E1K_ID_COUNT        3           ; the ids in e1k_ids: 82574L (the twin), 82579LM (the HP), 82579V
+%define E1K_BAR_SIZE        0x20000     ; 128 KB, the register set
+%define E1K_CTRL            0x0000
+%define E1K_STATUS          0x0008
+%define E1K_ICR             0x00C0
+%define E1K_IMC             0x00D8
+%define E1K_RCTL            0x0100
+%define E1K_TCTL            0x0400
+%define E1K_TIPG            0x0410
+%define E1K_RDBAL           0x2800
+%define E1K_RDBAH           0x2804
+%define E1K_RDLEN           0x2808
+%define E1K_RDH             0x2810
+%define E1K_RDT             0x2818
+%define E1K_TDBAL           0x3800
+%define E1K_TDBAH           0x3804
+%define E1K_TDLEN           0x3808
+%define E1K_TDH             0x3810
+%define E1K_TDT             0x3818
+%define E1K_RFCTL           0x5008
+%define E1K_MTA             0x5200      ; 128 dwords
+%define E1K_RAL0            0x5400
+%define E1K_RAH0            0x5404
+%define E1K_MRQC            0x5818
+%define CTRL_SLU            (1 << 6)
+%define CTRL_ILOS           (1 << 7)
+%define CTRL_FRCSPD         (1 << 11)
+%define CTRL_FRCDPX         (1 << 12)
+%define CTRL_RST            (1 << 26)
+%define CTRL_PHY_RST        (1 << 31)
+%define CTRL_LINK_KEEP      ((~(CTRL_FRCSPD | CTRL_FRCDPX | CTRL_ILOS | CTRL_PHY_RST)) & 0xFFFFFFFF)
+%define STATUS_LU           (1 << 1)
+%define RAH_AV              (1 << 31)
+%define RCTL_EN             (1 << 1)
+%define RCTL_BAM            (1 << 15)
+%define RCTL_SECRC          (1 << 26)   ; BSIZE 00 and BSEX 0: 2048-byte buffers; LPE clear
+%define RFCTL_EXSTEN        (1 << 15)
+%define TCTL_EN             (1 << 1)
+%define TCTL_PSP            (1 << 3)
+%define TCTL_CT             (0x0F << 4)
+%define TCTL_COLD           (0x3F << 12)
+%define E1K_TIPG_COPPER     0x00602008  ; IPGT 8, IPGR1 8, IPGR2 6 - the reset default, written anyway
+%define E1K_DESC            16
+%define E1K_RX_DESCS        16          ; NIC_RX_BUFS
+%define E1K_TX_DESCS        8           ; the smallest ring, 128 bytes
+%define RXD_LEN             8           ; u16
+%define RXD_STATUS          12          ; u8: DD bit 0, EOP bit 1
+%define RXD_ERRORS          13          ; u8: non-zero, the frame is recycled unread (A4)
+%define RXD_DD              1
+%define RXD_EOP             2
+%define TXD_LEN             8           ; u16
+%define TXD_CMD             11          ; u8: EOP, IFCS, RS
+%define TXD_STA             12          ; u8: DD bit 0
+%define TXD_EOP             1
+%define TXD_IFCS            2
+%define TXD_RS              8
+%define E1K_RESET_TRIES     5000        ; x 200 us = one second
+%define E1K_LINK_TRIES      50000       ; x 200 us = ten seconds (measured at item 1)
+%define NIC_VIRTIO          1           ; nic_kind: which driver owns net_send and net_poll
+%define NIC_E1000E          2
+
 ; The notebook (stage3/NOTEBOOK.md): one note per 512-byte sector, the text
 ; from offset 12, so a note is at most 500 bytes. The line buffer is capped
 ; there: what is on screen is exactly what will be on disk.
@@ -1118,20 +1188,13 @@ efi_main:
         call    home_init
 
         ; -------------------------------------------------------------------
-        ; The NIC - the stage's new organ: found by the same scan, negotiated
-        ; on the same interface, its receive buffers posted, its MAC read
-        ; from device config. Line eleven. Nothing is sent on the network at
-        ; boot. Still with interrupts off and polled.
+        ; The NIC (stage7/WIRE.md, ring 7b): the e1000e when the scan found
+        ; one - owned, reset, its MAC read from RAL0/RAH0, its link awaited,
+        ; its rings given - else the virtio-net, negotiated as before. The
+        ; nic line, and on the e1000e path the link line. Nothing is sent on
+        ; the network at boot. Still with interrupts off and polled.
         ; -------------------------------------------------------------------
         call    nic_find
-        call    nic_negotiate
-        call    nic_queue_init
-
-        lea     rsi, [msg_nic]          ; line eleven
-        call    serial_puts
-        call    serial_putmac
-        lea     rsi, [msg_crlf]
-        call    serial_puts
 
         ; -------------------------------------------------------------------
         ; The component region - where a grown component will live. Line
@@ -2444,8 +2507,10 @@ edid_read:
 
 ; pci_scan - one pass over bus 0, devices 0-31, every function of a
 ; multi-function device, recording the first virtio-net (1000 or 1041) into
-; nic_dev (the BDF and the found flag) and the first AHCI controller (class
-; 0x010601) into ahci_bdf. Called once. Preserves everything.
+; nic_dev (the BDF and the found flag), the first AHCI controller (class
+; 0x010601) into ahci_bdf, and the first Intel class-0200 function whose
+; device id is in e1k_ids into e1k_bdf (WIRE.md). Called once. Preserves
+; everything.
 pci_scan:
         push    rax
         push    rbx
@@ -2453,6 +2518,8 @@ pci_scan:
         push    rdx
         push    rsi
         push    r8
+        push    r9
+        push    r10
         push    rbp
         xor     esi, esi                ; device number
 .dev:
@@ -2491,12 +2558,34 @@ pci_scan:
         cmp     ax, PCI_DEV_NET_MODERN
         jne     .next_fn
         jmp     .match
-.not_virtio:                            ; the AHCI controller, by class (DISK.md)
+.not_virtio:
+        mov     r9d, eax                ; vendor | device<<16, kept for the NIC
         mov     ecx, 0x08
         call    pci_cfg_read32          ; class code in bits 31:8
         shr     eax, 8
-        cmp     eax, AHCI_CLASS
+        cmp     eax, AHCI_CLASS         ; the AHCI controller, by class (DISK.md)
+        je      .ahci
+        cmp     eax, E1K_CLASS          ; an Ethernet controller: Intel, and one of ours?
         jne     .next_fn
+        cmp     r9w, PCI_VENDOR_INTEL
+        jne     .next_fn
+        shr     r9d, 16
+        lea     r10, [e1k_ids]
+        xor     ecx, ecx
+.e1k_id:
+        cmp     r9w, [r10 + rcx*2]
+        je      .e1k_hit
+        inc     ecx
+        cmp     ecx, E1K_ID_COUNT
+        jb      .e1k_id
+        jmp     .next_fn
+.e1k_hit:
+        cmp     dword [e1k_found], 0
+        jne     .next_fn                ; the first e1000e wins
+        mov     [e1k_bdf], ebx
+        mov     dword [e1k_found], 1
+        jmp     .next_fn
+.ahci:
         cmp     dword [ahci_found], 0
         jne     .next_fn                ; the first controller wins
         mov     [ahci_bdf], ebx
@@ -2516,6 +2605,8 @@ pci_scan:
         jmp     .dev
 .done:
         pop     rbp
+        pop     r10
+        pop     r9
         pop     r8
         pop     rsi
         pop     rdx
@@ -4602,16 +4693,34 @@ sha256_block:
 %define VNET_F_MAC          (1 << 5)    ; the config MAC is valid only if negotiated
 %define VNET_CFG_MAC        0           ; the six MAC bytes in device config
 
-; nic_find - the NIC's block attached, or a named error. Called once from
-; efi_main after the disk is up, interrupts off; clobbers registers freely.
+; nic_find - the NIC attached and its lines printed, or a named error: the
+; e1000e when the scan found one (e1k_attach prints the nic line and the
+; link line), else the virtio-net (attached, negotiated, its queues given,
+; the nic line - no link line: ring 7a's gate counts on it). nic_kind says
+; which driver owns net_send and net_poll. Called once from efi_main after
+; the disk is up, interrupts off; clobbers registers freely.
 nic_find:
+        cmp     dword [e1k_found], 0
+        je      .virtio
+        mov     dword [nic_kind], NIC_E1000E
+        call    e1k_attach
+        ret
+.virtio:
         lea     rbp, [nic_dev]
         cmp     dword [rbp + VIO_FOUND], 0
         jne     .have
-        lea     rsi, [err_no_vnet]
+        lea     rsi, [err_no_nic]
         call    serial_err
 .have:
+        mov     dword [nic_kind], NIC_VIRTIO
         call    vio_attach
+        call    nic_negotiate
+        call    nic_queue_init
+        lea     rsi, [msg_nic]
+        call    serial_puts
+        call    serial_putmac
+        lea     rsi, [msg_crlf]
+        call    serial_puts
         ret
 
 ; nic_negotiate - MAC | VERSION_1, and the MAC read into nic_mac. Clobbers.
@@ -4724,6 +4833,197 @@ serial_puthex8:
         ret
 
 ; ---------------------------------------------------------------------------
+; The NIC the metal has - the e1000e driver (stage7/WIRE.md, ring 7b), per
+; the 82574 datasheet, the register set the 82579LM shares. Chosen over the
+; virtio-net above whenever both are present: nic_find dispatches on kind,
+; and net_send / net_poll below dispatch on nic_kind. The function is owned
+; before BAR0 is read; BAR0 is mapped uncached wherever the firmware put it;
+; the device is reset with interrupts masked, so nothing a firmware driver
+; left is trusted; the MAC is read from RAL0/RAH0; the link is awaited for
+; ten seconds and its absence is a named error; then the two legacy rings.
+; Only the BSP calls any of this, interrupts off, polled. Clobbers freely.
+; ---------------------------------------------------------------------------
+
+e1k_attach:
+        mov     ebx, [e1k_bdf]
+        mov     ecx, 0x04
+        call    pci_cfg_read32
+        and     eax, 0xFFFF             ; the status half is write-1-to-clear
+        or      eax, PCI_CMD_MEMORY | PCI_CMD_MASTER | PCI_CMD_INTX_OFF
+        call    pci_cfg_write32         ; owned BEFORE the BAR is read
+
+        mov     ecx, 0x10               ; BAR0: a memory BAR, 32- or 64-bit
+        call    pci_cfg_read32
+        test    al, 1
+        jnz     .bar_io
+        mov     edx, eax
+        and     eax, 0xFFFFFFF0
+        mov     rdi, rax
+        and     edx, 6
+        cmp     edx, 4                  ; type 2 in bits 2:1 - a 64-bit BAR
+        jne     .bar32
+        mov     ecx, 0x14
+        call    pci_cfg_read32
+        shl     rax, 32
+        or      rdi, rax
+.bar32:
+        mov     [e1k_bar], rdi
+        mov     rax, rdi
+        call    map_mmio_2m             ; the page holding its first byte
+        lea     rax, [rdi + E1K_BAR_SIZE - 1]
+        call    map_mmio_2m             ; and its last
+
+        ; The reset: interrupts masked, CTRL.RST set and awaited clear,
+        ; interrupts masked again, ICR read once. Assume nothing about the
+        ; state a firmware driver left.
+        mov     dword [rdi + E1K_IMC], 0xFFFFFFFF
+        mov     eax, [rdi + E1K_CTRL]
+        or      eax, CTRL_RST
+        mov     [rdi + E1K_CTRL], eax
+        mov     r8d, E1K_RESET_TRIES
+.reset_wait:
+        mov     eax, [rdi + E1K_CTRL]
+        test    eax, CTRL_RST
+        jz      .reset_done
+        mov     ax, PIT_200US
+        call    pit_wait
+        dec     r8d
+        jnz     .reset_wait
+        lea     rsi, [err_e1k_reset]
+        call    serial_err
+.reset_done:
+        mov     dword [rdi + E1K_IMC], 0xFFFFFFFF
+        mov     eax, [rdi + E1K_ICR]
+
+        ; The MAC, from the receive address the firmware loaded from the
+        ; EEPROM: RAL0 the first four bytes, RAH0's low half the last two,
+        ; and RAH0.AV must say the address is valid. Then the nic line.
+        mov     eax, [rdi + E1K_RAH0]
+        test    eax, RAH_AV
+        jz      .no_mac
+        mov     [nic_mac + 4], ax
+        mov     eax, [rdi + E1K_RAL0]
+        mov     [nic_mac], eax
+        lea     rsi, [msg_nic]
+        call    serial_puts
+        call    serial_putmac
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+
+        ; The link: SLU set, the forced speed and duplex, ILOS and PHY_RST
+        ; cleared (the PHY autonegotiates; MDIC untouched this ring), then
+        ; STATUS.LU awaited for ten seconds or a named error.
+        mov     eax, [rdi + E1K_CTRL]
+        and     eax, CTRL_LINK_KEEP
+        or      eax, CTRL_SLU
+        mov     [rdi + E1K_CTRL], eax
+        mov     r8d, E1K_LINK_TRIES
+.link_wait:
+        mov     eax, [rdi + E1K_STATUS]
+        test    eax, STATUS_LU
+        jnz     .link_up
+        mov     ax, PIT_200US
+        call    pit_wait
+        dec     r8d
+        jnz     .link_wait
+        lea     rsi, [err_e1k_link]
+        call    serial_err
+.link_up:
+        lea     rsi, [msg_link]
+        call    serial_puts
+
+        ; Receive: the multicast table zeroed, sixteen descriptors over the
+        ; virtio driver's buffers (offset by the twelve-byte header), the
+        ; ring's base, length, head and tail; legacy descriptors on one
+        ; queue; RCTL enabled with broadcast accepted, 2048-byte buffers, the
+        ; CRC stripped; then the tail moved to the last descriptor - the
+        ; hardware owns 0..14 and stops at the tail.
+        lea     rax, [e1k_rx_ring]
+        mov     rdx, rax
+        shr     rdx, 32
+        jnz     .ring_high
+        lea     rax, [e1k_tx_ring]
+        mov     rdx, rax
+        shr     rdx, 32
+        jnz     .ring_high
+        xor     ecx, ecx
+.mta:   mov     dword [rdi + E1K_MTA + rcx*4], 0
+        inc     ecx
+        cmp     ecx, 128
+        jb      .mta
+        lea     rsi, [e1k_rx_ring]
+        lea     rdx, [nic_rx_bufs + VNET_HDR_LEN]
+        xor     ecx, ecx
+.rx_desc:
+        mov     [rsi], rdx              ; the buffer's address
+        mov     qword [rsi + 8], 0      ; length, checksum, status, errors, special: zero
+        add     rsi, E1K_DESC
+        add     rdx, NIC_RX_BUF
+        inc     ecx
+        cmp     ecx, E1K_RX_DESCS
+        jb      .rx_desc
+        lea     rax, [e1k_rx_ring]
+        mov     [rdi + E1K_RDBAL], eax
+        shr     rax, 32
+        mov     [rdi + E1K_RDBAH], eax
+        mov     dword [rdi + E1K_RDLEN], E1K_RX_DESCS * E1K_DESC
+        mov     dword [rdi + E1K_RDH], 0
+        mov     dword [rdi + E1K_RDT], 0
+        mov     eax, [rdi + E1K_RFCTL]
+        and     eax, ~RFCTL_EXSTEN
+        mov     [rdi + E1K_RFCTL], eax
+        mov     dword [rdi + E1K_MRQC], 0
+        mov     dword [rdi + E1K_RCTL], RCTL_EN | RCTL_BAM | RCTL_SECRC
+        mov     dword [rdi + E1K_RDT], E1K_RX_DESCS - 1
+        mov     dword [e1k_rx_head], 0
+
+        ; Transmit: eight descriptors zeroed, the ring's base, length, head
+        ; and tail, the inter-packet gap, TCTL enabled with the standard
+        ; collision threshold and distance.
+        push    rdi
+        lea     rdi, [e1k_tx_ring]
+        mov     ecx, E1K_TX_DESCS * E1K_DESC / 8
+        xor     eax, eax
+        rep     stosq
+        pop     rdi
+        lea     rax, [e1k_tx_ring]
+        mov     [rdi + E1K_TDBAL], eax
+        shr     rax, 32
+        mov     [rdi + E1K_TDBAH], eax
+        mov     dword [rdi + E1K_TDLEN], E1K_TX_DESCS * E1K_DESC
+        mov     dword [rdi + E1K_TDH], 0
+        mov     dword [rdi + E1K_TDT], 0
+        mov     dword [rdi + E1K_TIPG], E1K_TIPG_COPPER
+        mov     dword [rdi + E1K_TCTL], TCTL_EN | TCTL_PSP | TCTL_CT | TCTL_COLD
+        mov     dword [e1k_tx_idx], 0
+        ret
+.bar_io:
+        lea     rsi, [err_e1k_bar]
+        call    serial_err
+.no_mac:
+        lea     rsi, [err_e1k_mac]
+        call    serial_err
+.ring_high:
+        lea     rsi, [err_e1k_ring]
+        call    serial_err
+
+; e1k_send - the Ethernet frame is at nic_tx_buf + TX_BASE, ECX = its
+; length (60 or more: net_send padded it and counted it). One legacy
+; descriptor at e1k_tx_idx: the address, the length, EOP | IFCS | RS; the
+; tail moved past it; its DD awaited - bounded, a dead device being an
+; ERR:, not a hang.
+e1k_send:
+        lea     rsi, [err_e1k_stub]
+        call    serial_err
+
+; e1k_poll - every frame the device has delivered since the last look,
+; dispatched by EtherType and its descriptor handed back. Returns EAX = the
+; number of frames taken; preserves R12-R14 as the virtio path does.
+e1k_poll:
+        xor     eax, eax
+        ret
+
+; ---------------------------------------------------------------------------
 ; The wire - Ethernet, ARP and IPv4 (plan decisions 6 and 7), the smallest
 ; honest stack for a world of one on-link peer: the guest is 10.0.2.15, the
 ; broker is 10.0.2.4, and there is no gateway and no route. Frames are built
@@ -4783,9 +5083,11 @@ serial_puthex8:
 %define ARP_WAIT_TICKS      5000                ; x 200 us = one second
 
 ; net_send - the Ethernet frame is in nic_tx_buf at TX_BASE; ECX = its
-; length. Pads to the 60-byte minimum, zeroes the virtio-net header, hands
-; the one transmit descriptor to the device, rings queue 1, and waits for
-; the completion - bounded, a dead device being an ERR:, not a hang.
+; length. Pads to the 60-byte minimum, counts the bytes, then hands the
+; frame to the driver that owns the NIC (nic_kind): e1k_send, or the
+; virtio path below - the virtio-net header zeroed, the one transmit
+; descriptor given, queue 1 rung, the completion awaited - bounded, a dead
+; device being an ERR:, not a hang.
 net_send:
         cmp     ecx, 60
         jae     .long_enough
@@ -4801,6 +5103,8 @@ net_send:
 .long_enough:
         mov     eax, ecx
         add     [obs_page + OBS_BYTES_OUT], rax
+        cmp     dword [nic_kind], NIC_E1000E
+        je      e1k_send
         lea     rdi, [nic_tx_buf]       ; the virtio-net header: all zero -
         xor     eax, eax                ; no checksum offload, no GSO
         mov     [rdi], rax
@@ -4846,8 +5150,11 @@ net_send:
 ; net_poll - every frame the device has delivered since the last look:
 ; dispatched by EtherType (ARP or IPv4; anything else dropped), then its
 ; buffer re-posted. Returns EAX = the number of frames taken. Called from
-; every wait loop; also safe to call when there is nothing.
+; every wait loop; also safe to call when there is nothing. The driver
+; that owns the NIC does the work: e1k_poll, or the virtio path below.
 net_poll:
+        cmp     dword [nic_kind], NIC_E1000E
+        je      e1k_poll
         push    r12
         push    r13
         push    r14
@@ -8577,6 +8884,9 @@ msg_no_app:     db      'no app named ', 0
 msg_bad_hash:   db      ': build does not match its hash', 0
 msg_empty:      db      0
 msg_nic:        db      'S7: nic ', 0
+msg_link:       db      'S7: link up', 13, 10, 0
+                align   2
+e1k_ids:        dw      0x10D3, 0x1502, 0x1503  ; 82574L, 82579LM, 82579V (WIRE.md)
 msg_region:     db      'S7: component region 0x', 0
 msg_region_cap: db      ' 1048576 bytes', 13, 10, 0     ; COMP_BLOB_MAX, spelled
 msg_obs:        db      'S7: obs page 0x', 0
@@ -8656,7 +8966,13 @@ err_vio_reset:  db      'virtio device did not complete its reset', 0
 err_vio_v1:     db      'virtio device does not offer VIRTIO_F_VERSION_1 - legacy only', 0
 err_vio_feat:   db      'virtio device refused our features - FEATURES_OK not set', 0
 err_vio_missing: db     'virtio device does not offer a feature this driver needs', 0
-err_no_vnet:    db      'no virtio-net device on PCI bus 0', 0
+err_no_nic:     db      'no network device on PCI bus 0 (e1000e or virtio-net)', 0
+err_e1k_bar:    db      'nic BAR0 is not a memory BAR', 0
+err_e1k_reset:  db      'nic did not complete its reset', 0
+err_e1k_mac:    db      'nic has no address in RAL/RAH', 0
+err_e1k_link:   db      'nic link did not come up within 10 s', 0
+err_e1k_ring:   db      'nic ring sits above 4GB', 0
+err_e1k_stub:   db      'e1000e send not yet written', 0
 err_nic_tx:     db      'nic transmit timed out', 0
 err_disk_big:   db      'disk has 2^32 sectors or more - beyond this stage', 0
 err_vq_size:    db      'virtqueue size is 0, above VQ_MAX, or not a power of two', 0
@@ -9037,6 +9353,21 @@ nic_tx_used:    resb    6 + VQ_MAX * 8
         alignb  4096
 nic_rx_bufs:    resb    NIC_RX_BUFS * NIC_RX_BUF
 nic_tx_buf:     resb    NIC_RX_BUF
+
+; The e1000e (WIRE.md): which driver owns the NIC, the function's BDF and
+; BAR0, the two legacy rings each in its own page, and the ring indices.
+        alignb  16
+nic_kind:       resd    1
+e1k_bdf:        resd    1
+e1k_found:      resd    1
+e1k_rx_head:    resd    1
+e1k_tx_idx:     resd    1
+        alignb  16
+e1k_bar:        resq    1
+        alignb  4096
+e1k_rx_ring:    resb    E1K_RX_DESCS * E1K_DESC
+        alignb  4096
+e1k_tx_ring:    resb    E1K_TX_DESCS * E1K_DESC
 
 ; The wire's state: the broker's MAC once ARP has answered, and the IPv4
 ; identification counter.

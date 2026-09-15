@@ -1869,6 +1869,43 @@ source changed, nothing frozen touched:
 | **`set_link e1000e.0 off` before `cont` holds the link down for good:** `STATUS` `0x00080681` at handover and `0x00080281` after the reset — **`LU` clear** — and both link polls ran to their bound: **`0xc350` = 50000 breaths each**, `LU` still clear after; the two ten-second waits took the guest from 1.30 s to ready at 21.69 s, so **50000 breaths of `PIT_200US` is ten seconds on this host**, the bound the plan wrote | the probe booted paused, the link taken down through the monitor, then `cont` |
 | The probe's guestfwd used a throwaway port (9996); the gate's ports were never touched; no packet left the cage | `boot.py` |
 
+**Items 2–8** — `stage7/WIRE.md` (item 2); `broker/relay.py` proven on
+the host with `stage7/out/probe7b/relay_proof.py` (item 3: the bind rule,
+a ping through it, the port clash a loud exit, a refused broker a RST and
+a logged error, a restart in TIME_WAIT); `broker/wire.py` (item 4: the
+twin's command with two cages and four devices, the mock with no image,
+and the real rehearsal of the test app on ring 7a's binary failing "the
+twin did not boot (ready True, 18 S6: lines, want 19)" in 14.3 s — the
+ring's reason); `stage7/test-7b.sh` with test 1 green and test 2 red
+(item 5); `stage7/checkwire.py --down` and `--question`, test 3 (item 6);
+`--cage`, test 4 (item 7) — the gate whole on ring 7a's binary: test 1
+PASS, tests 2–4 FAIL on the missing driver; the freeze (item 8): three
+paths into `PROTECTED`, **1421 payloads, 964 denied, 457 allowed, 0
+wrong**, one append into WIRE.md denied live.
+
+**Part 2 so far — item 9** (`stage7/stage7.asm`): the e1000e attached —
+`pci_scan` matching vendor `0x8086`, class `0x020000` and the three-id
+table into `e1k_bdf` (the virtio-net and AHCI branches kept); `nic_find`
+choosing by kind into `nic_kind`; `e1k_attach` — the command register
+owned before BAR0 is read, BAR0 (32- or 64-bit) mapped uncached, `IMC`,
+`CTRL.RST` awaited, `IMC`, `ICR`, the MAC from `RAL0`/`RAH0` with `AV`
+required, `SLU` set with the forced bits cleared, `STATUS.LU` awaited
+50000 breaths, the MTA zeroed, sixteen legacy receive descriptors over
+the virtio buffers offset by twelve, `RDBAL`/`RDLEN`/`RDH`/`RDT`,
+`RFCTL.EXSTEN` clear, `MRQC` 0, `RCTL` EN|BAM|SECRC, the tail to 15,
+eight transmit descriptors, `TDBAL`/`TDLEN`/`TDH`/`TDT`, `TIPG`, `TCTL`;
+`net_send` and `net_poll` dispatching on `nic_kind` (the send a named
+stub this item); the strings and the BSS. The binary is 36,864 bytes
+still. **Probed by hand on private copies:** nineteen lines with `S7: nic
+6c:3b:e5:3b:86:45` and `S7: link up` at `-smp 2`, `4` and `8` on the
+e1000e alone (ready at 1.30–1.40 s), the same with the virtio-net beside
+it in the twin's order, the link-down boot ending in `ERR: nic link did
+not come up within 10 s` at 11.5 s and halting. **The gate: tests 1 and 2
+PASS** (the four boots, the down boot's error at 11.5 s inside the 45 s
+clock); **tests 3 and 4 FAIL on the stub alone** — `ERR: e1000e send not
+yet written` at the first question. **Ring 7a's gate on this binary: all
+four PASS** (the virtio path, eighteen lines).
+
 
 ## Next action
 
