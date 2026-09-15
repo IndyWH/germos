@@ -2183,11 +2183,26 @@ denied, the harmless sources and sinks and this ring's tools allowed.
 the table is 1444 cases 0 wrong, and (d) names exactly the fourteen
 spellings and words the hook allows today** — item 13's flips.
 
+**Item 6** — the freeze: `PROTECTED` grows `stage7/test-7c.sh` and
+`stage7/checkmetal.py`, the hook's comment saying why and why `METAL.md`,
+`mkstick.py`, `relay.py`, `chart.py`, `mkimage.sh`, `stage7.asm`,
+`claude_backend.py` and `plan-7c.md` are not; `payloads.py` gains the ring
+7c freeze group — the battery on both paths, the heredoc and `sed -i`
+denials, the allowances measured before the plan and at item 1 (the gate,
+the checker's modes, the builder and the tools writable, the mtools lines
+at the offset, the stick boot, the `novga` boot, the twin's line under the
+metal scratch, the oracle's line, the probe's line, the host witnesses, the
+scratch wipe, `git add`) and the denials (a stick or a disk outside `out/`,
+a shorthand). **1524 payloads, 1020 denied, 504 allowed, 0 wrong**; one
+append into the checker denied live. The gate whole on ring 7b's binary
+(`stage7/out/gate7c.item5.log`): test 1 PASS, tests 2–4 FAIL by design on
+the `i8042:` pair and today's hook.
+
 ## Next action
 
-**Ring 7c is open at item 5.** Next: item 6, the freeze of
-`stage7/test-7c.sh` and `stage7/checkmetal.py`, then items 7–14 as
-`stage7/plan-7c.md` says. The HP's day: three
+**Ring 7c is open at item 6 — Part 1 is done, the machinery is frozen.**
+Next: item 7, the EDID guard and the mode bound in `stage7/stage7.asm`,
+then items 8–14 as `stage7/plan-7c.md` says. The HP's day: three
 terminals at the repo root, `python3 broker/wire.py`, `python3
 broker/relay.py`, and the serial reader on the adapter's port, all written
 out in `stage7/METAL.md` at item 12.

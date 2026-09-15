@@ -716,6 +716,85 @@ CASES += [
 ]
 
 
+# --- Stage 7 ring 7c: the freeze (plan item 6), the stick, the twin of the HP --
+# The two paths frozen at item 6; the mutation battery on each; the
+# allowances measured before the plan and at item 1 - the gate, the
+# checker's modes, the builder and the tools (mkstick.py, relay.py,
+# chart.py, METAL.md) writable, the mtools lines at the partition's offset,
+# the stick boot (a COPY of the stick on usb-storage behind qemu-xhci, no
+# esp.img on SATA), the novga boot on virtio-vga, the twin's line as
+# broker/wire.py builds it (ring 7b's, unchanged), the oracle's windowed
+# line, the scratch wipe - and the denials: a stick or a disk outside out/,
+# a shorthand. The bodyguard's new words and spellings join at item 13.
+STICK7C = "-device qemu-xhci -drive if=none,id=stick,format=raw,file=stage7/out/metal/stick.blank.img -device usb-storage,drive=stick "
+METAL7C = "-drive if=none,id=d0,format=raw,file=stage7/out/metal/disk.img -device ide-hd,drive=d0,bus=ide.1 "
+NOVGA7C = "-vga none -device virtio-vga,edid=on "
+FROZEN_7C = ["stage7/test-7c.sh", "stage7/checkmetal.py"]
+CASES += [(c, v, "ring 7c freeze: " + w) for c, v, w in freeze_cases(FROZEN_7C)]
+CASES += [
+    (write("stage7/test-7c.sh"), DENY, "ring 7c freeze: the gate"),
+    (write("stage7/checkmetal.py"), DENY, "ring 7c freeze: the checker"),
+    (bash("python3 - <<'EOF'\nopen('stage7/checkmetal.py','w').write('x')\nEOF"), DENY, "ring 7c freeze: python writing the checker"),
+    (bash("sed -i 's/reset ok/none/' stage7/checkmetal.py"), DENY, "ring 7c freeze: sed -i on the i8042 lines"),
+    (bash("sed -i 's/novga 2/novga 4/' stage7/test-7c.sh"), DENY, "ring 7c freeze: sed -i on the gate"),
+    (write("stage7/METAL.md"), ALLOW, "ring 7c freeze allows: the owner's procedure is not frozen"),
+    (write("stage7/mkstick.py"), ALLOW, "ring 7c freeze allows: the builder is not frozen"),
+    (write("broker/relay.py"), ALLOW, "ring 7c freeze allows: the relay is a tool"),
+    (write("broker/chart.py"), ALLOW, "ring 7c freeze allows: the serial reader is a tool"),
+    (write("stage7/stage7.asm"), ALLOW, "ring 7c freeze allows: Write the implementation"),
+    (write("stage7/mkimage.sh"), ALLOW, "ring 7c freeze allows: the builder is not frozen"),
+    (write("stage7/plan-7c.md"), ALLOW, "ring 7c freeze allows: the plan is paperwork"),
+    (write("stage8/test-7c.sh"), ALLOW, "ring 7c freeze allows: a later stage's file of the same name"),
+    (write("stage8/checkmetal.py"), ALLOW, "ring 7c freeze allows: a later stage's checker of the same name"),
+    (bash("./stage7/test-7c.sh"), ALLOW, "ring 7c freeze allows: running the gate"),
+    (bash("./stage7/test-7c.sh > stage7/out/gate7c.log 2>&1"), ALLOW, "ring 7c freeze allows: gate output redirected"),
+    (bash("./stage7/test.sh && ./stage7/test-7b.sh && ./stage7/test-7c.sh"), ALLOW, "ring 7c freeze allows: the three Stage 7 gates in turn"),
+    (bash("python3 stage7/checkmetal.py --stick"), ALLOW, "ring 7c freeze allows: the checker's stick mode"),
+    (bash("python3 stage7/checkmetal.py --serial novga 2"), ALLOW, "ring 7c freeze allows: the checker's serial mode"),
+    (bash("python3 stage7/checkmetal.py --stages"), ALLOW, "ring 7c freeze allows: the checker"),
+    (bash("python3 stage7/checkmetal.py --cage"), ALLOW, "ring 7c freeze allows: the checker"),
+    (bash("python3 stage7/mkstick.py"), ALLOW, "ring 7c freeze allows: building the stick"),
+    (bash("python3 broker/chart.py"), ALLOW, "ring 7c freeze allows: the serial reader's usage"),
+    (bash("mformat -i stage7/out/stick.img@@1048576 -F -T 131072 -v GERMOS ::"), ALLOW, "bodyguard allows: mformat at the partition's offset, under out/"),
+    (bash("mcopy -i stage7/out/stick.img@@1048576 stage7/out/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI"), ALLOW, "bodyguard allows: mcopy at the offset"),
+    (bash("mdir -i stage7/out/stick.img@@1048576 ::/EFI/BOOT"), ALLOW, "bodyguard allows: mdir at the offset"),
+    (bash("mtype -i stage7/out/stick.img@@1048576 ::/EFI/BOOT/BOOTX64.EFI | cmp - stage7/out/BOOTX64.EFI"), ALLOW, "bodyguard allows: mtype at the offset"),
+    (bash("cp stage7/out/stick.img stage7/out/metal/stick.blank.img"), ALLOW, "bodyguard allows: the stick copied for a boot, out/ to out/"),
+    (bash("cp stage7/out/stick.img stage7/out/stick.twin.img"), ALLOW, "bodyguard allows: the oracle's stick copy"),
+    (bash("blkid -p stage7/out/stick.img"), ALLOW, "bodyguard allows: the host witness on the stick image"),
+    (bash("partx -s stage7/out/stick.img"), ALLOW, "bodyguard allows: the host witness on the stick image"),
+    (bash("grep -n 'i8042' stage7/test-7c.sh stage7/checkmetal.py"), ALLOW, "ring 7c freeze allows: grepping"),
+    (bash("rm -rf stage7/out/metal stage7/out/probe7c"), ALLOW, "ring 7c freeze allows: clearing the gate's scratch and the probe"),
+    (bash("git add stage7/test-7c.sh stage7/checkmetal.py .claude/hooks/protect-tests.py .claude/hooks/payloads.py"), ALLOW, "ring 7c freeze allows: git add"),
+    (bash("timeout -k 5 60 " + QEMU7.replace("-smp 4", "-smp 8") + DISPLAY6B + STICK7C + METAL7C + CAGE7B + "-display none -serial stdio"),
+     ALLOW, "bodyguard allows: the gate's stick boot - a copy on usb-storage behind xhci, no esp.img"),
+    (bash(QEMU7.replace("-smp 4", "-smp 2") + NOVGA7C + STICK7C.replace("stick.blank.img", "stick.novga.img") + METAL7C + CAGE7B
+          + "-display none -serial file:stage7/out/metal/serial.novga.2.txt -monitor stdio"),
+     ALLOW, "bodyguard allows: the checker's novga boot on virtio-vga"),
+    (bash(QEMU7 + DISPLAY6B + STICK7C.replace("stick.blank.img", "stick.stages.img") + METAL7C + CAGE7B
+          + "-display none -serial file:stage7/out/metal/serial.stages.a.txt -monitor stdio"),
+     ALLOW, "bodyguard allows: the checker's stages boot"),
+    (bash("qemu-system-x86_64 -machine q35 -m 256M -smp 2 -bios /usr/share/ovmf/OVMF.fd " + DISPLAY6B
+          + "-drive format=raw,file=stage7/out/metal/rehearsal/twin/esp.img -drive format=raw,file=stage7/out/metal/rehearsal/twin/notes.img,if=virtio "
+          + TWIN_CAGE + "-cpu IvyBridge -drive if=none,id=d0,format=raw,file=stage7/out/metal/rehearsal/twin/disk.img -device ide-hd,drive=d0,bus=ide.1 "
+          + TWIN_CAGE_7B + "-display none -serial file:stage7/out/metal/rehearsal/twin/serial.txt -monitor stdio"),
+     ALLOW, "bodyguard allows: the twin's command as broker/wire.py builds it under the metal scratch"),
+    (bash(QEMU7 + DISPLAY6B + STICK7C.replace("stage7/out/metal/stick.blank.img", "stage7/out/stick.twin.img") + SATA7 + CAGE7B + "-serial stdio"),
+     ALLOW, "bodyguard allows: the oracle's windowed twin of the HP"),
+    (bash(QEMU7 + DISPLAY6B + STICK7C.replace("stage7/out/metal/stick.blank.img", "stage7/out/probe7c/stick.usb4.img")
+          + METAL7C.replace("stage7/out/metal/disk.img", "stage7/out/probe7c/disk.usb4.img") + CAGE7B
+          + "-display none -serial file:stage7/out/probe7c/serial.usb4.txt -monitor stdio"),
+     ALLOW, "bodyguard allows: the item 1 probe under out/"),
+    (bash(QEMU7 + DISPLAY6B + "-device qemu-xhci -drive if=none,id=stick,format=raw,file=/home/indy/stick.img -device usb-storage,drive=stick " + METAL7C + CAGE7B),
+     DENY, "bodyguard: a stick outside out/ is denied like any other drive"),
+    (bash(QEMU7 + DISPLAY6B + STICK7C + "-drive if=none,id=d0,format=raw,file=/tmp/disk.img -device ide-hd,drive=d0,bus=ide.1 " + CAGE7B),
+     DENY, "bodyguard: a SATA disk outside out/ is denied beside a stick"),
+    (bash(QEMU7 + DISPLAY6B + STICK7C + "-hdb stage7/out/metal/disk.img " + CAGE7B),
+     DENY, "bodyguard: a disk attached by a shorthand is denied even under out/"),
+    (bash("echo 'the stick over usb-storage behind xhci, edid none on virtio-vga, the i8042 self-test'"), ALLOW, "bodyguard allows: the ring's words in prose"),
+]
+
+
 def run(case):
     tool, tool_input = case
     payload = json.dumps({"tool_name": tool, "tool_input": tool_input})

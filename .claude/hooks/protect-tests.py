@@ -183,6 +183,17 @@ PLAN_MARKER = "PLAN_APPROVED"
 # is a red gate, not a bent criterion), stage7/mkimage.sh (the recipe),
 # stage7/stage7.asm (the thing under test), broker/claude_backend.py and
 # stage7/plan-7b.md (paperwork).
+#
+# Stage 7 ring 7c (plan decision 11) freezes stage7/test-7c.sh and
+# stage7/checkmetal.py, the gate itself: the stick parsed from the host,
+# the boots over USB, every stage re-proven in one run, the bodyguard's
+# spot checks. No new document and no new broker module: the mock is the
+# frozen broker/wire.py, and the two lines this ring adds live in the
+# checker's patterns. Everything rings 7a and 7b froze stands. Deliberately
+# NOT frozen: stage7/METAL.md (the owner's procedure - reviewed, not a
+# criterion), stage7/mkstick.py (the builder, like every builder),
+# broker/relay.py and broker/chart.py (tools), stage7/mkimage.sh,
+# stage7/stage7.asm, broker/claude_backend.py and stage7/plan-7c.md.
 PROTECTED = (
     "stage0/test.sh",
     "stage0/checkpixels.py",
@@ -241,6 +252,8 @@ PROTECTED = (
     "stage7/test-7b.sh",
     "stage7/checkwire.py",
     "broker/wire.py",
+    "stage7/test-7c.sh",
+    "stage7/checkmetal.py",
 )
 
 BASENAMES = sorted({os.path.basename(p) for p in PROTECTED})
