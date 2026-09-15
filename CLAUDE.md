@@ -78,23 +78,48 @@ nasm -f bin stage0/stage0.asm -o stage0/out/stage0.img
                        # partition at -smp 4. Needs 9999 and 9998 free.
                        # ~8 min, twelve boots plus four rehearsals.
 
+# Stage 7 ring 7b - the wire
+./stage7/test-7b.sh    # acceptance tests 1-4 on q35's AHCI with -cpu IvyBridge,
+                       # the SATA disk, and an e1000e carrying the HP's MAC on a
+                       # cage whose guestfwd lands on the RELAY (9997), which
+                       # forwards to the mock on 9999: nineteen lines with
+                       # "S7: nic 6c:3b:e5:3b:86:45" and "S7: link up", eighteen
+                       # on the same disk, the e1000e preferred beside a
+                       # virtio-net, the link taken down through the monitor
+                       # ending in a named error; the question through the relay
+                       # at -smp 2, 4 and 8 with the relay's log against the
+                       # record and the strip; the cage - both argv checks, the
+                       # relay's bind rule, a mock-down run, "! test app" and
+                       # "! install echo" through the relay, the launch with
+                       # nothing on the wire. Needs 9999, 9998 and 9997 free.
+                       # ~5 min, ten boots plus two rehearsals. Ring 7a's gate
+                       # stays the regression: the same binary on virtio-net.
+
 # The mock brokers (what the gates talk to; never spend a token)
 python3 broker/broker.py --mock --port 9999     # Stage 4
 python3 broker/plans.py --mock                  # Stage 6 (answers, apps, installs)
 python3 broker/pointer.py --mock                # Stage 6 ring 6c (the point app too)
 python3 broker/metal.py --mock                  # Stage 7 (the same table; the twin on SATA)
+python3 broker/wire.py --mock                   # Stage 7 ring 7b (the twin with an e1000e on a second cage)
+python3 broker/relay.py --bind 127.0.0.1 --port 9997   # the relay in the twin, in front of the broker
+                                                # (unfrozen; refuses every bind but 10.0.2.4 and 127.0.0.1)
 
 # The hook's payload table - every freeze and bodyguard case, 0 wrong or exit 1
 python3 .claude/hooks/payloads.py
 ```
 
-Windowed, for the oracle test (Stage 7 ring 7a shape, with the real broker
-`python3 broker/metal.py` in another terminal; one 64 MB SATA disk the
-guest partitions on its first boot - `truncate` only for a blank one, the
-gate overwrites `disk.img`; click in the QEMU window to grab the mouse,
-Ctrl+Alt+G releases it; Stage 6 keeps its virtio disks and `broker/pointer.py`,
-earlier stages drop the drives, the display and the cage they did not have
-and point at their own `esp.img` — see README.md):
+Windowed, for the oracle test (Stage 7 ring 7b shape, three terminals: the
+real broker `python3 broker/wire.py`, the relay `python3 broker/relay.py
+--bind 127.0.0.1 --port 9997`, and the machine on an e1000e carrying the
+HP's MAC with its cage landing on the relay; one 64 MB SATA disk the guest
+partitions on its first boot - remove `disk.img` first for a blank one,
+`truncate` on a file already 64 MB changes nothing, and the 7b gate never
+touches that path; click in the QEMU window to grab the mouse, Ctrl+Alt+G
+releases it; ring 7a's shape is the same line with `virtio-net-pci` and the
+guestfwd on 9999 with `python3 broker/metal.py`; Stage 6 keeps its virtio
+disks and `broker/pointer.py`, earlier stages drop the drives, the display
+and the cage they did not have and point at their own `esp.img` — see
+README.md):
 
 ```bash
 truncate -s 64M stage7/out/disk.img
@@ -102,8 +127,8 @@ qemu-system-x86_64 -machine q35 -cpu IvyBridge -m 256M -smp 4 -bios /usr/share/o
   -vga none -device VGA,edid=on,xres=1920,yres=1080 \
   -drive format=raw,file=stage7/out/esp.img \
   -drive if=none,id=d0,format=raw,file=stage7/out/disk.img -device ide-hd,drive=d0,bus=ide.1 \
-  -netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9999' \
-  -device virtio-net-pci,netdev=n0 -serial stdio
+  -netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9997' \
+  -device e1000e,netdev=n0,mac=6c:3b:e5:3b:86:45 -serial stdio
 ```
 
 Each stage's `test.sh` is its gate. It must be green before every commit that
@@ -352,6 +377,18 @@ test in the twin.
   disk" takes the boot image, and a rule that formats "anything not ours"
   formats it. Identify every port, choose by what the disk holds, and
   never write a disk that is not blank (ring 7a, amendment A1).
+- **A counter's rule lives in its frozen document; look it up before the
+  number is typed.** `grows_served` counts app frames whose `source` byte
+  is 1 (GLASS.md), so two frames generated from a fresh germline make it
+  0, not 2; the checker's 2 was arithmetic and cost the project's fifth
+  freeze opening (ring 7b item 10b) - the ring 6b item 10b class again.
+  A number no run can give before the freeze is written as the document's
+  rule, never as a guess.
+- **NASM `%define` is positional, in its other form:** a block of code
+  moved above the section whose constants it uses assembles as "symbol not
+  defined" followed by the cascade. The e1000e driver had to sit below the
+  wire section's `TX_BASE` and `ETH_*` defines (ring 7b item 10). Read the
+  first error only; move the code, not the defines.
 
 ## Working with the hooks
 

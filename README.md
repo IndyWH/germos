@@ -28,7 +28,7 @@ The pictures in `history/` are the machine's own screendumps, taken by each stag
 
 **Stage 6 — growth — is closed** (5 September 2026): the glass, the store of plans and the pointer, three rings in four days. The owner's first oracle run found a defect the gate had missed — the arrow left fragments along the bottom edge, because a 1080-pixel mode is not a whole number of 16-pixel cells — and the fix made the bottom row a click margin for the choices row, as Fitts's law asks of an edge.
 
-**Stage 7 — metal — is open** (9 September 2026): the patient is an HP Compaq Elite 8300, and every driver the metal needs is rehearsed first in the twin. **Ring 7a, the disk** (closed 9 September 2026), replaces virtio-blk with an AHCI driver: one SATA disk, a GPT the machine writes itself on a blank drive, the notebook and the home as two partitions with their formats unchanged inside ([`stage7/DISK.md`](stage7/DISK.md)). The disk is chosen by what it holds — a GermOS table wins, a blank disk is formatted, anything else is refused by name and never written. Rings 7b (the wire, an e1000e driver behind a relay on the home switch) and 7c (the stick, the flash by the owner's hand, every stage re-proven on the HP) follow.
+**Stage 7 — metal — is open** (9 September 2026): the patient is an HP Compaq Elite 8300, and every driver the metal needs is rehearsed first in the twin. **Ring 7a, the disk** (closed 9 September 2026), replaces virtio-blk with an AHCI driver: one SATA disk, a GPT the machine writes itself on a blank drive, the notebook and the home as two partitions with their formats unchanged inside ([`stage7/DISK.md`](stage7/DISK.md)). The disk is chosen by what it holds — a GermOS table wins, a blank disk is formatted, anything else is refused by name and never written. **Ring 7b, the wire** (all four automated tests green, 15 September 2026, the oracle pending), replaces virtio-net with an e1000e driver beside it — the NIC preferred by kind, the MAC from the device's own registers, the link awaited and its absence a named error — and puts a relay in front of the frozen broker ([`stage7/WIRE.md`](stage7/WIRE.md)): on the home switch the relay is what answers the guest's ARP for `10.0.2.4`, and in the twin every question, grow and install of the gate goes through it. Ring 7c (the stick, the flash by the owner's hand, every stage re-proven on the HP) follows.
 
 ## Running it
 
@@ -188,6 +188,29 @@ qemu-system-x86_64 -machine q35 -cpu IvyBridge -m 256M -smp 4 -bios /usr/share/o
 ```
 
 Type a note; `! install calculator`; do a sum; quit, stop the broker, boot the same command again: the note is back, `S7: home 1 apps`, and `! calculator` runs from the home partition. On the host, `blkid -p stage7/out/disk.img` and `partx -s stage7/out/disk.img` read the table the machine wrote. The automated gate (`./stage7/test.sh`) drives five serial boots, the persistence pair and ring 6b's store test on the partitions, speaks only to the mock, and spends no token.
+
+**Stage 7, ring 7b — the wire.** The same machine on the NIC the metal has: an e1000e — QEMU's 82574L standing in for the HP's 82579LM, the same register family — found by vendor, class and a table of three ids and preferred over a virtio-net whenever both are present, owned, reset with interrupts masked, its MAC read from `RAL0`/`RAH0`, its link awaited for ten seconds (`S7: nic 6c:3b:e5:3b:86:45` then `S7: link up`; a link that never comes is `ERR: nic link did not come up within 10 s`, never a hang), sixteen legacy receive descriptors and eight transmit descriptors, polled ([`stage7/WIRE.md`](stage7/WIRE.md)). The TCP stack above is untouched. On the metal the guest keeps its frozen addressing and ARPs for `10.0.2.4` on the home switch; `broker/relay.py` is what answers there — it binds exactly `10.0.2.4` or `127.0.0.1` and nothing else, forwards each connection to the frozen broker on `127.0.0.1:9999`, and logs one JSON line per connection. In the twin the relay sits on `127.0.0.1:9997` and the cage's `guestfwd` lands on it, so every question, grow and install of the gate goes through it. Three terminals:
+
+```
+python3 broker/wire.py
+```
+
+```
+python3 broker/relay.py --bind 127.0.0.1 --port 9997
+```
+
+```
+./stage7/mkimage.sh
+rm -f stage7/out/disk.img; truncate -s 64M stage7/out/disk.img
+qemu-system-x86_64 -machine q35 -cpu IvyBridge -m 256M -smp 4 -bios /usr/share/ovmf/OVMF.fd \
+  -vga none -device VGA,edid=on,xres=1920,yres=1080 \
+  -drive format=raw,file=stage7/out/esp.img \
+  -drive if=none,id=d0,format=raw,file=stage7/out/disk.img -device ide-hd,drive=d0,bus=ide.1 \
+  -netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9997' \
+  -device e1000e,netdev=n0,mac=6c:3b:e5:3b:86:45 -serial stdio
+```
+
+The serial log says `S7: nic 6c:3b:e5:3b:86:45` then `S7: link up`. Type `? ping`: the relay's terminal logs one connection, `pong` appears, and the strip says `w 001`. Type `! make me a clock`: Claude writes it, the twin rehearses it on a SATA disk and an e1000e of its own, and the clock ticks in its panel. On the HP's day the relay runs with no flags (`10.0.2.4:9999`, the switch) beside the broker.
 
 ## The team of three
 
