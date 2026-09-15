@@ -449,6 +449,30 @@ else
 fi
 echo
 
+# ------------------------------------------ test 3: the question round trip --
+# Stage 4's test 3 on the e1000e through the relay: "? ping" and "? hello"
+# round-trip through the relay on 9997 and the mock on 9999, a note between
+# them, at -smp 2, 4 and 8; the record, the relay's log agreeing with it, the
+# notebook on the notes partition, the screen, and the strip's wire
+# counters against the obs page and the log. The work is in
+# stage7/checkwire.py --question.
+
+echo "Test 3 - The question on e1000e: '? ping' and '? hello' through the relay and the mock, a note between them, at -smp 2, 4 and 8; the wire counters agree with the relay's log"
+if [ ! -f "$ESP" ]; then
+  fail "test 3: no image was built"
+else
+  asked=0
+  python3 "$REPO/stage7/checkwire.py" --question 2 || asked=1
+  python3 "$REPO/stage7/checkwire.py" --question 4 || asked=1
+  python3 "$REPO/stage7/checkwire.py" --question 8 || asked=1
+  if [ "$asked" -eq 0 ]; then
+    pass "test 3: the machine asked and was answered on the e1000e through the relay, on screen, in the record and in the relay's log, at -smp 2, 4 and 8"
+  else
+    fail "test 3: the question did not round-trip through the relay (see above)"
+  fi
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then
