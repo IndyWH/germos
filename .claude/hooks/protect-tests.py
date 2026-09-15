@@ -240,6 +240,7 @@ PROTECTED = (
     "stage7/WIRE.md",
     "stage7/test-7b.sh",
     "stage7/checkwire.py",
+    "broker/wire.py",
 )
 
 BASENAMES = sorted({os.path.basename(p) for p in PROTECTED})

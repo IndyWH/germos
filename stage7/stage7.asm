@@ -286,6 +286,7 @@ org 0                           ; file offsets == RVAs
 %define TXD_EOP             1
 %define TXD_IFCS            2
 %define TXD_RS              8
+%define TXD_DD              1
 %define E1K_RESET_TRIES     5000        ; x 200 us = one second
 %define E1K_LINK_TRIES      50000       ; x 200 us = ten seconds (measured at item 1)
 %define NIC_VIRTIO          1           ; nic_kind: which driver owns net_send and net_poll
@@ -4833,197 +4834,6 @@ serial_puthex8:
         ret
 
 ; ---------------------------------------------------------------------------
-; The NIC the metal has - the e1000e driver (stage7/WIRE.md, ring 7b), per
-; the 82574 datasheet, the register set the 82579LM shares. Chosen over the
-; virtio-net above whenever both are present: nic_find dispatches on kind,
-; and net_send / net_poll below dispatch on nic_kind. The function is owned
-; before BAR0 is read; BAR0 is mapped uncached wherever the firmware put it;
-; the device is reset with interrupts masked, so nothing a firmware driver
-; left is trusted; the MAC is read from RAL0/RAH0; the link is awaited for
-; ten seconds and its absence is a named error; then the two legacy rings.
-; Only the BSP calls any of this, interrupts off, polled. Clobbers freely.
-; ---------------------------------------------------------------------------
-
-e1k_attach:
-        mov     ebx, [e1k_bdf]
-        mov     ecx, 0x04
-        call    pci_cfg_read32
-        and     eax, 0xFFFF             ; the status half is write-1-to-clear
-        or      eax, PCI_CMD_MEMORY | PCI_CMD_MASTER | PCI_CMD_INTX_OFF
-        call    pci_cfg_write32         ; owned BEFORE the BAR is read
-
-        mov     ecx, 0x10               ; BAR0: a memory BAR, 32- or 64-bit
-        call    pci_cfg_read32
-        test    al, 1
-        jnz     .bar_io
-        mov     edx, eax
-        and     eax, 0xFFFFFFF0
-        mov     rdi, rax
-        and     edx, 6
-        cmp     edx, 4                  ; type 2 in bits 2:1 - a 64-bit BAR
-        jne     .bar32
-        mov     ecx, 0x14
-        call    pci_cfg_read32
-        shl     rax, 32
-        or      rdi, rax
-.bar32:
-        mov     [e1k_bar], rdi
-        mov     rax, rdi
-        call    map_mmio_2m             ; the page holding its first byte
-        lea     rax, [rdi + E1K_BAR_SIZE - 1]
-        call    map_mmio_2m             ; and its last
-
-        ; The reset: interrupts masked, CTRL.RST set and awaited clear,
-        ; interrupts masked again, ICR read once. Assume nothing about the
-        ; state a firmware driver left.
-        mov     dword [rdi + E1K_IMC], 0xFFFFFFFF
-        mov     eax, [rdi + E1K_CTRL]
-        or      eax, CTRL_RST
-        mov     [rdi + E1K_CTRL], eax
-        mov     r8d, E1K_RESET_TRIES
-.reset_wait:
-        mov     eax, [rdi + E1K_CTRL]
-        test    eax, CTRL_RST
-        jz      .reset_done
-        mov     ax, PIT_200US
-        call    pit_wait
-        dec     r8d
-        jnz     .reset_wait
-        lea     rsi, [err_e1k_reset]
-        call    serial_err
-.reset_done:
-        mov     dword [rdi + E1K_IMC], 0xFFFFFFFF
-        mov     eax, [rdi + E1K_ICR]
-
-        ; The MAC, from the receive address the firmware loaded from the
-        ; EEPROM: RAL0 the first four bytes, RAH0's low half the last two,
-        ; and RAH0.AV must say the address is valid. Then the nic line.
-        mov     eax, [rdi + E1K_RAH0]
-        test    eax, RAH_AV
-        jz      .no_mac
-        mov     [nic_mac + 4], ax
-        mov     eax, [rdi + E1K_RAL0]
-        mov     [nic_mac], eax
-        lea     rsi, [msg_nic]
-        call    serial_puts
-        call    serial_putmac
-        lea     rsi, [msg_crlf]
-        call    serial_puts
-
-        ; The link: SLU set, the forced speed and duplex, ILOS and PHY_RST
-        ; cleared (the PHY autonegotiates; MDIC untouched this ring), then
-        ; STATUS.LU awaited for ten seconds or a named error.
-        mov     eax, [rdi + E1K_CTRL]
-        and     eax, CTRL_LINK_KEEP
-        or      eax, CTRL_SLU
-        mov     [rdi + E1K_CTRL], eax
-        mov     r8d, E1K_LINK_TRIES
-.link_wait:
-        mov     eax, [rdi + E1K_STATUS]
-        test    eax, STATUS_LU
-        jnz     .link_up
-        mov     ax, PIT_200US
-        call    pit_wait
-        dec     r8d
-        jnz     .link_wait
-        lea     rsi, [err_e1k_link]
-        call    serial_err
-.link_up:
-        lea     rsi, [msg_link]
-        call    serial_puts
-
-        ; Receive: the multicast table zeroed, sixteen descriptors over the
-        ; virtio driver's buffers (offset by the twelve-byte header), the
-        ; ring's base, length, head and tail; legacy descriptors on one
-        ; queue; RCTL enabled with broadcast accepted, 2048-byte buffers, the
-        ; CRC stripped; then the tail moved to the last descriptor - the
-        ; hardware owns 0..14 and stops at the tail.
-        lea     rax, [e1k_rx_ring]
-        mov     rdx, rax
-        shr     rdx, 32
-        jnz     .ring_high
-        lea     rax, [e1k_tx_ring]
-        mov     rdx, rax
-        shr     rdx, 32
-        jnz     .ring_high
-        xor     ecx, ecx
-.mta:   mov     dword [rdi + E1K_MTA + rcx*4], 0
-        inc     ecx
-        cmp     ecx, 128
-        jb      .mta
-        lea     rsi, [e1k_rx_ring]
-        lea     rdx, [nic_rx_bufs + VNET_HDR_LEN]
-        xor     ecx, ecx
-.rx_desc:
-        mov     [rsi], rdx              ; the buffer's address
-        mov     qword [rsi + 8], 0      ; length, checksum, status, errors, special: zero
-        add     rsi, E1K_DESC
-        add     rdx, NIC_RX_BUF
-        inc     ecx
-        cmp     ecx, E1K_RX_DESCS
-        jb      .rx_desc
-        lea     rax, [e1k_rx_ring]
-        mov     [rdi + E1K_RDBAL], eax
-        shr     rax, 32
-        mov     [rdi + E1K_RDBAH], eax
-        mov     dword [rdi + E1K_RDLEN], E1K_RX_DESCS * E1K_DESC
-        mov     dword [rdi + E1K_RDH], 0
-        mov     dword [rdi + E1K_RDT], 0
-        mov     eax, [rdi + E1K_RFCTL]
-        and     eax, ~RFCTL_EXSTEN
-        mov     [rdi + E1K_RFCTL], eax
-        mov     dword [rdi + E1K_MRQC], 0
-        mov     dword [rdi + E1K_RCTL], RCTL_EN | RCTL_BAM | RCTL_SECRC
-        mov     dword [rdi + E1K_RDT], E1K_RX_DESCS - 1
-        mov     dword [e1k_rx_head], 0
-
-        ; Transmit: eight descriptors zeroed, the ring's base, length, head
-        ; and tail, the inter-packet gap, TCTL enabled with the standard
-        ; collision threshold and distance.
-        push    rdi
-        lea     rdi, [e1k_tx_ring]
-        mov     ecx, E1K_TX_DESCS * E1K_DESC / 8
-        xor     eax, eax
-        rep     stosq
-        pop     rdi
-        lea     rax, [e1k_tx_ring]
-        mov     [rdi + E1K_TDBAL], eax
-        shr     rax, 32
-        mov     [rdi + E1K_TDBAH], eax
-        mov     dword [rdi + E1K_TDLEN], E1K_TX_DESCS * E1K_DESC
-        mov     dword [rdi + E1K_TDH], 0
-        mov     dword [rdi + E1K_TDT], 0
-        mov     dword [rdi + E1K_TIPG], E1K_TIPG_COPPER
-        mov     dword [rdi + E1K_TCTL], TCTL_EN | TCTL_PSP | TCTL_CT | TCTL_COLD
-        mov     dword [e1k_tx_idx], 0
-        ret
-.bar_io:
-        lea     rsi, [err_e1k_bar]
-        call    serial_err
-.no_mac:
-        lea     rsi, [err_e1k_mac]
-        call    serial_err
-.ring_high:
-        lea     rsi, [err_e1k_ring]
-        call    serial_err
-
-; e1k_send - the Ethernet frame is at nic_tx_buf + TX_BASE, ECX = its
-; length (60 or more: net_send padded it and counted it). One legacy
-; descriptor at e1k_tx_idx: the address, the length, EOP | IFCS | RS; the
-; tail moved past it; its DD awaited - bounded, a dead device being an
-; ERR:, not a hang.
-e1k_send:
-        lea     rsi, [err_e1k_stub]
-        call    serial_err
-
-; e1k_poll - every frame the device has delivered since the last look,
-; dispatched by EtherType and its descriptor handed back. Returns EAX = the
-; number of frames taken; preserves R12-R14 as the virtio path does.
-e1k_poll:
-        xor     eax, eax
-        ret
-
-; ---------------------------------------------------------------------------
 ; The wire - Ethernet, ARP and IPv4 (plan decisions 6 and 7), the smallest
 ; honest stack for a world of one on-link peer: the guest is 10.0.2.15, the
 ; broker is 10.0.2.4, and there is no gateway and no route. Frames are built
@@ -5205,6 +5015,278 @@ net_poll:
         mfence
         mov     rdx, [r12 + Q_DOORBELL]
         mov     word [rdx], 0
+        jmp     .next
+.out:
+        mov     eax, r14d
+        pop     r14
+        pop     r13
+        pop     r12
+        ret
+
+; ---------------------------------------------------------------------------
+; The NIC the metal has - the e1000e driver (stage7/WIRE.md, ring 7b), per
+; the 82574 datasheet, the register set the 82579LM shares. Chosen over the
+; virtio-net above whenever both are present: nic_find dispatches on kind,
+; and net_send / net_poll below dispatch on nic_kind. The function is owned
+; before BAR0 is read; BAR0 is mapped uncached wherever the firmware put it;
+; the device is reset with interrupts masked, so nothing a firmware driver
+; left is trusted; the MAC is read from RAL0/RAH0; the link is awaited for
+; ten seconds and its absence is a named error; then the two legacy rings.
+; Only the BSP calls any of this, interrupts off, polled. Clobbers freely.
+; ---------------------------------------------------------------------------
+
+e1k_attach:
+        mov     ebx, [e1k_bdf]
+        mov     ecx, 0x04
+        call    pci_cfg_read32
+        and     eax, 0xFFFF             ; the status half is write-1-to-clear
+        or      eax, PCI_CMD_MEMORY | PCI_CMD_MASTER | PCI_CMD_INTX_OFF
+        call    pci_cfg_write32         ; owned BEFORE the BAR is read
+
+        mov     ecx, 0x10               ; BAR0: a memory BAR, 32- or 64-bit
+        call    pci_cfg_read32
+        test    al, 1
+        jnz     .bar_io
+        mov     edx, eax
+        and     eax, 0xFFFFFFF0
+        mov     rdi, rax
+        and     edx, 6
+        cmp     edx, 4                  ; type 2 in bits 2:1 - a 64-bit BAR
+        jne     .bar32
+        mov     ecx, 0x14
+        call    pci_cfg_read32
+        shl     rax, 32
+        or      rdi, rax
+.bar32:
+        mov     [e1k_bar], rdi
+        mov     rax, rdi
+        call    map_mmio_2m             ; the page holding its first byte
+        lea     rax, [rdi + E1K_BAR_SIZE - 1]
+        call    map_mmio_2m             ; and its last
+
+        ; The reset: interrupts masked, CTRL.RST set and awaited clear,
+        ; interrupts masked again, ICR read once. Assume nothing about the
+        ; state a firmware driver left.
+        mov     dword [rdi + E1K_IMC], 0xFFFFFFFF
+        mov     eax, [rdi + E1K_CTRL]
+        or      eax, CTRL_RST
+        mov     [rdi + E1K_CTRL], eax
+        mov     r8d, E1K_RESET_TRIES
+.reset_wait:
+        mov     eax, [rdi + E1K_CTRL]
+        test    eax, CTRL_RST
+        jz      .reset_done
+        mov     ax, PIT_200US
+        call    pit_wait
+        dec     r8d
+        jnz     .reset_wait
+        lea     rsi, [err_e1k_reset]
+        call    serial_err
+.reset_done:
+        mov     dword [rdi + E1K_IMC], 0xFFFFFFFF
+        mov     eax, [rdi + E1K_ICR]
+
+        ; The MAC, from the receive address the firmware loaded from the
+        ; EEPROM: RAL0 the first four bytes, RAH0's low half the last two,
+        ; and RAH0.AV must say the address is valid. Then the nic line.
+        mov     eax, [rdi + E1K_RAH0]
+        test    eax, RAH_AV
+        jz      .no_mac
+        mov     [nic_mac + 4], ax
+        mov     eax, [rdi + E1K_RAL0]
+        mov     [nic_mac], eax
+        lea     rsi, [msg_nic]
+        call    serial_puts
+        call    serial_putmac
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+
+        ; The link: SLU set, the forced speed and duplex, ILOS and PHY_RST
+        ; cleared (the PHY autonegotiates; MDIC untouched this ring), then
+        ; STATUS.LU awaited for ten seconds or a named error.
+        mov     eax, [rdi + E1K_CTRL]
+        and     eax, CTRL_LINK_KEEP
+        or      eax, CTRL_SLU
+        mov     [rdi + E1K_CTRL], eax
+        mov     r8d, E1K_LINK_TRIES
+.link_wait:
+        mov     eax, [rdi + E1K_STATUS]
+        test    eax, STATUS_LU
+        jnz     .link_up
+        mov     ax, PIT_200US
+        call    pit_wait
+        dec     r8d
+        jnz     .link_wait
+        lea     rsi, [err_e1k_link]
+        call    serial_err
+.link_up:
+        lea     rsi, [msg_link]
+        call    serial_puts
+
+        ; Receive: the multicast table zeroed, sixteen descriptors over the
+        ; virtio driver's buffers (offset by the twelve-byte header), the
+        ; ring's base, length, head and tail; legacy descriptors on one
+        ; queue; RCTL enabled with broadcast accepted, 2048-byte buffers, the
+        ; CRC stripped; then the tail moved to the last descriptor - the
+        ; hardware owns 0..14 and stops at the tail.
+        lea     rax, [e1k_rx_ring]
+        mov     rdx, rax
+        shr     rdx, 32
+        jnz     .ring_high
+        lea     rax, [e1k_tx_ring]
+        mov     rdx, rax
+        shr     rdx, 32
+        jnz     .ring_high
+        xor     ecx, ecx
+.mta:   mov     dword [rdi + E1K_MTA + rcx*4], 0
+        inc     ecx
+        cmp     ecx, 128
+        jb      .mta
+        lea     rsi, [e1k_rx_ring]
+        lea     rdx, [nic_rx_bufs + VNET_HDR_LEN]
+        xor     ecx, ecx
+.rx_desc:
+        mov     [rsi], rdx              ; the buffer's address
+        mov     qword [rsi + 8], 0      ; length, checksum, status, errors, special: zero
+        add     rsi, E1K_DESC
+        add     rdx, NIC_RX_BUF
+        inc     ecx
+        cmp     ecx, E1K_RX_DESCS
+        jb      .rx_desc
+        lea     rax, [e1k_rx_ring]
+        mov     [rdi + E1K_RDBAL], eax
+        shr     rax, 32
+        mov     [rdi + E1K_RDBAH], eax
+        mov     dword [rdi + E1K_RDLEN], E1K_RX_DESCS * E1K_DESC
+        mov     dword [rdi + E1K_RDH], 0
+        mov     dword [rdi + E1K_RDT], 0
+        mov     eax, [rdi + E1K_RFCTL]
+        and     eax, ~RFCTL_EXSTEN
+        mov     [rdi + E1K_RFCTL], eax
+        mov     dword [rdi + E1K_MRQC], 0
+        mov     dword [rdi + E1K_RCTL], RCTL_EN | RCTL_BAM | RCTL_SECRC
+        mov     dword [rdi + E1K_RDT], E1K_RX_DESCS - 1
+        mov     dword [e1k_rx_head], 0
+
+        ; Transmit: eight descriptors zeroed, the ring's base, length, head
+        ; and tail, the inter-packet gap, TCTL enabled with the standard
+        ; collision threshold and distance.
+        push    rdi
+        lea     rdi, [e1k_tx_ring]
+        mov     ecx, E1K_TX_DESCS * E1K_DESC / 8
+        xor     eax, eax
+        rep     stosq
+        pop     rdi
+        lea     rax, [e1k_tx_ring]
+        mov     [rdi + E1K_TDBAL], eax
+        shr     rax, 32
+        mov     [rdi + E1K_TDBAH], eax
+        mov     dword [rdi + E1K_TDLEN], E1K_TX_DESCS * E1K_DESC
+        mov     dword [rdi + E1K_TDH], 0
+        mov     dword [rdi + E1K_TDT], 0
+        mov     dword [rdi + E1K_TIPG], E1K_TIPG_COPPER
+        mov     dword [rdi + E1K_TCTL], TCTL_EN | TCTL_PSP | TCTL_CT | TCTL_COLD
+        mov     dword [e1k_tx_idx], 0
+        ret
+.bar_io:
+        lea     rsi, [err_e1k_bar]
+        call    serial_err
+.no_mac:
+        lea     rsi, [err_e1k_mac]
+        call    serial_err
+.ring_high:
+        lea     rsi, [err_e1k_ring]
+        call    serial_err
+
+; e1k_send - the Ethernet frame is at nic_tx_buf + TX_BASE, ECX = its
+; length (60 or more: net_send padded it and counted it). One legacy
+; descriptor at e1k_tx_idx: the address, the length, EOP | IFCS | RS; the
+; tail moved past it; its DD awaited - bounded, a dead device being an
+; ERR:, not a hang.
+e1k_send:
+        mov     rdi, [e1k_bar]
+        mov     eax, [e1k_tx_idx]
+        shl     eax, 4                  ; x E1K_DESC
+        lea     rsi, [e1k_tx_ring]
+        add     rsi, rax                ; RSI = this send's descriptor
+        lea     rax, [nic_tx_buf + TX_BASE]
+        mov     [rsi], rax              ; the frame's address
+        mov     [rsi + TXD_LEN], cx
+        mov     byte [rsi + 10], 0      ; CSO: no checksum offload
+        mov     byte [rsi + TXD_CMD], TXD_EOP | TXD_IFCS | TXD_RS
+        mov     byte [rsi + TXD_STA], 0
+        mov     byte [rsi + 13], 0      ; CSS
+        mov     word [rsi + 14], 0      ; special
+        sfence
+        mov     eax, [e1k_tx_idx]
+        inc     eax
+        and     eax, E1K_TX_DESCS - 1
+        mov     [e1k_tx_idx], eax
+        mov     [rdi + E1K_TDT], eax    ; the tail past the descriptor: sent
+        mov     r8d, VQ_POLL_TRIES
+.poll:
+        test    byte [rsi + TXD_STA], TXD_DD
+        jnz     .done
+        mov     ax, PIT_200US
+        call    pit_wait
+        dec     r8d
+        jnz     .poll
+        lea     rsi, [err_nic_tx]
+        call    serial_err
+.done:
+        ret
+
+; e1k_poll - every frame the device has delivered since the last look,
+; dispatched by EtherType and its descriptor handed back. Returns EAX = the
+; number of frames taken; preserves R12-R14 as the virtio path does.
+e1k_poll:
+        push    r12
+        push    r13
+        push    r14
+        xor     r14d, r14d              ; frames taken
+        mov     r12, [e1k_bar]
+.next:
+        mov     r13d, [e1k_rx_head]
+        mov     eax, r13d
+        shl     eax, 4                  ; x E1K_DESC
+        lea     rsi, [e1k_rx_ring]
+        add     rsi, rax                ; RSI = the head descriptor
+        test    byte [rsi + RXD_STATUS], RXD_DD
+        jz      .out
+        lfence
+        inc     r14d
+        movzx   ecx, word [rsi + RXD_LEN]       ; ECX = the frame's length, CRC stripped
+        cmp     byte [rsi + RXD_ERRORS], 0
+        jne     .recycle                ; A4: an errored frame is recycled unread
+        test    byte [rsi + RXD_STATUS], RXD_EOP
+        jz      .recycle                ; a frame that did not fit one buffer: dropped
+        cmp     ecx, ETH_HDR
+        jb      .recycle                ; too short to carry a type
+        mov     eax, ecx
+        add     [obs_page + OBS_BYTES_IN], rax
+        mov     eax, r13d
+        shl     eax, 11                 ; x NIC_RX_BUF
+        lea     rsi, [nic_rx_bufs + VNET_HDR_LEN]
+        add     rsi, rax                ; RSI = the Ethernet frame
+        cmp     word [rsi + ETH_TYPE], ETHTYPE_ARP
+        jne     .not_arp
+        call    arp_input
+        jmp     .recycle
+.not_arp:
+        cmp     word [rsi + ETH_TYPE], ETHTYPE_IP
+        jne     .recycle
+        call    ip_input
+.recycle:
+        mov     eax, r13d
+        shl     eax, 4
+        lea     rsi, [e1k_rx_ring]
+        add     rsi, rax
+        mov     qword [rsi + 8], 0      ; length, status and errors cleared: ours again
+        sfence
+        mov     [r12 + E1K_RDT], r13d   ; this descriptor back to the hardware
+        inc     r13d
+        and     r13d, E1K_RX_DESCS - 1
+        mov     [e1k_rx_head], r13d
         jmp     .next
 .out:
         mov     eax, r14d
@@ -8972,7 +9054,6 @@ err_e1k_reset:  db      'nic did not complete its reset', 0
 err_e1k_mac:    db      'nic has no address in RAL/RAH', 0
 err_e1k_link:   db      'nic link did not come up within 10 s', 0
 err_e1k_ring:   db      'nic ring sits above 4GB', 0
-err_e1k_stub:   db      'e1000e send not yet written', 0
 err_nic_tx:     db      'nic transmit timed out', 0
 err_disk_big:   db      'disk has 2^32 sectors or more - beyond this stage', 0
 err_vq_size:    db      'virtqueue size is 0, above VQ_MAX, or not a power of two', 0

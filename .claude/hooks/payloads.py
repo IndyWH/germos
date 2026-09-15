@@ -641,9 +641,14 @@ WIRE7B = "-drive if=none,id=d0,format=raw,file=stage7/out/wire/disk.img -device 
 CAGE7B = "-netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9997' -device e1000e,netdev=n0,mac=6c:3b:e5:3b:86:45 "
 CAGE7B_2 = "-netdev 'user,id=n1,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9997' -device virtio-net-pci,netdev=n1,mac=52:54:00:a1:07:02 "
 TWIN_CAGE_7B = "-netdev 'user,id=n1,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9998' -device e1000e,netdev=n1,mac=6c:3b:e5:3b:86:45 "
-FROZEN_7B = ["stage7/WIRE.md", "stage7/test-7b.sh", "stage7/checkwire.py"]
+FROZEN_7B = ["stage7/WIRE.md", "stage7/test-7b.sh", "stage7/checkwire.py", "broker/wire.py"]
 CASES += [(c, v, "ring 7b freeze: " + w) for c, v, w in freeze_cases(FROZEN_7B)]
 CASES += [
+    (write("broker/wire.py"), DENY, "ring 7b freeze: the broker module, frozen at item 10 after nine of nine (deviation 10)"),
+    (bash("python3 - <<'EOF'\nopen('broker/wire.py','w').write('x')\nEOF"), DENY, "ring 7b freeze: python writing the broker module"),
+    (bash("sed -i 's/LINES = 19/LINES = 18/' broker/wire.py"), DENY, "ring 7b freeze: sed -i on the twin's line count"),
+    (bash("git add broker/wire.py"), ALLOW, "ring 7b freeze allows: git add at its freeze"),
+    (write("stage8/wire.py"), ALLOW, "ring 7b freeze allows: a later stage's file of the same name"),
     (write("stage7/WIRE.md"), DENY, "ring 7b freeze: the wire document"),
     (write("stage7/test-7b.sh"), DENY, "ring 7b freeze: the gate"),
     (write("stage7/checkwire.py"), DENY, "ring 7b freeze: the checker"),

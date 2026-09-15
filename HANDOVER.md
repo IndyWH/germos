@@ -139,7 +139,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | | |
 |---|---|
 | Stage | **7 — Metal — OPEN since 9 September 2026**: ring 7a (the disk) **closed 9 September**; **ring 7b (the wire) OPEN since 15 September 2026**; ring 7c (the metal) to follow, a fresh session with its own plan gate. Stages 0–6 closed (Stage 6 on 5 September 2026) |
-| Status | Ring 7b: **item 0 done** (the plan committed); tests 1–4 not yet written. Ring 7a: **all five tests PASS** (test 5 confirmed by Wajira, 9 September 2026). Stages 0–5 and the three ring 6 gates green on their own binaries. |
+| Status | Ring 7b: **items 0–9 done; item 10 STOPPED for a freeze opening** — tests 1–3 PASS, test 4 red on one wrong number in the frozen checker (`stage7/out/checkwire.item10b.diff`, unapplied, the owner's hand); the regression chain green. Ring 7a: **all five tests PASS** (test 5 confirmed by Wajira, 9 September 2026). Stages 0–5 and the three ring 6 gates green on their own binaries. |
 | Repo | `/home/indy/Projects/ai-os` (branch `main`) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, native Ubuntu 26.04, 32 logical CPUs |
 | Toolchain | NASM 3.01, QEMU 10.2.1, Python 3.14, OVMF, mtools, OpenBSD netcat, the `claude` CLI 2.1.261 — ring 6a needs no new packages (QEMU's standard VGA device with `edid=on` is built in) |
@@ -1906,10 +1906,54 @@ clock); **tests 3 and 4 FAIL on the stub alone** — `ERR: e1000e send not
 yet written` at the first question. **Ring 7a's gate on this binary: all
 four PASS** (the virtio path, eighteen lines).
 
+**Item 10 — STOPPED at the commit boundary, one wrong number in the
+frozen checker; the diff unapplied for the owner's hand.** The guest is
+complete: `e1k_send` (one legacy descriptor, EOP|IFCS|RS, the tail moved,
+`DD` awaited five seconds or `ERR: nic transmit timed out`) and
+`e1k_poll` (the head descriptor's `DD`, the errors byte honoured — A4 —
+EOP and the length required, the frame dispatched by EtherType from the
+shared buffers, the descriptor cleared and handed back through `RDT`, the
+head advanced; R12–R14 preserved) replace the item 9 stubs; the block
+moved below the wire section's defines (the positional-`%define` gotcha,
+met once). The binary is 36,864 bytes still. **Probed by hand on private
+copies** (`stage7/out/probe7b/ask.py`): `? ping`, a note, `? hello` over
+the e1000e through `relay.py` on 9997 to the mock on 9999 at `-smp 4` —
+nineteen lines, no `ERR:`, both answered, the relay's log `up 8 down 8`
+and `up 9 down 62` agreeing with the record, the obs page `questions 2
+notes 1 wire_conns 2 wire_wait 11 ms bytes_in 782 bytes_out 665`; the
+mock stopped — two refused connections in the relay's log, `errors 2`,
+the note journaled between them; **the twin through `broker/wire.py` —
+nine of nine** for the test app (14.3 s, `'after'` on the notes
+partition, the virtio image all zero) and for echo against its plan's
+five tests (17.4 s, the hook found nothing). Then `broker/wire.py`
+frozen (deviation 10): `PROTECTED` gains it, `payloads.py` its five
+cases — **1444 payloads, 982 denied, 462 allowed, 0 wrong**, one append
+into the module denied live.
+
+**The gate chain on this binary** (`stage7/out/wire.chain10.log`):
+`./stage7/test-7b.sh` **tests 1, 2 and 3 PASS**; **test 4 FAIL on one
+number** — every assertion of (a) to (f) passed (the argv checks, the
+bind rule, the mock-down run with its refused connection logged, the grow
+and the install through the relay with the record, the relay's log `up
+13/17 down 708/221`, the two nineteen-line rehearsal logs with `link up`,
+the home partition, the twin's disk, screen A, the launch with nothing
+on the wire) except `after the install: the obs page's grows_served is 0,
+want 2`. By GLASS.md `grows_served` counts app frames whose `source`
+byte is 1; both frames came generated from a fresh germline, so the
+guest's `grows_generated 2, grows_served 0` is the truth and the frozen
+checker's `2` was written from arithmetic, not from a run — ring 6b item
+10b's class, again. **The one-line diff is at
+`stage7/out/checkwire.item10b.diff`, unapplied**; the owner applies it,
+then `./stage7/test-7b.sh` whole. 313 s for the gate as it ran. **The
+regression chain, all green on their own binaries and this one:**
+`./stage7/test.sh` (458 s, the virtio path), `./stage6/test.sh` (383),
+`test-6b.sh` (395), `test-6c.sh` (207), Stages 5–0 (230, 102, 92, 76,
+183, 13 s).
+
 
 ## Next action
 
-**Ring 7b is open; item 0 is done.** Next: **item 1** of `stage7/plan-7b.md` — ring 7a's binary booted from a private copy under `stage7/out/probe7b/` in this ring's twin shape (the e1000e on a second cage beside the frozen virtio-net) at `-smp 2`, `4` and `8`; the boot time with and without the iPXE option ROM; a temporary probe printing the e1000e's command register, BAR0, `CTRL`, `STATUS`, `RCTL`, `TCTL`, `IMS`, the ring registers, `RAL0`/`RAH0`, `RFCTL`, `MRQC` as the firmware left them, the breaths from `RST` to `STATUS.LU`, and `LU` under `set_link e1000e.0 off`; the values into this file's ring 7b table, the probe removed before the commit. Then items 2–8 (WIRE.md, the relay, the module, the gate red, the freeze), 9–10 (the driver, all four green), 11 (this handover). Earlier — **Ring 7a is closed.** Next: **ring 7b, the wire** — the e1000e driver rehearsed on QEMU's `e1000e` with the HP's MAC, `broker/relay.py` in front of the frozen broker, the cage on the relay — per `stage7/spec.md`, a fresh Cowork session and a fresh CC session, Fable 5.1 at high effort by the spec's decision. Carry into 7b's handover: the HP's firmware may leave `CAP.SSS` set, so a port may need `PxCMD.SUD` before its disk appears (ring 7c). To click through ring 7a again at any time — two terminals at the repo root. The broker (it answers
+**Ring 7b is stopped at item 10 for a freeze opening by the owner's hand.** Everything is built and every other criterion is green; one number in the frozen checker is wrong (`grows_served` 2 where GLASS.md's rule makes it 0 after two generated frames). The one-line diff sits unapplied at `stage7/out/checkwire.item10b.diff`. Wajira applies it at the repo root, then `./stage7/test-7b.sh` is expected all green; then item 10's commit is amended to the green state and item 11 (this handover, CLAUDE.md's build block and gotchas, README, the payload table re-run, the three commands) follows. Earlier — **Ring 7a is closed.** Next: **ring 7b, the wire** — the e1000e driver rehearsed on QEMU's `e1000e` with the HP's MAC, `broker/relay.py` in front of the frozen broker, the cage on the relay — per `stage7/spec.md`, a fresh Cowork session and a fresh CC session, Fable 5.1 at high effort by the spec's decision. Carry into 7b's handover: the HP's firmware may leave `CAP.SSS` set, so a port may need `PxCMD.SUD` before its disk appears (ring 7c). To click through ring 7a again at any time — two terminals at the repo root. The broker (it answers
 questions, grows requests, installs plans; every candidate rehearsed in
 the twin at 1920x1080 on IvyBridge with a 64 MB SATA disk of its own):
 
