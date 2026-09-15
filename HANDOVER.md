@@ -2300,10 +2300,29 @@ prompt`; step 8 test 5 in order; step 9 the chart and the photograph into
 the twin could not prove. Written with the Write tool; every command
 copied from the files as they stand.
 
+**Item 13** — **the bodyguard extended** (decision 7, A4) —
+`.claude/hooks/protect-tests.py`: the command normalised for the
+bodyguard's eyes before the device rule (quotes and backslashes deleted,
+runs of slashes and dot segments collapsed), a bare `/dev` a mention at a
+word boundary (`/devel`, `/devices` stay ordinary), `/dev/tty` itself the
+only terminal allowed (the named serial ports denied), and `METAL_WORDS`
+— `dd` as a word on its own, `of=`, `by-id`, `ttyUSB`, `nmcli` — denied
+wherever they appear, prose included. `payloads.py`: the ring 7c
+bodyguard group (twenty-five denials, fourteen allowances) and the Stage
+3 allowance of `dd` into `out/` flipped to a denial with its label saying
+why. **1563 payloads, 1046 denied, 517 allowed, 0 wrong**; one word in
+prose denied live. **`./stage7/test-7c.sh`: ALL FOUR AUTOMATED TESTS
+PASS** (`stage7/out/gate7c.item13.log`). **The regression chain on this
+tree, every gate green:** `./stage7/test.sh`, `./stage7/test-7b.sh`,
+`./stage6/test.sh`, `./stage6/test-6b.sh`, `./stage6/test-6c.sh`, Stages
+5–0 (`stage7/out/gate7a.item13.log`, `gate7b.item13.log`,
+`chain13.*.log`).
+
 ## Next action
 
-**Ring 7c is open at item 12.** Next: item 13, the bodyguard extended and
-the payload table (test 4), then item 14 as `stage7/plan-7c.md` says. The HP's day: three
+**Ring 7c is green pending the oracle at item 13.** Next: item 14 —
+HANDOVER to the green-pending-oracle state, CLAUDE.md's build block and
+gotchas, README's ring 7c, the three commands for the HP's day. The HP's day: three
 terminals at the repo root, `python3 broker/wire.py`, `python3
 broker/relay.py`, and the serial reader on the adapter's port, all written
 out in `stage7/METAL.md` at item 12.

@@ -164,11 +164,14 @@ CASES += [(c, DENY, "bodyguard: " + w) for c, w in [
     (write("/dev/sda"), "Write to a device node"),
     (edit("/dev/nvme0n1"), "Edit of a device node"),
     (write("/dev/null"), "Write even to /dev/null - no reason to"),
+    # Was an allowance ("dd from /dev/zero into out/") until Stage 7 ring 7c
+    # made dd the flash's verb, denied at the prompt whatever its target;
+    # the builders keep their dd inside their scripts, unseen by the hook.
+    (bash("dd if=/dev/zero of=stage3/out/x.img bs=1M count=16 status=none"), "dd at the prompt, even into out/ (ring 7c)"),
 ]]
 
 # --- Stage 3: the storage bodyguard - allowances ---------------------------
 CASES += [(c, ALLOW, "bodyguard allows: " + w) for c, w in [
-    (bash("dd if=/dev/zero of=stage3/out/x.img bs=1M count=16 status=none"), "dd from /dev/zero into out/"),
     (bash("truncate -s 16M stage3/out/notes.img"), "truncate in out/"),
     (bash("rm -f stage3/out/notes.img && truncate -s 16M stage3/out/notes.img"), "fresh disk idiom"),
     (bash("head -c 16 /dev/urandom | xxd"), "/dev/urandom as a source"),
@@ -793,6 +796,55 @@ CASES += [
      DENY, "bodyguard: a disk attached by a shorthand is denied even under out/"),
     (bash("echo 'the stick over usb-storage behind xhci, edid none on virtio-vga, the i8042 self-test'"), ALLOW, "bodyguard allows: the ring's words in prose"),
 ]
+
+# --- Stage 7 ring 7c: the bodyguard extended (plan item 13, decision 7, A4) --
+# The flash's words and every device spelling, measured at item 1 through
+# the scratch payload script and denied here; the harmless sources, sinks
+# and this ring's tools allowed. The spellings live in this file as data;
+# a command line never spells them.
+CASES += [(c, DENY, "ring 7c bodyguard: " + w) for c, w in [
+    (bash('ls "/dev"/sda'), "a quoted split of the device path"),
+    (bash("ls /de\\v/sda"), "a backslash inside the word"),
+    (bash("ls \\/dev\\/sda"), "escaped slashes"),
+    (bash("ls $'/dev/sda'"), "an ANSI-C quoted path"),
+    (bash("ls '/dev/'sda"), "a quoted prefix"),
+    (bash('ls "/dev/sda"'), "a quoted path"),
+    (bash("ls //dev/sda"), "a doubled leading slash"),
+    (bash("ls /dev//sda"), "a doubled inner slash"),
+    (bash("ls /dev/./sda"), "a dot segment"),
+    (bash("ls /dev"), "the device directory bare"),
+    (bash("ls /dev/"), "the device directory with a slash"),
+    (bash("ls /dev/ttyUSB0"), "the serial adapter's port"),
+    (bash("ls /dev/ttyS0"), "a named terminal"),
+    (bash("ls /dev/ttyACM0"), "a named terminal"),
+    (bash("ls /dev/serial/by-id/"), "the serial by-id directory"),
+    (bash("ls /dev/disk/by-id/usb-x"), "the stick's by-id path"),
+    (bash("echo dd"), "dd as a word"),
+    (bash("dd if=stage7/out/stick.img of=stage7/out/x.img bs=4M"), "dd even between two files under out/"),
+    (bash("echo of=x"), "of= as a word"),
+    (bash("echo by-id"), "by-id as a word"),
+    (bash("echo ttyUSB"), "ttyUSB as a word"),
+    (bash("echo nmcli"), "nmcli as a word"),
+    (bash("git commit -m 'flashed with dd by the by-id path'"), "the flash's words in a commit message"),
+    (bash("grep -n by-id stage7/METAL.md"), "the word in a grep - reword it"),
+    (bash("sudo udisksctl unmount -b /dev/disk/by-id/usb-x-part1"), "the owner's step in a command"),
+]]
+CASES += [(c, ALLOW, "ring 7c bodyguard allows: " + w) for c, w in [
+    (bash("ls /devel/x"), "a path that begins with the four letters and goes on (A4)"),
+    (bash("cat stage7/out/devices.txt"), "a word that begins with them (A4)"),
+    (bash("echo add odd dd-x ddd"), "dd inside other words or hyphenated"),
+    (bash("echo x > /dev/tty"), "the terminal itself, still a sink"),
+    (bash("ls /dev/pts/3"), "a pty"),
+    (bash('echo x > "/dev/null"'), "a quoted sink"),
+    (bash("cmd </dev/null >x 2>/dev/null"), "the gates' redirections"),
+    (bash("head -c 16 /dev/urandom | xxd"), "a source, still"),
+    (bash("echo lsblk"), "lsblk is not denied"),
+    (bash("python3 .claude/hooks/payloads.py"), "the table itself"),
+    (bash("python3 stage7/out/probe7c/spellings.py"), "the probe that holds the spellings as data"),
+    (bash("python3 broker/chart.py"), "the serial reader's usage - its port is named inside the file"),
+    (bash("git commit -F msg.txt"), "a commit message from a file"),
+    (bash("echo 'the flash is the owner'\\''s hand; the stick as built'"), "the ring's words in prose"),
+]]
 
 
 def run(case):

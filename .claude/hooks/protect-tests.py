@@ -36,10 +36,24 @@ freeze:
 
   - any mention of a /dev path is denied unless it is one of the harmless
     sources and sinks (/dev/zero, /dev/urandom, /dev/random, /dev/null, the
-    standard streams, /dev/fd/, /dev/tty*). That covers the spec's four
-    (/dev/sd*, /dev/nvme*, /dev/disk*, /dev/mapper) and every sibling
-    (/dev/hd*, /dev/vd*, /dev/loop*, /dev/mmcblk*, /dev/md*, /dev/dm-*, ...)
-    without a list that could fall behind;
+    standard streams, /dev/fd/, /dev/tty itself, /dev/pts/). That covers the
+    spec's four (/dev/sd*, /dev/nvme*, /dev/disk*, /dev/mapper) and every
+    sibling (/dev/hd*, /dev/vd*, /dev/loop*, /dev/mmcblk*, /dev/md*,
+    /dev/dm-*, ...) without a list that could fall behind. From Stage 7
+    ring 7c (plan decision 7, A4) the command is first NORMALISED for the
+    bodyguard's eyes - quotes and backslashes deleted, runs of slashes and
+    dot segments collapsed - so a spelling that splits or escapes the word
+    (a quote inside it, a backslash inside it or before its slashes, an
+    ANSI-C quoted string, a doubled slash, a dot segment) is the same
+    path; a bare /dev is a mention too, at a word boundary, so
+    /devel and /devices stay ordinary paths; and the named terminals
+    (/dev/ttyUSB0, /dev/ttyS0, ...) are denied - the serial adapter is the
+    owner's;
+  - the flash's own words are denied wherever they appear, prose included
+    (ring 7c): dd (not inside another word or a hyphenated one), of=,
+    by-id, ttyUSB, nmcli. The builders run dd inside their scripts, unseen
+    here; a probe that needs bytes from an image reads them with Python;
+    a commit message goes in by -F from a file written with the Write tool;
   - the words mount, umount, losetup, mkfs (which covers mkfs.ext4 and kin),
     and the partitioning and wiping tools - fdisk, sfdisk, gdisk, parted,
     wipefs, blkdiscard - are denied wherever they appear;
@@ -302,14 +316,48 @@ FOUNDATION_RULE = (
     "storage code touches only QEMU disk images until Stage 7, and never any "
     "disk holding real data")
 
-# Every /dev mention in a command, with whatever path follows it.
-DEV_MENTION = re.compile(r"/dev/[\w./+-]*")
+# Every /dev mention in a NORMALISED command (see dev_normalise), with
+# whatever path follows it; a bare /dev at a word boundary is a mention too
+# (ring 7c, A4: /devel and /devices are not).
+DEV_MENTION = re.compile(r"/dev\b(?:/[\w./+-]*)?")
 
-# The /dev paths that are not disks: sources of bytes, sinks for them, and the
-# terminal. Everything else under /dev is denied, block device or not.
+# The /dev paths that are not disks: sources of bytes, sinks for them, the
+# terminal itself and a pty. Everything else under /dev is denied, block
+# device or not - the named terminals (ttyUSB*, ttyS*, ttyACM*) included
+# from ring 7c: the serial adapter is the owner's.
 DEV_ALLOWED = re.compile(
     r"^/dev/(?:zero|urandom|random|null|stdin|stdout|stderr|fd(?:/\d+)?|"
-    r"tty\w*|pts(?:/\d+)?)/?$")
+    r"tty|pts(?:/\d+)?)/?$")
+
+# What a device path looks like once the quoting is taken away: every quote
+# and backslash deleted (so "/dev"/sda, /de\v/sda, \/dev\/sda and $'/dev/sda'
+# read as /dev/sda), runs of slashes and dot segments collapsed (//dev/sda,
+# /dev//sda, /dev/./sda). Deliberately blunt: it deletes every quote and
+# backslash in the command before looking, and a false deny costs a
+# reworded command.
+QUOTES = re.compile(r"[\"'\\]")
+SLASHES = re.compile(r"/{2,}")
+DOT_SEGMENT = re.compile(r"/\./")
+
+
+def dev_normalise(cmd):
+    text = QUOTES.sub("", cmd)
+    text = SLASHES.sub("/", text)
+    while DOT_SEGMENT.search(text):
+        text = DOT_SEGMENT.sub("/", text)
+    return text
+
+
+# The flash's words (ring 7c, plan decision 7), denied wherever they appear.
+# dd is a word on its own: not inside another (add, odd) and not hyphenated
+# (dd-x, a NASM directive's name in prose stays sayable as "dd-").
+METAL_WORDS = (
+    (r"(?<![\w-])dd(?![\w-])", "dd - the flash's verb; the builders run it inside their scripts, never at the prompt"),
+    (r"\bof=", "of= - a raw write's target"),
+    (r"\bby-id\b", "by-id - the stick's path, which is the owner's"),
+    (r"\bttyUSB", "ttyUSB - the serial adapter's port, which is the owner's"),
+    (r"\bnmcli\b", "nmcli - the LAN port's address, which is the owner's"),
+)
 
 # Verbs that take a disk, wherever they appear - prose included.
 STORAGE_VERBS = (
@@ -379,13 +427,13 @@ def deny_storage(what, why):
 
 def storage_guard(cmd):
     """The bodyguard's Bash arm. Returns only if the command is clean."""
-    for m in DEV_MENTION.finditer(cmd):
+    for m in DEV_MENTION.finditer(dev_normalise(cmd)):
         dev = m.group(0).rstrip(".,;:")
         if not DEV_ALLOWED.match(dev):
             deny_storage(dev, "a /dev path that is not one of the harmless "
                               "sources or sinks")
 
-    for pattern, why in STORAGE_VERBS:
+    for pattern, why in STORAGE_VERBS + METAL_WORDS:
         m = re.search(pattern, cmd)
         if m:
             deny_storage("'%s'" % m.group(0), why)
