@@ -2286,7 +2286,8 @@ mouse_cmd:
         ret
 
 ; mouse_init - the cold init: both ports off, drained; the controller's
-; self-test (0xAA, answered 0x55 - or a named halt) and its line; the
+; self-test (0xAA, answered 0x55 - or a named halt), both ports off again
+; and the buffer drained (the self-test may re-enable them), its line; the
 ; command byte read AFTER the self-test (which may reset it), bits 0 and 1
 ; set (both interrupts), 4 and 5 cleared (both ports enabled), the rest
 ; kept (translation above all), written and read back; the auxiliary port
@@ -2319,6 +2320,20 @@ mouse_init:
         jc      .self_test_failed       ; no answer within the bound
         cmp     al, 0x55
         jne     .self_test_failed       ; an answer that is not "passed"
+        ; Ring 7c item 15 (Cowork's pre-oracle review): on some real
+        ; controllers the self-test resets the controller and re-enables
+        ; both ports, and a device's power-on byte (the keyboard's 0xAA,
+        ; the mouse's 0xAA 0x00) can then sit in the output buffer ahead
+        ; of the command byte - the 0x20 read below would take a device
+        ; byte as the command byte, clear translation and write it back:
+        ; a dead keyboard. So both ports off again, and the buffer drained,
+        ; before the command byte is read. The twin cannot show the
+        ; difference; the rule stands here.
+        mov     al, 0xAD                ; the keyboard port off, again
+        call    i8042_cmd
+        mov     al, 0xA7                ; the auxiliary port off, again
+        call    i8042_cmd
+        call    i8042_drain
         lea     rsi, [msg_i8042_ok]
         call    serial_puts
         mov     al, 0x20                ; read the command byte - after the

@@ -2341,6 +2341,21 @@ ring 7c; the gate re-run whole and timed (104 s, all four PASS,
 wrong. The probe artefacts stay under `stage7/out/probe7c/` (gitignored)
 for the review; nothing frozen touched.
 
+**Item 15** — from Cowork's pre-oracle review: **the ports re-disabled
+after the self-test.** In `mouse_init`, once `0xAA` has answered `0x55` and
+before `i8042: self-test ok` is printed, `0xAD` and `0xA7` go through
+`i8042_cmd` again and the output buffer is drained. On some real
+controllers the self-test resets the controller and re-enables both ports,
+and a device's power-on byte (the keyboard's `0xAA`, the mouse's `0xAA
+0x00`) can then sit in the output buffer ahead of the command byte — the
+`0x20` read would take a device byte as the command byte, clear
+translation and write it back: a dead keyboard on the HP. The twin cannot
+show the difference; the rule stands in the comment and as a CLAUDE.md
+gotcha. The binary is 36,864 bytes still. `./stage7/test-7c.sh`,
+`./stage7/test.sh` and `./stage7/test-7b.sh`: all four PASS each
+(`stage7/out/gate7c.item15.log`, `gate7a.item15.log`, `gate7b.item15.log`);
+the payload table 1563 cases, 0 wrong.
+
 ## Next action
 
 **Ring 7c is green pending the oracle.** Two things before the HP's day,

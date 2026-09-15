@@ -438,6 +438,12 @@ test in the twin.
   Enter - so the serial echo after the click is that line, not nothing
   (ring 7c item 4, one correction). Read the ring's own rule before
   writing the expectation.
+- **An i8042 self-test may re-enable both ports.** A device's power-on
+  byte can then sit in the output buffer ahead of the command byte, and
+  the `0x20` read takes it as the command byte, clears translation and
+  writes it back: a dead keyboard. Disable both ports and drain again
+  between the self-test's `0x55` and the command byte's read (ring 7c
+  item 15, Cowork's pre-oracle review; the twin cannot show it).
 - **OVMF wrote no `NvVars` to a stick copy on `usb-storage` in eight
   boots**, though it writes them to an `esp.img` on SATA every boot (ring
   7a). Neither is a promise: assert what the guest must never do to a boot
