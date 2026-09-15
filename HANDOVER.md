@@ -2268,10 +2268,25 @@ proof re-run, every assertion held. `./stage7/test-7b.sh` all four PASS;
 the 7c gate tests 1–3 PASS (`stage7/out/gate7b.item10.log`,
 `gate7c.item10.log`).
 
+**Item 11** (`broker/chart.py`, unfrozen): **the serial reader** (decision
+6, A1) — the port opened `O_RDWR | O_NOCTTY | O_NONBLOCK`, termios set raw
+at `B115200`, `CS8 | CREAD | CLOCAL`, no parity, one stop bit, `VMIN` 1,
+then `O_NONBLOCK` cleared (a three-wire null-modem cable never asserts DCD;
+without this order the open would hang and the HP would be wrongly
+suspected); every line to stdout as it arrives and to the log file with
+a millisecond timestamp, flushed per line; a partial line kept at Ctrl-C;
+a port that cannot be opened a loud exit 2. **Proven on a pty pair**
+(`stage7/out/probe7c/chart_proof.py`, the slave's name computed inside the
+script): five lines in — one with a stray `\r`, one with a non-UTF-8 byte,
+one partial at SIGINT — five out on stdout and in the log with the
+timestamp's shape, exit 0; a path under `out/` that does not exist, exit
+2 with the reason. The usage text names the adapter's usual path once,
+inside the file.
+
 ## Next action
 
-**Ring 7c is open at item 10.** Next: item 11, `broker/chart.py`, then
-items 12–14 as `stage7/plan-7c.md` says. The HP's day: three
+**Ring 7c is open at item 11.** Next: item 12, `stage7/METAL.md`, then
+items 13–14 as `stage7/plan-7c.md` says. The HP's day: three
 terminals at the repo root, `python3 broker/wire.py`, `python3
 broker/relay.py`, and the serial reader on the adapter's port, all written
 out in `stage7/METAL.md` at item 12.
