@@ -95,6 +95,29 @@ nasm -f bin stage0/stage0.asm -o stage0/out/stage0.img
                        # ~5 min, ten boots plus two rehearsals. Ring 7a's gate
                        # stays the regression: the same binary on virtio-net.
 
+# Stage 7 ring 7c - the metal
+python3 stage7/mkstick.py   # after mkimage.sh: stage7/out/stick.img - a protective MBR,
+                            # a GPT, one 64 MB ESP holding EFI/BOOT/BOOTX64.EFI,
+                            # written with mtools at the partition's offset (not frozen)
+./stage7/test-7c.sh    # acceptance tests 1-4 on the twin of the HP: the stick
+                       # parsed from the host (test 1); a COPY of it booted over
+                       # qemu-xhci + usb-storage with NO esp.img on SATA, the
+                       # 64 MB SATA disk and the e1000e cage to the relay on
+                       # 9997 - nineteen lines at -smp 8, eighteen on the same
+                       # disk at 4, "S7: edid none" and the highest mode on
+                       # virtio-vga at 2, the "i8042:" pair on every boot, the
+                       # stick copy's tables unchanged (test 2); every stage
+                       # re-proven in one run of two boots at -smp 4 - typing,
+                       # the note across the reboot, "? ping", "! test app",
+                       # "! install echo" in wire.py's twin, then with nothing
+                       # on the wire the note back and a click on "! echo"
+                       # launching it (test 3); the argv checks, the relay's
+                       # bind rule, the payload table 0 wrong and the flash's
+                       # words and every /dev spelling denied (test 4). Needs
+                       # 9999, 9998 and 9997 free. ~2 min, five boots plus two
+                       # rehearsals. Rings 7a and 7b stay the regressions on
+                       # the same binary from esp.img.
+
 # The mock brokers (what the gates talk to; never spend a token)
 python3 broker/broker.py --mock --port 9999     # Stage 4
 python3 broker/plans.py --mock                  # Stage 6 (answers, apps, installs)
@@ -108,24 +131,30 @@ python3 broker/relay.py --bind 127.0.0.1 --port 9997   # the relay in the twin, 
 python3 .claude/hooks/payloads.py
 ```
 
-Windowed, for the oracle test (Stage 7 ring 7b shape, three terminals: the
-real broker `python3 broker/wire.py`, the relay `python3 broker/relay.py
---bind 127.0.0.1 --port 9997`, and the machine on an e1000e carrying the
-HP's MAC with its cage landing on the relay; one 64 MB SATA disk the guest
-partitions on its first boot - remove `disk.img` first for a blank one,
-`truncate` on a file already 64 MB changes nothing, and the 7b gate never
-touches that path; click in the QEMU window to grab the mouse, Ctrl+Alt+G
-releases it; ring 7a's shape is the same line with `virtio-net-pci` and the
+Windowed, for the oracle test (Stage 7 ring 7c shape - the twin of the HP,
+three terminals: the real broker `python3 broker/wire.py`, the relay
+`python3 broker/relay.py --bind 127.0.0.1 --port 9997`, and the machine
+booted from a COPY of the stick over qemu-xhci + usb-storage with no
+`esp.img` on SATA, on an e1000e carrying the HP's MAC with its cage landing
+on the relay; one 64 MB SATA disk the guest partitions on its first boot -
+remove `disk.img` first for a blank one, `truncate` on a file already 64 MB
+changes nothing, and no gate touches that path; the copy because QEMU locks
+the file it boots and the owner flashes `stick.img` as built; click in the
+QEMU window to grab the mouse, Ctrl+Alt+G releases it; ring 7b's shape is
+the same line with `-drive format=raw,file=stage7/out/esp.img` in place of
+the stick's two devices; ring 7a's is that with `virtio-net-pci` and the
 guestfwd on 9999 with `python3 broker/metal.py`; Stage 6 keeps its virtio
 disks and `broker/pointer.py`, earlier stages drop the drives, the display
 and the cage they did not have and point at their own `esp.img` — see
-README.md):
+README.md; the HP's own day is `stage7/METAL.md`):
 
 ```bash
-truncate -s 64M stage7/out/disk.img
+./stage7/mkimage.sh && python3 stage7/mkstick.py
+rm -f stage7/out/disk.img; truncate -s 64M stage7/out/disk.img
+cp stage7/out/stick.img stage7/out/stick.twin.img
 qemu-system-x86_64 -machine q35 -cpu IvyBridge -m 256M -smp 4 -bios /usr/share/ovmf/OVMF.fd \
   -vga none -device VGA,edid=on,xres=1920,yres=1080 \
-  -drive format=raw,file=stage7/out/esp.img \
+  -device qemu-xhci -drive if=none,id=stick,format=raw,file=stage7/out/stick.twin.img -device usb-storage,drive=stick \
   -drive if=none,id=d0,format=raw,file=stage7/out/disk.img -device ide-hd,drive=d0,bus=ide.1 \
   -netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9997' \
   -device e1000e,netdev=n0,mac=6c:3b:e5:3b:86:45 -serial stdio
@@ -389,6 +418,30 @@ test in the twin.
   defined" followed by the cascade. The e1000e driver had to sit below the
   wire section's `TX_BASE` and `ETH_*` defines (ring 7b item 10). Read the
   first error only; move the code, not the defines.
+- **No QEMU display can stand in for a foreign display with an EDID at
+  BAR2.** `virtio-vga` (`1af4:1050`) has an I/O BAR2 and `cirrus-vga` none;
+  `bochs-display` and `secondary-vga` carry QEMU's own `1234:1111`. So a
+  guard that reads BAR2 only for QEMU's VGA is invisible to a twin: the
+  `novga` boot proves the "edid none, highest mode" rule, and the guard's
+  refusal is proven by a probe with the vendor constant changed on QEMU's
+  VGA (ring 7c item 1, item 7). Measure what the stand-in device's BARs
+  hold before writing a test that assumes them.
+- **A prose rule against a path must see through the shell's quoting.**
+  `"/dev"/sda`, a backslash inside the word, an ANSI-C quoted string and a
+  bare `/dev` all slipped past a regex that wanted the literal `/dev/`
+  (ring 7c item 1). Normalise the command - delete quotes and backslashes,
+  collapse slashes and dot segments - before the rule looks, and keep the
+  spellings as data in the payload table, never on a command line: the
+  hook denies the probe that spells them.
+- **A click on a launch item types the launch line.** Ring 6c made a
+  click do what its key does, and a `! echo` target types `! echo` and
+  Enter - so the serial echo after the click is that line, not nothing
+  (ring 7c item 4, one correction). Read the ring's own rule before
+  writing the expectation.
+- **OVMF wrote no `NvVars` to a stick copy on `usb-storage` in eight
+  boots**, though it writes them to an `esp.img` on SATA every boot (ring
+  7a). Neither is a promise: assert what the guest must never do to a boot
+  medium (its tables unchanged), never byte-identity and never a change.
 
 ## Working with the hooks
 

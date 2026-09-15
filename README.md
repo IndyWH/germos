@@ -28,7 +28,7 @@ The pictures in `history/` are the machine's own screendumps, taken by each stag
 
 **Stage 6 — growth — is closed** (5 September 2026): the glass, the store of plans and the pointer, three rings in four days. The owner's first oracle run found a defect the gate had missed — the arrow left fragments along the bottom edge, because a 1080-pixel mode is not a whole number of 16-pixel cells — and the fix made the bottom row a click margin for the choices row, as Fitts's law asks of an edge.
 
-**Stage 7 — metal — is open** (9 September 2026): the patient is an HP Compaq Elite 8300, and every driver the metal needs is rehearsed first in the twin. **Ring 7a, the disk** (closed 9 September 2026), replaces virtio-blk with an AHCI driver: one SATA disk, a GPT the machine writes itself on a blank drive, the notebook and the home as two partitions with their formats unchanged inside ([`stage7/DISK.md`](stage7/DISK.md)). The disk is chosen by what it holds — a GermOS table wins, a blank disk is formatted, anything else is refused by name and never written. **Ring 7b, the wire** (closed 15 September 2026), replaces virtio-net with an e1000e driver beside it — the NIC preferred by kind, the MAC from the device's own registers, the link awaited and its absence a named error — and puts a relay in front of the frozen broker ([`stage7/WIRE.md`](stage7/WIRE.md)): on the home switch the relay is what answers the guest's ARP for `10.0.2.4`, and in the twin every question, grow and install of the gate goes through it. Ring 7c (the stick, the flash by the owner's hand, every stage re-proven on the HP) follows.
+**Stage 7 — metal — is open** (9 September 2026): the patient is an HP Compaq Elite 8300, and every driver the metal needs is rehearsed first in the twin. **Ring 7a, the disk** (closed 9 September 2026), replaces virtio-blk with an AHCI driver: one SATA disk, a GPT the machine writes itself on a blank drive, the notebook and the home as two partitions with their formats unchanged inside ([`stage7/DISK.md`](stage7/DISK.md)). The disk is chosen by what it holds — a GermOS table wins, a blank disk is formatted, anything else is refused by name and never written. **Ring 7b, the wire** (closed 15 September 2026), replaces virtio-net with an e1000e driver beside it — the NIC preferred by kind, the MAC from the device's own registers, the link awaited and its absence a named error — and puts a relay in front of the frozen broker ([`stage7/WIRE.md`](stage7/WIRE.md)): on the home switch the relay is what answers the guest's ARP for `10.0.2.4`, and in the twin every question, grow and install of the gate goes through it. **Ring 7c, the metal** (green pending the oracle, 15 September 2026), is procedure and a guard: the EDID is read from BAR2 only on QEMU's VGA and any other display gets `S7: edid none` and the highest mode the console can hold; the i8042 is initialised cold — the controller's self-test before its command byte, `i8042: self-test ok` and `i8042: mouse reset ok` (or `mouse none`, a line not an error), every controller failure named; staggered spin-up is honoured on the AHCI ports; `stage7/mkstick.py` writes a bootable stick image with mtools at the partition's offset and the gate boots a copy of it over USB with no boot image on SATA, re-proving every stage in one run; the storage bodyguard denies CC the flash's own words and every spelling of a device path; and `stage7/METAL.md` is the owner's day, step by step. Test 5 is the HP itself.
 
 ## Running it
 
@@ -211,6 +211,30 @@ qemu-system-x86_64 -machine q35 -cpu IvyBridge -m 256M -smp 4 -bios /usr/share/o
 ```
 
 The serial log says `S7: nic 6c:3b:e5:3b:86:45` then `S7: link up`. Type `? ping`: the relay's terminal logs one connection, `pong` appears, and the strip says `w 001`. Type `! make me a clock`: Claude writes it, the twin rehearses it on a SATA disk and an e1000e of its own, and the clock ticks in its panel. On the HP's day the relay runs with no flags (`10.0.2.4:9999`, the switch) beside the broker.
+
+**Stage 7, ring 7c — the metal.** The twin of the HP: the same binary on a USB stick the firmware reads (`stage7/mkstick.py` writes `stage7/out/stick.img` — a protective MBR, a GPT, one 64 MB EFI System Partition holding `EFI/BOOT/BOOTX64.EFI`, formatted and filled with mtools at the partition's offset, no loop device), booted as a copy over `qemu-xhci` + `usb-storage` with no boot image on SATA, the SATA disk and the e1000e as before. The guest reads an EDID only from QEMU's VGA and takes the highest mode the console can hold on any other display (`S7: edid none`), initialises the i8042 cold (`i8042: self-test ok`, `i8042: mouse reset ok`), and honours staggered spin-up on the AHCI ports. The relay closes a guest that never closes; `broker/chart.py` reads the HP's serial port on the day; `stage7/METAL.md` is the owner's procedure — the flash by his own hand by the by-id path, the LAN port's second address, the three terminals, the first boot line by line. Three terminals, the same as ring 7b's with the stick in place of the boot image:
+
+```
+python3 broker/wire.py
+```
+
+```
+python3 broker/relay.py --bind 127.0.0.1 --port 9997
+```
+
+```
+./stage7/mkimage.sh && python3 stage7/mkstick.py
+rm -f stage7/out/disk.img; truncate -s 64M stage7/out/disk.img
+cp stage7/out/stick.img stage7/out/stick.twin.img
+qemu-system-x86_64 -machine q35 -cpu IvyBridge -m 256M -smp 4 -bios /usr/share/ovmf/OVMF.fd \
+  -vga none -device VGA,edid=on,xres=1920,yres=1080 \
+  -device qemu-xhci -drive if=none,id=stick,format=raw,file=stage7/out/stick.twin.img -device usb-storage,drive=stick \
+  -drive if=none,id=d0,format=raw,file=stage7/out/disk.img -device ide-hd,drive=d0,bus=ide.1 \
+  -netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9997' \
+  -device e1000e,netdev=n0,mac=6c:3b:e5:3b:86:45 -serial stdio
+```
+
+OVMF says it is loading from the USB drive, then the nineteen lines with `S7: disk port 1 …` (the only disk on SATA now) and the `i8042:` pair before `S7: keyboard ready`. Everything the earlier rings did runs unchanged. The automated gate (`./stage7/test-7c.sh`) parses the stick from the host, boots it three times over USB, re-proves every stage in one scripted run, and checks the bodyguard's table — mock only, no token. The stick is a copy in the twin because QEMU locks what it boots; the file as built is what the owner flashes.
 
 ## The team of three
 
