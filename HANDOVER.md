@@ -2091,15 +2091,37 @@ item 8; test 4 from item 13.
 ### Ring 7c — the build, item by item
 
 **Item 0** — this record; `stage7/plan-7c.md` committed verbatim.
+**Item 1** — the environment, measured on private copies under
+`stage7/out/probe7c/` (gitignored) with a temporary probe spliced into a
+copy of the source (never into `stage7/stage7.asm`, never committed); no
+source changed, nothing frozen touched, no Claude call, no `/dev` path in
+any command:
+
+| Fact | Measured how |
+|---|---|
+| **mtools' `image@@offset` form works on this host:** a hand-built 66 MiB stick (`STICK_SECTORS` 135168; protective MBR with one `0xEE` entry; GPT at LBA 1 and its backup at the last LBA; one entry of the ESP type GUID, first LBA **2048**, last **133119**, 131072 sectors, the spec's 64 MB) formatted with `mformat -i stick.img@@1048576 -F -T 131072 -v GERMOS ::`, `mmd`, `mcopy` at the offset; `mdir` at the offset lists `BOOTX64 EFI 36864`; `mtype` at the offset extracts it **byte-identical** to the build; the host's `blkid -p` says `PTTYPE="gpt"`, `partx -s` lists `1 2048 133119 131072 64M EFI System`; DISK.md's `classify` says **`gpt`** and `parse_gpt` raises "a valid table without both GermOS partitions (found [])" — the AHCI driver would refuse it, which is right | `stage7/out/probe7c/mkstick_probe.py`; `blkid`, `partx`, `broker/metal.py` |
+| **Ring 7b's closed binary boots from a copy of the stick over `qemu-xhci` + `usb-storage` with no `esp.img` on SATA**, the blank SATA disk on `ide.1` and the e1000e cage to a throwaway port (9996), at `-smp 2`, `4` and `8`: **nineteen lines**, `S7: disk port 1 131072 notes 2048 home 34816` (only port 1 holds a disk now), `S7: nic 6c:3b:e5:3b:86:45`, `S7: link up`, `console 120x67`; **`S7: alive` at 1.20–1.30 s and ready at 1.40–1.50 s from QEMU's start — the SATA path's numbers; OVMF's USB enumeration costs nothing measurable.** The gate keeps `timeout 60` and the 60 s ready window | `stage7/out/probe7c/boot.py`, eight boots |
+| **OVMF did not write `NvVars` into the stick copy**: the copy is **byte-identical** to the built stick after every one of the eight boots (0 sectors differ), and no `NvVars` string lands on the SATA disk either — unlike ring 7a's `esp.img` on SATA, which changed on every boot. The plan's criterion (the stick copy's MBR, GPT header, entry array and backup unchanged after a boot) stands as written and is not tightened to byte-identity: OVMF's behaviour is the firmware's to change, and the owner's HP has its own | `boot.py`, `cmp`, `grep -c` |
+| **The display that is not QEMU's VGA.** QEMU's VGA is `1234:1111` with BAR2 `0x810c5000`, a memory BAR (the EDID), and OVMF's GOP lists **30 modes** for it, all `PixelFormat` 1 (BGR), from 640x480 to **2560x1600**, 2048x2048 and 2000x2000 among them (mode 0 is the EDID's 1920x1080). **`virtio-vga` is `1af4:1050`**, class `0x0300`, and **its BAR2 reads `0x0000000c` — an I/O BAR**, so today's `edid_read` skips it by the existing `test al, 1` and prints **`S7: edid none`** already; OVMF's GOP lists **23 modes** for it, 640x480 to **1920x1080** (mode 22), all format 1, and the mode loop takes **1920x1080 — the highest by area** (1600x1200 is smaller); `console 120x67`; the glass draws. **`cirrus-vga` is `1013:00b8`**, BAR2 zero, **two modes**, 640x480 and 800x600; `edid none`, `800x600`, `console 50x37`. **So no QEMU display puts a valid EDID behind a memory BAR2 under a foreign vendor: the twin cannot exercise the guard's refusal directly.** The `novga` boot (virtio-vga, `edid none`, the gop line **1920x1080** — the literal from this run) is the spec's observable; **the guard's own proof is item 7's probe: the constant changed in a copy, QEMU's VGA with its valid EDID at BAR2 must then print `edid none`** | the probe's `P: display id` and `P: mode` lines on three displays |
+| **`CAP` through the monitor on the stick boot: `0xc0141f05`, `PI` `0x3f`** — bit 27 (`SSS`) **clear**, as ring 7a recorded. **Port 1's `PxCMD` after the selection is `0xc017`** — `ST`, **`SUD` and `POD` already set by the firmware**, `FRE`, `FR`, `CR` — and `PxSSTS` `0x113` (`DET` 3, Gen 1, `IPM` 1). With `SSS` clear the `SUD` path of decision 4 and A2 is not taken in the twin; the code is written to the spec | `xp` on `obs + 0x2C0`; the probe's `P: pxcmd` line |
+| **The i8042 as the twin answers it**, after `0xAD`, `0xA7` and the drain: **`0xAA` answered `0x55` on the first poll**; the command byte then reads **`0x77`** (translation on, both interrupts off, both ports disabled — bit 4 set by our own `0xAD`; ring 6c's `0x67` was read before any disable); the mouse's **`FA`, `AA`, `00` each on the first poll** (`polls-left 50` of `I8042_WAIT_TRIES` 50). QEMU's controller has no latency to measure; **deviation 9 is decided by the PS/2 specification alone: `I8042_WAIT_TRIES` becomes 100** (one second per answer, the mouse's post-reset self-test being specified at up to 500 ms), a change the twin cannot feel | the probe's `P: i8042` and `P: mouse` lines, three boots |
+| **The console's limits for A5:** `SHADOW_SIZE` `0x10000` cells (its comment says "128x128 cells, this machine's 2048x2048 mode exactly, with room over" — 64 KB holds 65536 cells, so every mode OVMF lists here fits: 2560x1600 is 16000 cells); `surf_describe` checks `PANEL_CELLS` (`0x10000`) per panel and **`SURF_ROWS_MAX` 256 rows** at `.too_small` (`stage7.asm` 7256–7282); item 7 mirrors the mode-only ones | read |
+| **The pty pair accepts the serial settings:** `os.open(name, O_RDWR\|O_NOCTTY\|O_NONBLOCK)`, `tcsetattr` with `B115200` in and out, `CS8\|CREAD\|CLOCAL`, `PARENB`/`CSTOPB`/`ICANON` clear, `VMIN` 1, then `O_NONBLOCK` cleared with `fcntl` — every setting reads back as set and bytes written to the master arrive (A1's order, inside one Python script; the slave's name never appears in a command) | a Python script on `pty.openpty()` |
+| **The hook's verdicts today on the spelling table** (fed as payloads by `stage7/out/probe7c/spellings.py`, the spellings held as data): **denied** — `/dev/sda`, `//dev/sda`, `/dev//sda`, `/dev/./sda`, `/dev/disk/by-id/…`, `/dev/serial/by-id/…`, `"/dev/sda"`, `'/dev/'sda`, `$'/dev/sda'`, `/dev/`; **allowed today, to be denied at item 13** — `"/dev"/sda`, `/de\v/sda`, `\/dev\/sda`, bare `/dev`, `/dev/ttyUSB0`, `/dev/ttyS0`, `/dev/ttyACM0`, and the words `dd`, `of=`, `by-id`, `ttyUSB`, `nmcli`; **allowed and staying so** — `/dev/null`, `/dev/zero`, `/dev/urandom`, `/dev/random`, `/dev/stdin`, `/dev/stdout`, `/dev/stderr`, `/dev/fd/0`, `/dev/tty`, `/dev/pts/3`, `</dev/null`, `"/dev/null"`, `/devel/x`, `stage7/out/devices.txt` (A4), `add odd dd-x`, `lsblk`, `python3 stage7/mkstick.py`, `python3 broker/chart.py` | `spellings.py`, 40 payloads |
+| The probe's guestfwd used a throwaway port (9996); the gate's ports were never touched; no packet left the cage; the probe's stick copies and disks are under `stage7/out/probe7c/` | `boot.py` |
+
+**Decided at item 1, before any test is written:** the ready window stays
+60 s and the gate's `timeout` 60; the `novga` display is `virtio-vga,edid=on`
+and its gop literal `1920x1080`; the stick's constants are the probe's
+(135168 sectors, the ESP at 2048 for 131072); `I8042_WAIT_TRIES` 100
+(deviation 9); the guard is proven by item 7's constant-changed probe, not
+by the `novga` boot, which is green on its EDID criterion already on ring
+7b's binary (its red at item 3 is the missing `i8042:` pair alone).
 
 ## Next action
 
-**Ring 7c is open at item 0.** Next: item 1, the environment measured on
-private copies under `stage7/out/probe7c/` — the stick over USB and its time
-to `alive` and `ready`, the display that is not QEMU's VGA and its mode
-list, `CAP` and port 1's `PxCMD` through the monitor, the i8042's answers,
-the pty's termios, the `/dev` spelling table through a scratch payload
-script — then items 2–14 as `stage7/plan-7c.md` says. The HP's day: three
+**Ring 7c is open at item 1.** Next: item 2, `stage7/mkstick.py` from the
+probe's shape, then items 3–14 as `stage7/plan-7c.md` says. The HP's day: three
 terminals at the repo root, `python3 broker/wire.py`, `python3
 broker/relay.py`, and the serial reader on the adapter's port, all written
 out in `stage7/METAL.md` at item 12.
