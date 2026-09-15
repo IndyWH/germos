@@ -473,6 +473,67 @@ else
 fi
 echo
 
+# --------------------------------------------- test 4: the cage holds --------
+# Two halves. First this harness inspects its OWN cage, machine, display
+# and disk strings; then stage7/checkwire.py --cage: the checker's argv and
+# the twin's as broker/wire.py builds it (one restricted cage to the relay,
+# two in the twin, the e1000e with the patient's MAC), the relay's bind
+# rule on the host, the mock-down run through the relay ending in a
+# console message, "! test app" and "! install echo" through the relay at
+# -smp 4 (the record, the germline with nineteen-line rehearsal logs, the
+# home partition, the twin's disk, the relay's log against the frames),
+# and the reboot with nothing on the wire launching echo from the partition.
+
+echo "Test 4 - The cage holds: restrict=on asserted, the relay's bind rule, a mock-down run ending in a message, the grow and the install through the relay, the launch with nothing on the wire"
+cage_probs=()
+for nd in "$CAGE_NETDEV" "$CAGE2_NETDEV"; do
+  case "$nd" in
+    user,*) : ;;
+    *) cage_probs+=("the netdev is not slirp user mode: $nd") ;;
+  esac
+  case ",$nd," in
+    *,restrict=on,*) : ;;
+    *) cage_probs+=("the netdev lacks restrict=on: $nd") ;;
+  esac
+  n_fwd=$(printf '%s' "$nd" | grep -o 'guestfwd=' | wc -l)
+  [ "$n_fwd" -eq 1 ] || cage_probs+=("expected exactly one guestfwd, found $n_fwd: $nd")
+  printf '%s' "$nd" | grep -qE "guestfwd=tcp:10\.0\.2\.4:9999-cmd:nc -N 127\.0\.0\.1 ${RELAY_PORT}(,|\$)" || \
+    cage_probs+=("the guestfwd is not tcp:10.0.2.4:9999 via 'nc -N 127.0.0.1 ${RELAY_PORT}': $nd")
+  case "$nd" in
+    *hostfwd*) cage_probs+=("the netdev opens a hostfwd: $nd") ;;
+  esac
+done
+[ "$CAGE_DEVICE" = "e1000e,netdev=n0,mac=$MAC" ] || \
+  cage_probs+=("the device is not an e1000e on netdev n0 with the patient's MAC: $CAGE_DEVICE")
+[ "$CAGE2_DEVICE" = "virtio-net-pci,netdev=n1,mac=$VIRTIO_MAC" ] || \
+  cage_probs+=("the second device is not a virtio-net-pci on netdev n1 with its own MAC: $CAGE2_DEVICE")
+[ "$MAC" = "6c:3b:e5:3b:86:45" ] || cage_probs+=("the MAC is not the patient's: $MAC")
+[ "$DISPLAY" = "-vga none -device VGA,edid=on,xres=1920,yres=1080" ] || \
+  cage_probs+=("the display is not the standard VGA device with the 1920x1080 EDID: $DISPLAY")
+[ "$MACHINE" = "-machine q35 -cpu IvyBridge -m 256M -bios $OVMF" ] || \
+  cage_probs+=("the machine is not q35 on the patient's CPU with OVMF: $MACHINE")
+[ "$(sata_drive "$WIRE/disk.img")" = "-drive if=none,id=d0,format=raw,file=$WIRE/disk.img -device ide-hd,drive=d0,bus=ide.1" ] || \
+  cage_probs+=("the disk is not the raw file under stage7/out/ on an ide-hd at ide.1: $(sata_drive "$WIRE/disk.img")")
+case "$WIRE" in
+  "$OUT"/*) : ;;
+  *) cage_probs+=("the scratch $WIRE is not under stage7/out/") ;;
+esac
+
+if [ "${#cage_probs[@]}" -ne 0 ]; then
+  fail "test 4: this harness's own cage, machine, display or disk string is not the cage"
+  for p in "${cage_probs[@]}"; do echo "    - $p"; done
+else
+  echo "    the harness's own -netdev strings carry restrict=on and the single guestfwd to 10.0.2.4:9999 via nc to the relay on 127.0.0.1:$RELAY_PORT; the NIC is the e1000e with the patient's MAC; the machine is q35 on IvyBridge; the display is the VGA device with the 1920x1080 EDID; the disk is a raw file under stage7/out/ on ide.1"
+  if [ ! -f "$ESP" ]; then
+    fail "test 4: no image was built"
+  elif python3 "$REPO/stage7/checkwire.py" --cage; then
+    pass "test 4: the cage held on the e1000e - the relay's rule, the mock down a message, the grow and the install through the relay, the launch with nothing on the wire"
+  else
+    fail "test 4: the cage is not proven (see above)"
+  fi
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then

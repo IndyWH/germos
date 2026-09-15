@@ -38,6 +38,7 @@ cage, the relay's log.
 This file is frozen acceptance machinery from ring 7b plan item 8.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -564,6 +565,438 @@ def run_question(smp):
     return 0 if ok else 1
 
 
+# ------------------------------------------------- test 4: the cage holds ---
+# (a) is test-7b.sh's own strings. Here: (b) the argv assertions on this
+# checker's command and the twin's as broker/wire.py builds it; (c) the
+# relay's bind rule on the host, no guest; (d) the mock-down run through
+# the relay ending in a message; (e) "! test app" (ring 6a's grow, ABI 2)
+# and "! install echo" (ring 6b's install) through the relay at -smp 4, the
+# record, the germline, the home partition, the twin's disk, the relay's
+# log against the frames; (f) the reboot with nothing on the wire.
+
+BAD_BINDS = ("0.0.0.0", "10.0.2.2", "192.0.2.1")     # A3: three fixed addresses, no hostname lookup
+
+
+def check_argv_7b(argv, port, want_mac, want_drives, virtio_allowed, netdevs_want, nic_netdev):
+    """A QEMU command inspected for the cage and THIS ring's machine: every
+    netdev slirp user mode, restrict=on, exactly one guestfwd from
+    10.0.2.4:9999 by nc to 127.0.0.1 on the given port, no hostfwd, no
+    other network option; exactly netdevs_want of them; one e1000e on
+    nic_netdev with the patient's MAC; a virtio-net only in the twin's
+    frozen shape (netdevs_want 2, on n0); -cpu IvyBridge; -vga none and the
+    one VGA device with the 1920x1080 EDID; one ide-hd on ide.1; exactly
+    want_drives drives, every one under stage7/out/, none if=virtio unless
+    allowed (the frozen twin's notes disk - then exactly one)."""
+    problems = []
+    netdevs = [argv[i + 1] for i, a in enumerate(argv) if a == "-netdev"]
+    devices = [argv[i + 1] for i, a in enumerate(argv) if a == "-device"]
+    drives = [argv[i + 1] for i, a in enumerate(argv) if a == "-drive"]
+    if len(netdevs) != netdevs_want:
+        problems.append("expected exactly %d -netdev, found %d: %r" % (netdevs_want, len(netdevs), netdevs))
+    for nd in netdevs:
+        if not nd.startswith("user,"):
+            problems.append("the netdev is not slirp's user mode: %r" % nd)
+        if "restrict=on" not in nd.split(","):
+            problems.append("the netdev lacks restrict=on: %r" % nd)
+        if nd.count("guestfwd=") != 1:
+            problems.append("expected exactly one guestfwd, found %d in %r" % (nd.count("guestfwd="), nd))
+        if not re.search(r"guestfwd=tcp:10\.0\.2\.4:9999-cmd:nc -N 127\.0\.0\.1 %d(,|$)" % port, nd):
+            problems.append("the guestfwd is not tcp:10.0.2.4:9999 delivered by 'nc -N 127.0.0.1 %d': %r" % (port, nd))
+        if "hostfwd" in nd:
+            problems.append("the netdev opens a hostfwd: %r" % nd)
+    ids = [re.search(r"(?:^|,)id=([^,]*)", nd) for nd in netdevs]
+    ids = [m.group(1) for m in ids if m]
+    if len(set(ids)) != len(netdevs):
+        problems.append("the netdevs do not carry distinct ids: %r" % ids)
+    for flag in ("-nic", "-net", "-netdev-add", "-hda", "-hdb", "-cdrom", "-blockdev", "-pflash"):
+        if flag in argv:
+            problems.append("the command carries %s" % flag)
+    nics = [d for d in devices if d.startswith("e1000e")]
+    vnics = [d for d in devices if d.startswith("virtio-net-pci")]
+    vgas = [d for d in devices if d.startswith("VGA")]
+    disks = [d for d in devices if d.startswith("ide-hd")]
+    if nics != ["e1000e,netdev=%s,mac=%s" % (nic_netdev, want_mac)]:
+        problems.append("expected one e1000e on %s with the patient's MAC %s, found %r" % (nic_netdev, want_mac, nics))
+    want_vnics = ["virtio-net-pci,netdev=n0"] if netdevs_want == 2 else []
+    if vnics != want_vnics:
+        problems.append("expected the virtio-net devices %r, found %r" % (want_vnics, vnics))
+    if vgas != ["VGA,edid=on,xres=1920,yres=1080"] or "-vga" not in argv or argv[argv.index("-vga") + 1] != "none":
+        problems.append("the display is not -vga none with the one VGA device stating 1920x1080: %r" % vgas)
+    if disks != ["ide-hd,drive=d0,bus=ide.1"]:
+        problems.append("expected exactly one ide-hd on ide.1 as drive d0, found %r" % disks)
+    if len(devices) != 3 + len(want_vnics):
+        problems.append("expected exactly %d devices, found %r" % (3 + len(want_vnics), devices))
+    if "-cpu" not in argv or argv[argv.index("-cpu") + 1] != "IvyBridge":
+        problems.append("the command does not carry -cpu IvyBridge")
+    if len(drives) != want_drives:
+        problems.append("expected exactly %d drives, found %d: %r" % (want_drives, len(drives), drives))
+    virtio = 0
+    for d in drives:
+        m = re.search(r"(?:^|,)file=([^,]*)", d)
+        path = m.group(1) if m else ""
+        if not path.startswith(OUT + os.sep):
+            problems.append("a drive is not a file under stage7/out/: %r" % d)
+        if "if=virtio" in d.split(","):
+            virtio += 1
+    if virtio != (1 if virtio_allowed else 0):
+        problems.append("expected %d virtio drive(s), found %d: %r" % (1 if virtio_allowed else 0, virtio, drives))
+    sata = [d for d in drives if d.startswith("if=none,id=d0,format=raw,file=")]
+    if len(sata) != 1:
+        problems.append("expected exactly one if=none,id=d0 drive for the ide-hd, found %r" % sata)
+    return problems
+
+
+def check_bind_rule():
+    """WIRE.md's bind rule, on the host: every address but the two is
+    refused before any socket exists; 127.0.0.1 listens."""
+    problems = []
+    for addr in BAD_BINDS:
+        r = subprocess.run([sys.executable, RELAY, "--bind", addr, "--port", str(RELAY_PORT)],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode != 2 or "refusing to bind" not in r.stderr:
+            problems.append("--bind %s: exit %d, stderr %r - want exit 2 and the refusal" % (addr, r.returncode, r.stderr.strip()[:120]))
+        if port_state(RELAY_PORT) == "open":
+            problems.append("--bind %s: something listens on 127.0.0.1:%d after the refusal" % (addr, RELAY_PORT))
+    relay, err = start_relay(os.path.join(WIRE_OUT, "relay.bind.jsonl"))
+    if err:
+        problems.append("--bind 127.0.0.1 --port %d: %s" % (RELAY_PORT, err))
+    else:
+        if port_state(RELAY_PORT) != "open":
+            problems.append("the relay said it was listening on %d but nothing answers there" % RELAY_PORT)
+        stop_mock(relay)
+    return problems
+
+
+def check_germline_entry_7b(root, want, blob, name, choices, model="mock"):
+    """checkglass.check_germline_entry for this ring's twin: the same entry
+    and provenance, and a rehearsal log holding WIRE.md's nineteen lines
+    with the link line and the virtio disk untouched."""
+    problems = []
+    key = germline_key(want)
+    d = os.path.join(root, key)
+    if not os.path.isdir(d):
+        return ["no germline entry %s for %r" % (key, want)]
+    try:
+        got = open(os.path.join(d, "component.bin"), "rb").read()
+    except OSError as exc:
+        return ["entry %s: %s" % (key, exc)]
+    if got != blob:
+        problems.append("entry %s: component.bin is %d bytes, not the %d-byte blob the mock serves" % (key, len(got), len(blob)))
+    try:
+        prov = json.load(open(os.path.join(d, "provenance.json")))
+    except (OSError, ValueError) as exc:
+        return problems + ["entry %s: provenance.json: %s" % (key, exc)]
+    want_fields = {"request": want, "normalised": want, "key": key, "abi": ABI, "machine": MACHINE,
+                   "model": model, "sha256": hashlib.sha256(blob).hexdigest(), "size": len(blob),
+                   "name": name, "choices": [[chr(k), l.decode()] for k, l in choices]}
+    for k, v in want_fields.items():
+        if prov.get(k) != v:
+            problems.append("entry %s: provenance %s is %r, want %r" % (key, k, prov.get(k), v))
+    reh = prov.get("rehearsal") or {}
+    if reh.get("passed") is not True or reh.get("phrases") != []:
+        problems.append("entry %s: provenance rehearsal is %r, want passed with no phrases" % (key, reh))
+    try:
+        rlog = open(os.path.join(d, "rehearsal.log")).read()
+    except OSError as exc:
+        return problems + ["entry %s: rehearsal.log: %s" % (key, exc)]
+    return problems + check_rehearsal_log_7b(key, rlog)
+
+
+def check_rehearsal_log_7b(key, rlog):
+    problems = []
+    if len(re.findall(r"^S7: ", rlog, re.M)) != len(PATTERNS_BLANK):
+        problems.append("entry %s: rehearsal.log does not hold the twin's %d S7: lines" % (key, len(PATTERNS_BLANK)))
+    if not re.search(r"^S7: nic %s$" % re.escape(MAC), rlog, re.M) or not re.search(r"^S7: link up$", rlog, re.M):
+        problems.append("entry %s: rehearsal.log lacks 'S7: nic %s' and 'S7: link up' - the twin did not use the e1000e" % (key, MAC))
+    if "ERR:" in rlog:
+        problems.append("entry %s: rehearsal.log carries an ERR: line" % key)
+    if "virtio notes.img: untouched, all zero" not in rlog:
+        problems.append("entry %s: rehearsal.log does not say the twin's virtio disk stayed all zero" % key)
+    return problems
+
+
+def check_install_germline_7b(root, plan, blob, amendment=None, tests=None, model="mock"):
+    """checkdisk.check_install_germline_7 for this ring's twin: the same
+    entry, provenance and verdict, and WIRE.md's rehearsal log."""
+    problems = []
+    data, parsed = checkdisk.plan_of(plan)
+    key = install_key(plan, data, amendment)
+    d = os.path.join(root, key)
+    if not os.path.isdir(d):
+        return ["no germline entry %s for plan %r (amendment %r)" % (key, plan, amendment)]
+    try:
+        got = open(os.path.join(d, "component.bin"), "rb").read()
+    except OSError as exc:
+        return ["entry %s: %s" % (key, exc)]
+    if got != blob:
+        problems.append("entry %s: component.bin is %d bytes, not the %d-byte build the mock serves" % (key, len(got), len(blob)))
+    try:
+        prov = json.load(open(os.path.join(d, "provenance.json")))
+    except (OSError, ValueError) as exc:
+        return problems + ["entry %s: provenance.json: %s" % (key, exc)]
+    body = "install " + plan + (", " + amendment if amendment else "")
+    want = {"request": body, "key": key, "abi": ABI, "machine": MACHINE, "model": model,
+            "sha256": hashlib.sha256(blob).hexdigest(), "size": len(blob), "name": plan,
+            "choices": [[chr(k), l.decode()] for k, l in parsed["choices"]],
+            "plan": plan, "plan_sha256": hashlib.sha256(data).hexdigest(), "amendment": amendment,
+            "installed": True}
+    if tests is not None:
+        want["plan_tests"] = tests
+    for k, v in want.items():
+        if prov.get(k) != v:
+            problems.append("entry %s: provenance %s is %r, want %r" % (key, k, prov.get(k), v))
+    reh = prov.get("rehearsal") or {}
+    if reh.get("passed") is not True or reh.get("phrases") != []:
+        problems.append("entry %s: provenance rehearsal is %r" % (key, reh))
+    try:
+        rlog = open(os.path.join(d, "rehearsal.log")).read()
+    except OSError as exc:
+        return problems + ["entry %s: rehearsal.log: %s" % (key, exc)]
+    if "ok: the post-delivery hook found nothing" not in rlog:
+        problems.append("entry %s: rehearsal.log does not say the plan's tests passed" % key)
+    return problems + check_rehearsal_log_7b(key, rlog)
+
+
+def run_cage():
+    smp = 4
+    # ------------------------------------------------ (b) the argv checks --
+    argv = qemu_argv(smp, DISK, os.path.join(WIRE_OUT, "x"))
+    problems = check_argv_7b(argv, RELAY_PORT, MAC, 2, False, 1, "n0")
+    if not report("the checker's own QEMU command is not the cage with this ring's machine", problems):
+        return 1
+    say("the checker's QEMU command carries one restricted cage to the relay on %d, the e1000e on n0 with %s, -cpu IvyBridge, "
+        "the 1920x1080 device, the ESP and the SATA disk under stage7/out/, no virtio" % (RELAY_PORT, MAC))
+
+    rargv = twin.qemu_argv(ESP, os.path.join(TWIN_WORKDIR, "notes.img"), os.path.join(TWIN_WORKDIR, "serial.txt"),
+                           REHEARSAL_PORT, extra_args=wire.twin_extra_args(TWIN_WORKDIR, REHEARSAL_PORT))
+    problems = check_argv_7b(rargv, REHEARSAL_PORT, MAC, 3, True, 2, "n1")
+    if wire.LINES != len(PATTERNS_BLANK) or wire.MAC != MAC or wire.RELAY_PORT != RELAY_PORT or metal.READY != READY:
+        problems.append("the broker module disagrees with this checker: lines %d, mac %r, relay port %d, ready %r"
+                        % (wire.LINES, wire.MAC, wire.RELAY_PORT, metal.READY))
+    if twin.VGA_ARGS != DISPLAY:
+        problems.append("the twin's display is %r" % (twin.VGA_ARGS,))
+    if twin.DEFAULT_PORT != REHEARSAL_PORT:
+        problems.append("the twin's default port is %d, not %d" % (twin.DEFAULT_PORT, REHEARSAL_PORT))
+    if not report("the twin's QEMU command, as broker/wire.py builds it, is not the cage with this ring's machine", problems):
+        return 1
+    say("the twin's command carries two restricted cages both to 127.0.0.1:%d, the frozen virtio-net on n0, the e1000e on n1 with %s, "
+        "-cpu IvyBridge, the same display, the frozen virtio notes disk and the 64 MB SATA disk under %s"
+        % (REHEARSAL_PORT, MAC, os.path.relpath(TWIN_WORKDIR, REPO)))
+
+    # ------------------------------------------------ (c) the bind rule ----
+    problems = check_bind_rule()
+    if not report("the relay's bind rule is not WIRE.md's", problems):
+        return 1
+    say("the relay refuses %s before any socket exists and listens on 127.0.0.1:%d" % (", ".join(BAD_BINDS), RELAY_PORT))
+
+    blobs = {}
+    for name in ("app", "echo"):
+        blob, problems = fixture_self_check(name)
+        if not report("the %s fixture is not what the repository says" % name, problems):
+            return 1
+        blobs[name] = blob
+    app, echo = blobs["app"], blobs["echo"]
+    say("the two fixtures reproduce their binaries")
+
+    # ------------------------------------------------ (d) the mock down ----
+    if port_state(BROKER_PORT) != "closed":
+        say("something is listening on 127.0.0.1:%d - the mock-down run needs the port refused" % BROKER_PORT)
+        return 1
+    rlog = os.path.join(WIRE_OUT, "relay.down.jsonl")
+    relay, err = start_relay(rlog)
+    if err:
+        say(err)
+        return 1
+    say("the mock down: the relay up on %d, nothing on %d; '? ping' then a note, at -smp 8" % (RELAY_PORT, BROKER_PORT))
+    try:
+        fresh_disk(DISK)
+        shot = os.path.join(WIRE_OUT, "screen.cage.down.ppm")
+        steps = [("type", "? ping\n"), ("sleep", 6.0), ("type", "still here\n"), ("sleep", SETTLE), ("shot", shot)]
+        capture, reads, err, _ = drive(8, DISK, steps, os.path.join(WIRE_OUT, "serial.cage.down.txt"))
+    finally:
+        entries_relay = read_relay_log(rlog, want=1)
+        stop_mock(relay)
+    if err:
+        say(err)
+        if capture:
+            dump_capture(capture)
+        return 1
+    ok = True
+    problems, geometry = check_boot_lines(capture, 8, True, "formatted", 0, DISK_SECTORS)
+    problems += check_echo(capture, b"? ping\r\nstill here\r\n")
+    ok &= report("the mock-down serial log is not what WIRE.md asks for", problems, capture)
+    data = read_image(DISK)
+    problems = ["the table: " + p for p in check_table(data)]
+    if not problems:
+        problems += check_notes_partition(data, ["still here"], "the mock down")
+    ok &= report("the notebook after the mock-down run is not what it should be", problems)
+    if len(entries_relay) != 1 or entries_relay[0].get("error") is None:
+        problems = ["the relay logged %r, want exactly one connection with a non-null error (the bytes are a race, never asserted)" % (entries_relay,)]
+    else:
+        problems = []
+    ok &= report("the relay's log of the refused broker is not what WIRE.md asks for", problems)
+    if None in geometry:
+        return 1
+    regs = regions(geometry[2], geometry[3])
+    conv = regs["conversation"]
+    problems = check_region_rows(shot, geometry, conv, ["> ? ping", NO_ANSWER, "> still here", PROMPT])
+    ok &= report("the screen does not show the failure honestly", problems)
+    if ok:
+        say("the mock down: %d lines; '%s' on the screen and the note journaled within 6 s; the relay logged one refused connection: %s"
+            % (len(PATTERNS_BLANK), NO_ANSWER, entries_relay[0]["error"]))
+
+    # ------------------------------------- (e) the grow and the install ----
+    record = os.path.join(WIRE_OUT, "broker.cage.jsonl")
+    rlog = os.path.join(WIRE_OUT, "relay.cage.jsonl")
+    relay, err = start_relay(rlog)
+    if err:
+        say(err)
+        return 1
+    mock, err = start_mock(record)
+    if err:
+        say(err)
+        stop_mock(relay)
+        return 1
+    say("the grow and the install: relay and mock up, germline wiped, a blank disk, -smp %d; '! test app', a key, Esc, '! install echo', Esc" % smp)
+    shots = {k: os.path.join(WIRE_OUT, "screen.cage.%s.ppm" % k) for k in ("a", "l")}
+    try:
+        fresh_disk(DISK)
+        steps = [
+            ("type", "! test app\n"), ("wait_record", record, 1, 150.0), ("sleep", 3.0),
+            ("type", "k"), ("sleep", 1.0), ("shot", shots["a"]),
+            ("type", "\x1b"), ("sleep", 2.0),
+            ("type", "! install echo\n"), ("wait_record", record, 2, 150.0), ("sleep", 3.0),
+            ("type", "\x1b"), ("sleep", 1.0),
+            ("obs", "e"),
+        ]
+        capture, reads, err, _ = drive(smp, DISK, steps, os.path.join(WIRE_OUT, "serial.cage.grow.txt"))
+    finally:
+        stop_mock(mock)
+        entries_relay = read_relay_log(rlog, want=2)
+        stop_mock(relay)
+    if err:
+        say(err)
+        if capture:
+            dump_capture(capture)
+        return 1
+    problems, geometry = check_boot_lines(capture, smp, True, "formatted", 0, DISK_SECTORS)
+    problems += check_echo(capture, b"! test app\r\n! install echo\r\n")
+    ok &= report("the grow-and-install serial log is not what WIRE.md asks for", problems, capture)
+
+    app_answer = app_frame(app, b"test app", TEST_CHOICES, 0)
+    echo_answer = app_frame(echo, b"echo", [], 0, installed=1)
+    entries, problems = read_record(record)
+    if entries is not None:
+        if len(entries) != 2:
+            problems.append("the broker saw %d connection(s), want 2" % len(entries))
+        if len(entries) >= 1:
+            problems += check_grow_entry(1, entries[0], "test app", "generated", 1, ["pass"], "app", app_answer, name="test app")
+        if len(entries) >= 2:
+            problems += check_install_entry(2, entries[1], "install echo", "generated", 2, ["pass"], "app", echo_answer,
+                                            plan="echo", tests=ECHO_TESTS_OK)
+    ok &= report("the record is not what GLASS.md and PLANS.md ask for", problems)
+    if not problems:
+        say("the record: 'test app' generated (call 1), rehearsed once, the app frame; 'install echo' generated (call 2), rehearsed once "
+            "against the plan's five tests, the frame with installed 1")
+
+    wants = [(len(grow_request(b"test app")), len(app_answer)), (len(grow_request(b"install echo")), len(echo_answer))]
+    problems = check_relay_log(entries_relay, wants, "the relay")
+    ok &= report("the relay's log does not agree with the two frames (WIRE.md, the relay)", problems)
+    if not problems:
+        say("the relay logged the two connections: up %d and %d bytes (GERMLINE.md's request frames), down %d and %d (the two app frames)"
+            % (wants[0][0], wants[1][0], wants[0][1], wants[1][1]))
+
+    problems = check_germline_entry_7b(GERMLINE, "test app", app, "test app", TEST_CHOICES)
+    problems += check_install_germline_7b(GERMLINE, "echo", echo, tests=ECHO_TESTS_OK)
+    names = germline_entries(GERMLINE)
+    if len(names) != 2:
+        problems.append("the germline holds %d entries %r, want exactly 2" % (len(names), names))
+    ok &= report("the germline is not what WIRE.md asks for", problems)
+    if not problems:
+        say("the germline holds exactly two entries, each with a %d-line S7: rehearsal log carrying 'S7: link up' and the virtio disk untouched"
+            % len(PATTERNS_BLANK))
+
+    data = read_image(DISK)
+    problems = ["the disk: " + p for p in check_table(data)]
+    more, _ = check_partitions(DISK, [], {"echo": {"current": (echo, DATA_FIRST), "previous": None, "choices": []}}, "the install")
+    problems += more
+    tdisk = metal.twin_disk(TWIN_WORKDIR)
+    try:
+        tdata = read_image(tdisk)
+        ttable = metal.parse_gpt(tdata)
+        tnotes = checkdisk.parse_notebook(metal.partition_bytes(tdata, ttable["notes"]))
+        if tnotes != ["after"]:
+            problems.append("the twin's SATA disk holds notes %r, want ['after']" % (tnotes,))
+        problems += ["the twin's table: " + p for p in check_table(tdata)]
+    except (OSError, ValueError) as exc:
+        problems.append("the twin's SATA disk is not a GermOS disk with a notebook: %s" % exc)
+    try:
+        if any(read_image(os.path.join(TWIN_WORKDIR, "notes.img"))):
+            problems.append("the twin's virtio notes.img was written - virtio-blk code ran in the twin")
+    except OSError as exc:
+        problems.append("the twin's virtio notes.img: %s" % exc)
+    ok &= report("the disks after the install are not what DISK.md, HOME.md and the twin ask for", problems)
+    if not problems:
+        say("the home partition holds echo at partition sector %d hash-checked; the twin's disk formatted with 'after' on SATA and its virtio image all zero"
+            % DATA_FIRST)
+    shutil.copyfile(DISK, os.path.join(WIRE_OUT, "disk.after-install.img"))
+
+    if None in geometry:
+        return 1
+    problems = check_app_panel(shots["a"], geometry, "k")
+    problems += check_mode_field(shots["a"], geometry, "running test app")
+    if "e" not in reads:
+        problems.append("the obs page could not be read after the install")
+    else:
+        problems += check_counts(reads["e"], {"mode": 0, "wire_conns": len(entries_relay), "grows_generated": 2,
+                                              "grows_served": 2, "errors": 0}, "after the install")
+    ok &= report("screen A or the obs page after the install is not the truth", problems)
+    if not problems:
+        say("screen A: the test app's strips with 'key: k' and 'running test app'; the obs page: wire_conns %d = the relay's connections, "
+            "two grows generated and served" % len(entries_relay))
+
+    # ------------------------------------- (f) nothing on the wire ---------
+    for port in (BROKER_PORT, RELAY_PORT):
+        if port_state(port) == "open":
+            say("something is listening on 127.0.0.1:%d - the no-wire boot cannot run" % port)
+            return 1
+    say("the reboot with nothing on the wire: %d and %d closed; the same disk; '! echo' from the home partition" % (BROKER_PORT, RELAY_PORT))
+    steps = [
+        ("obs", "r"),
+        ("type", "! echo\n"), ("sleep", 2.0),
+        ("type", "b"), ("sleep", 1.0),
+        ("shot", shots["l"]), ("obs", "l"),
+        ("type", "\x1b"), ("sleep", 1.0),
+    ]
+    capture, reads, err, _ = drive(smp, DISK, steps, os.path.join(WIRE_OUT, "serial.cage.launch.txt"))
+    if err:
+        say(err)
+        if capture:
+            dump_capture(capture)
+        return 1
+    problems, _ = check_boot_lines(capture, smp, False, "0 notes", 1, DISK_SECTORS)
+    problems += check_echo(capture, b"! echo\r\n")
+    ok &= report("the no-wire serial log is not what WIRE.md asks for", problems, capture)
+    problems = check_one_cell_panel(shots["l"], geometry, "b")
+    problems += check_mode_field(shots["l"], geometry, "running echo")
+    problems += check_choices(shots["l"], geometry, CHOICES_ECHO_RUNNING)
+    if "r" not in reads or "l" not in reads:
+        problems.append("the obs page could not be read around the launch")
+    else:
+        r, l = reads["r"], reads["l"]
+        problems += check_counts(l, {"mode": 3, "name": "echo", "focus": 1, "wire_conns": 0, "requests": 0,
+                                     "errors": 0, "bytes_in": r["bytes_in"], "bytes_out": r["bytes_out"]}, "the launch")
+    if read_image(DISK) != read_image(os.path.join(WIRE_OUT, "disk.after-install.img")):
+        problems.append("the disk changed during the no-wire boot - a launch must not write")
+    ok &= report("the launch with nothing on the wire is not what it should be", problems)
+    if not problems:
+        say("the launch: %d lines with 'home 1 apps'; echo ran from the home partition showing 'b' with wire_conns 0 and the byte "
+            "counters unchanged; the disk untouched" % len(PATTERNS_AGAIN))
+
+    say("the cage: %s" % ("held on the e1000e through the relay" if ok else "not proven"))
+    return 0 if ok else 1
+
+
 # --------------------------------------------------------------- main ------
 
 def main(argv):
@@ -578,6 +1011,8 @@ def main(argv):
             return run_question(int(argv[1]))
         except ValueError:
             pass
+    if argv == ["--cage"]:
+        return run_cage()
     say("usage: checkwire.py --down SMP | --question SMP | --cage")
     return 1
 
