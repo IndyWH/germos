@@ -2240,10 +2240,26 @@ the arrow and the click); test 4 red on the hook alone. **`./stage7/test.sh`
 and `./stage7/test-7b.sh`: all four PASS each** (`stage7/out/gate7c.item8.log`,
 `gate7a.item8.log`, `gate7b.item8.log`).
 
+**Item 9** (`stage7/stage7.asm`): **`PxCMD.SUD` under `CAP.SSS`** (decision
+4, A2) in `disk_select`'s probe loop — with `SSS` set, `SUD` on each
+implemented port before its `PxSSTS` is looked at; a second for `DET` to
+leave 0 (stays 0: an empty port, passed); ten seconds
+(`AHCI_SPINUP_TRIES`) for a device that appeared to reach `DET 3, IPM 1`,
+or **`ERR: ahci port N did not come up after spin-up`** and a halt. With
+`SSS` clear the path is ring 7a's, byte for byte. The binary is 36,864
+bytes still. **Unexercisable in the twin** (`SSS` clear, the firmware
+already sets `SUD`); **probed with the `SSS` test forced true on private
+copies:** the five empty ports passed after a second each, the disk found
+on port 1, ready at 6.5 s; the spin-up's target made unreachable — the
+named halt naming port 1 after ten seconds, one `S7: alive`. The HP's
+first `S7: disk` line is the real test. **The gate: tests 1–3 PASS;
+`./stage7/test.sh` and `./stage7/test-7b.sh` all four PASS each**
+(`stage7/out/gate7c.item9.log`, `gate7a.item9.log`, `gate7b.item9.log`).
+
 ## Next action
 
-**Ring 7c is open at item 8 — tests 1–3 green.** Next: item 9, `PxCMD.SUD`
-under `CAP.SSS`, then items 10–14 as `stage7/plan-7c.md` says. The HP's day: three
+**Ring 7c is open at item 9.** Next: item 10, the relay's grace close,
+then items 11–14 as `stage7/plan-7c.md` says. The HP's day: three
 terminals at the repo root, `python3 broker/wire.py`, `python3
 broker/relay.py`, and the serial reader on the adapter's port, all written
 out in `stage7/METAL.md` at item 12.

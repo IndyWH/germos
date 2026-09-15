@@ -186,6 +186,7 @@ org 0                           ; file offsets == RVAs
 %define PX_SERR             0x30
 %define PX_CI               0x38
 %define PXCMD_ST            (1 << 0)
+%define PXCMD_SUD           (1 << 1)    ; spin-up device (ring 7c)
 %define PXCMD_FRE           (1 << 4)
 %define PXCMD_FR            (1 << 14)
 %define PXCMD_CR            (1 << 15)
@@ -201,6 +202,8 @@ org 0                           ; file offsets == RVAs
 %define CT_PRDT             0x80        ; the one PRD, after the 64-byte FIS and the 16-byte ACMD
 %define AHCI_STOP_TRIES     2500        ; x 200 us = half a second
 %define AHCI_PROBE_TRIES    5000        ; x 200 us = one second for a port's Phy to come up
+%define AHCI_SPINUP_TRIES   50000       ; x 200 us = ten seconds for a disk spinning up from rest (ring 7c, AHCI 1.3 10.1.2)
+%define CAP_SSS             (1 << 27)   ; staggered spin-up supported: a port's device is not detected until PxCMD.SUD
 %define MAX_PORTS           32
 %define PART_BASE           0           ; u32  the partition's first LBA
 %define PART_SECTORS        4           ; u32  its length in sectors
@@ -3275,6 +3278,47 @@ disk_select:
         mov     eax, r12d
         call    ahci_port_base
         mov     r8d, AHCI_PROBE_TRIES
+        ; Ring 7c (plan decision 4, A2): under staggered spin-up the device
+        ; is not detected until the port has been told to spin it up, so
+        ; DET 0 in the first microseconds means nothing. With CAP.SSS set,
+        ; SUD is set here, DET is given a second to leave 0 - if it stays 0
+        ; the port is empty and is passed - and a device that then appears
+        ; is given ten seconds to reach DET 3, or the boot halts naming the
+        ; port. With SSS clear (the twin) the path from .probe is the one
+        ; ring 7a wrote, byte for byte. This path runs only on the metal.
+        mov     rax, [ahci_abar]
+        test    dword [rax + HBA_CAP], CAP_SSS
+        jz      .probe
+        or      dword [rdi + PX_CMD], PXCMD_SUD
+.spinup_wait:
+        mov     eax, [rdi + PX_SSTS]
+        and     eax, 0xF                ; DET
+        jnz     .spinning               ; a device is there: now the long wait
+        mov     ax, PIT_200US
+        call    pit_wait
+        dec     r8d
+        jnz     .spinup_wait
+        jmp     .next                   ; DET stayed 0 for a second: nothing plugged in
+.spinning:
+        mov     r8d, AHCI_SPINUP_TRIES
+.spin_probe:
+        mov     eax, [rdi + PX_SSTS]
+        and     eax, 0xF0F
+        cmp     eax, 0x103              ; DET 3, IPM 1
+        je      .present
+        mov     ax, PIT_200US
+        call    pit_wait
+        dec     r8d
+        jnz     .spin_probe
+        lea     rsi, [msg_err]          ; ERR: ahci port N did not come up after spin-up
+        call    serial_puts
+        lea     rsi, [err_ahci_spinup]
+        call    serial_puts
+        mov     eax, r12d
+        call    serial_putdec
+        lea     rsi, [err_ahci_spinup_tail]
+        call    serial_puts
+        jmp     halt_forever
 .probe:
         mov     eax, [rdi + PX_SSTS]
         mov     ecx, eax
@@ -9114,6 +9158,8 @@ err_too_small:  db      'mode too small for the glass', 0
 err_no_ahci:    db      'no AHCI controller on PCI bus 0', 0
 err_no_sata:    db      'no SATA disk on any AHCI port', 0
 err_ahci_stop:  db      'AHCI port would not stop', 0
+err_ahci_spinup: db     'ahci port ', 0                            ; ring 7c: under CAP.SSS, a device that
+err_ahci_spinup_tail: db ' did not come up after spin-up', 13, 10, 0   ; appeared after SUD but never reached DET 3
 err_sector_size: db     'disk sector is not 512 bytes', 0
 err_no_germos:  db      'no GermOS disk and no blank disk - ', 0
 err_gpt_readback: db    'the table written does not read back as GermOS', 0
