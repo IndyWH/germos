@@ -260,13 +260,35 @@ org 0                           ; file offsets == RVAs
 %define E1K_RAL0            0x5400
 %define E1K_RAH0            0x5404
 %define E1K_MRQC            0x5818
-; Read only by e1k_tx_state, the diagnostic on the transmit timeout path
-; (ring 7c item 17): the registers that say what the PCH's LAN did with a
-; descriptor the twin's 82574L always completes.
+; Read by e1k_tx_state, the diagnostic on the transmit timeout path (ring
+; 7c item 17): the registers that say what the PCH's LAN did with a
+; descriptor the twin's 82574L always completes. Written by the hardware
+; bits step of e1k_attach (item 18), from the HP's fourth watched boot.
 %define E1K_CTRL_EXT        0x0018
 %define E1K_TXDCTL0         0x3828
+%define E1K_TXDCTL1         0x3928
 %define E1K_TARC0           0x3840
+%define E1K_TARC1           0x3940
 %define E1K_FWSM            0x5B54      ; firmware semaphore: does the ME hold the interface
+; The hardware bits Linux's e1000_initialize_hw_bits_ich8lan sets on every
+; init of the PCH's LAN before it transmits (ich8lan.c), split as Linux
+; splits them between the 82574L and the 82579LM:
+;   CTRL_EXT bit 22 - a defined bit on the 82574 ("Tx LS Flow"), set on both.
+;   TXDCTL bit 22 - reserved in the 82574 datasheet, yet Linux sets it on
+;     the 82574 too (e1000_initialize_hw_bits_82571), so set on both queues
+;     of both parts.
+;   TARC0 bit 26 - reserved in the 82574 datasheet, yet Linux sets it on the
+;     82574 too; set on both.
+;   TARC0 bits 23, 24, 27 and TARC1 bits 24, 26, 30 - reserved on the 82574
+;     and never written there by Linux (it clears TARC0 27); the PCH parts
+;     only (e1k_idx non-zero: 0x1502, 0x1503).
+;   TARC1 bit 28 - Linux sets it when TCTL.MULR (bit 28) is clear, and our
+;     TCTL never sets MULR; the PCH parts only.
+%define CTRL_EXT_TXLS_FLOW  (1 << 22)
+%define TXDCTL_BIT22        (1 << 22)
+%define TARC0_COMMON        (1 << 26)
+%define TARC0_PCH           ((1 << 23) | (1 << 24) | (1 << 27))
+%define TARC1_PCH           ((1 << 24) | (1 << 26) | (1 << 28) | (1 << 30))
 %define CTRL_SLU            (1 << 6)
 %define CTRL_ILOS           (1 << 7)
 %define CTRL_FRCSPD         (1 << 11)
@@ -2681,6 +2703,7 @@ pci_scan:
         cmp     dword [e1k_found], 0
         jne     .next_fn                ; the first e1000e wins
         mov     [e1k_bdf], ebx
+        mov     [e1k_idx], ecx          ; which id: 0 the 82574L, 1 and 2 the PCH parts (item 18)
         mov     dword [e1k_found], 1
         jmp     .next_fn
 .ahci:
@@ -5231,6 +5254,41 @@ e1k_attach:
 .reset_done:
         mov     dword [rdi + E1K_IMC], 0xFFFFFFFF
         mov     eax, [rdi + E1K_ICR]
+
+        ; The hardware bits (ring 7c item 18). The HP's fourth watched boot,
+        ; 17 September 2026, ended "? ping" in the item 17 line: tdh 0 after
+        ; tdt 1, sta 0x00, the link up, TXOFF clear, txdctl 0x00000000,
+        ; tarc0 0x00000403 - the 82579LM never fetched the descriptor. Linux
+        ; sets these bits on every init of the PCH's LAN before it transmits
+        ; (e1000_initialize_hw_bits_ich8lan, ich8lan.c), read-modify-write,
+        ; before the link is set up; the twin's 82574L fetches without them.
+        ; The split follows Linux and the 82574 datasheet (the defines say
+        ; which): the bits Linux writes on the 82574 too go to every e1000e,
+        ; the bits reserved on the 82574 go to the PCH parts only.
+        mov     eax, [rdi + E1K_CTRL_EXT]
+        or      eax, CTRL_EXT_TXLS_FLOW
+        mov     [rdi + E1K_CTRL_EXT], eax
+        mov     eax, [rdi + E1K_TXDCTL0]
+        or      eax, TXDCTL_BIT22
+        mov     [rdi + E1K_TXDCTL0], eax
+        mov     eax, [rdi + E1K_TXDCTL1]
+        or      eax, TXDCTL_BIT22
+        mov     [rdi + E1K_TXDCTL1], eax
+        ; One write per register, as Linux does it: a device that reads a
+        ; reserved bit as 0 would lose it on a second read-modify-write.
+        mov     edx, TARC0_COMMON
+        cmp     dword [e1k_idx], 0
+        je      .tarc0
+        or      edx, TARC0_PCH
+.tarc0: mov     eax, [rdi + E1K_TARC0]
+        or      eax, edx
+        mov     [rdi + E1K_TARC0], eax
+        cmp     dword [e1k_idx], 0
+        je      .hw_bits_done           ; the 82574L: nothing reserved written
+        mov     eax, [rdi + E1K_TARC1]
+        or      eax, TARC1_PCH
+        mov     [rdi + E1K_TARC1], eax
+.hw_bits_done:
 
         ; The MAC, from the receive address the firmware loaded from the
         ; EEPROM: RAL0 the first four bytes, RAH0's low half the last two,
@@ -9705,6 +9763,7 @@ nic_tx_buf:     resb    NIC_RX_BUF
 nic_kind:       resd    1
 e1k_bdf:        resd    1
 e1k_found:      resd    1
+e1k_idx:        resd    1               ; index into e1k_ids of the NIC chosen (item 18)
 e1k_rx_head:    resd    1
 e1k_tx_idx:     resd    1
         alignb  16

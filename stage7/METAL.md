@@ -226,7 +226,7 @@ before that line is not a display finding; read the chart:
 | `i8042: mouse none` | no mouse answered its reset — the boot goes on, keyboard only | the mouse's plug (the socket beside the keyboard's), then the bound |
 | `i8042: self-test ok`, `i8042: mouse reset ok`, `S7: keyboard ready` | the machine is up | — |
 | `S7: keyboard ready` and no prompt on the monitor | the framebuffer: the uncached mapping, the stride, the mode | the serial log is complete and the screen is the bug (CLAUDE.md's first gotcha, in its other half) |
-| `? ping` echoed, then `e1k: tdh N tdt N status 0x… …` and `ERR: nic transmit timed out` | the first frame's descriptor was not completed by the 82579LM within five seconds (the second watched boot, 17 September 2026; item 17 added the `e1k:` line) — the line names the device's state | read it by item 17's rule: **`tdh 0`** — the descriptor was never fetched: the PCH LAN's descriptor-fetch setup, the `TXDCTL0` and `TARC0` bits Linux sets in `e1000_initialize_hw_bits_ich8lan` before it transmits; **`tdh 1`** — the frame went out and only the `DD` write-back is missing; **`status` bit 4** (`TXOFF`) set — transmit is paused by flow control; **`fwsm`** says whether the ME holds the interface; `sta` is the descriptor's own status byte and `ring` its physical address. The twin's line reads `tdh 1 tdt 1 … sta 0x01`. The numbers choose the fix — one item, with `ich8lan.c` open |
+| `? ping` echoed, then `e1k: tdh N tdt N status 0x… …` and `ERR: nic transmit timed out` | the first frame's descriptor was not completed by the 82579LM within five seconds (the second watched boot, 17 September 2026; item 17 added the `e1k:` line) — the line names the device's state | read it by item 17's rule: **`tdh 0`** — the descriptor was never fetched: the PCH LAN's descriptor-fetch setup, the `TXDCTL0` and `TARC0` bits Linux sets in `e1000_initialize_hw_bits_ich8lan` before it transmits; **`tdh 1`** — the frame went out and only the `DD` write-back is missing; **`status` bit 4** (`TXOFF`) set — transmit is paused by flow control; **`fwsm`** says whether the ME holds the interface; `sta` is the descriptor's own status byte and `ring` its physical address. The twin's line reads `tdh 1 tdt 1 … sta 0x01`. **The fourth watched boot (17 September 2026, 19:50) read** `e1k: tdh 0 tdt 1 status 0x00080483 ctrl 0x00100240 tctl 0x0003f0fa txdctl 0x00000000 tarc0 0x00000403 ctrlext 0x01481000 fwsm 0x6001c04c sta 0x00 ring 0x00000000004ce000` — never fetched, the link up at 1000 full, `TXOFF` clear, TXDCTL zero, TARC0 bare, FWSM with `FW_VALID` (the ME shares the LAN). **Item 18 sets the ich8lan hardware bits** (CTRL_EXT 22, TXDCTL0/1 22, TARC0 23/24/26/27, TARC1 24/26/28/30) in `e1k_attach` before TCTL. If the line prints again with `txdctl 0x00400000` and a TARC0 above `0x403` and `tdh` still 0, the bits are in and did not suffice: **the ME is next** (the `EXTCNF_CTRL.SWFLAG` semaphore), then the TXDCTL write-back policy. The numbers choose the fix — one item, with `ich8lan.c` open |
 
 Every `S7:` line after `keyboard ready` is the raw echo of what is typed;
 `S7: mouse ready` goes out once, on the first packet, when the mouse first
@@ -295,7 +295,11 @@ Said plainly, so the first surprise on the day is not a surprise:
   prove, found on the same day:** the first frame's `DD` never set, `ERR:
   nic transmit timed out` after five seconds. From item 17 the `e1k:` line
   before that error names the device's state (step 7's last row); the
-  twin's 82574L completes every descriptor, so only the HP can say.
+  twin's 82574L completes every descriptor, so only the HP can say. The
+  fourth boot said `tdh 0` — never fetched — and item 18 sets the
+  hardware bits Linux's `ich8lan.c` sets before this family transmits;
+  the twin's 82574L fetches without them, so again only the fifth boot
+  can say.
 - **The 82579LM's PHY.** The twin's e1000e is an 82574L; the HP's NIC is
   the same register family behind the PCH with its own PHY. `SLU` is set,
   the forced speed and duplex cleared, the PHY left to autonegotiate;
