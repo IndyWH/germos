@@ -270,6 +270,17 @@ org 0                           ; file offsets == RVAs
 %define E1K_TARC0           0x3840
 %define E1K_TARC1           0x3940
 %define E1K_FWSM            0x5B54      ; firmware semaphore: does the ME hold the interface
+; The ME's window (ring 7c item 19), from the HP's fifth watched boot: with
+; FWSM.FW_VALID (bit 15) set the 82579's Management Engine shares the MAC's
+; registers, and a host write issued while FWSM.PCIM2PCI (bit 24, "ME
+; PCIm-to-PCI active") is set can be lost. Linux's __ew32_prepare spins on
+; that bit before every register write under FLAG2_PCIM2PCI_ARBITER_WA
+; (ich8lan.c: "Enable workaround for 82579 w/ ME enabled"), at most
+; E1000_ICH_FWSM_PCIM2PCI_COUNT (2000) waits of 50 us; e1k_write does the
+; same on every e1000e, and e1k_verify reads a ring register back.
+%define FWSM_PCIM2PCI       (1 << 24)   ; ich8lan.h E1000_ICH_FWSM_PCIM2PCI
+%define E1K_PCIM2PCI_TRIES  2000        ; x 50 us = 100 ms, Linux's bound
+%define E1K_HOLD_TRIES      8           ; rewrites of a ring register before the named error
 ; The hardware bits Linux's e1000_initialize_hw_bits_ich8lan sets on every
 ; init of the PCH's LAN before it transmits (ich8lan.c), split as Linux
 ; splits them between the 82574L and the 82579LM:
@@ -545,6 +556,7 @@ org 0                           ; file offsets == RVAs
 ; time we need these, so the delays INIT-SIPI-SIPI requires are our own.
 %define PIT_10MS        11932
 %define PIT_200US       239
+%define PIT_50US        60              ; 50.3 us: Linux's udelay(50) between FWSM polls (item 19)
 %define PIT_25MS        29830
 
 %define EFI_INVALID_PARAMETER   0x8000000000000002
@@ -5228,11 +5240,16 @@ e1k_attach:
         ; The reset: interrupts masked, CTRL.RST set, the reset write left
         ; alone for 25 ms, then CTRL awaited clear, interrupts masked again,
         ; ICR read once. Assume nothing about the state a firmware driver
-        ; left.
-        mov     dword [rdi + E1K_IMC], 0xFFFFFFFF
+        ; left. Every register write from here goes through e1k_write (item
+        ; 19): the ME's window is checked BEFORE the write, so the no-access
+        ; rule after the reset write is kept.
+        mov     ecx, E1K_IMC
+        mov     eax, 0xFFFFFFFF
+        call    e1k_write
         mov     eax, [rdi + E1K_CTRL]
         or      eax, CTRL_RST
-        mov     [rdi + E1K_CTRL], eax
+        mov     ecx, E1K_CTRL
+        call    e1k_write
         ; No MMIO access for 25 ms: on the PCH's integrated LAN (82579LM) a
         ; read straight after the reset write hangs the processor - no fault,
         ; no timeout (ich8lan.c: "cannot issue a flush here because it hangs
@@ -5252,7 +5269,9 @@ e1k_attach:
         lea     rsi, [err_e1k_reset]
         call    serial_err
 .reset_done:
-        mov     dword [rdi + E1K_IMC], 0xFFFFFFFF
+        mov     ecx, E1K_IMC
+        mov     eax, 0xFFFFFFFF
+        call    e1k_write
         mov     eax, [rdi + E1K_ICR]
 
         ; The hardware bits (ring 7c item 18). The HP's fourth watched boot,
@@ -5267,13 +5286,16 @@ e1k_attach:
         ; the bits reserved on the 82574 go to the PCH parts only.
         mov     eax, [rdi + E1K_CTRL_EXT]
         or      eax, CTRL_EXT_TXLS_FLOW
-        mov     [rdi + E1K_CTRL_EXT], eax
+        mov     ecx, E1K_CTRL_EXT
+        call    e1k_write
         mov     eax, [rdi + E1K_TXDCTL0]
         or      eax, TXDCTL_BIT22
-        mov     [rdi + E1K_TXDCTL0], eax
+        mov     ecx, E1K_TXDCTL0
+        call    e1k_write
         mov     eax, [rdi + E1K_TXDCTL1]
         or      eax, TXDCTL_BIT22
-        mov     [rdi + E1K_TXDCTL1], eax
+        mov     ecx, E1K_TXDCTL1
+        call    e1k_write
         ; One write per register, as Linux does it: a device that reads a
         ; reserved bit as 0 would lose it on a second read-modify-write.
         mov     edx, TARC0_COMMON
@@ -5282,12 +5304,14 @@ e1k_attach:
         or      edx, TARC0_PCH
 .tarc0: mov     eax, [rdi + E1K_TARC0]
         or      eax, edx
-        mov     [rdi + E1K_TARC0], eax
+        mov     ecx, E1K_TARC0
+        call    e1k_write               ; preserves EDX
         cmp     dword [e1k_idx], 0
         je      .hw_bits_done           ; the 82574L: nothing reserved written
         mov     eax, [rdi + E1K_TARC1]
         or      eax, TARC1_PCH
-        mov     [rdi + E1K_TARC1], eax
+        mov     ecx, E1K_TARC1
+        call    e1k_write
 .hw_bits_done:
 
         ; The MAC, from the receive address the firmware loaded from the
@@ -5311,7 +5335,8 @@ e1k_attach:
         mov     eax, [rdi + E1K_CTRL]
         and     eax, CTRL_LINK_KEEP
         or      eax, CTRL_SLU
-        mov     [rdi + E1K_CTRL], eax
+        mov     ecx, E1K_CTRL
+        call    e1k_write
         mov     r8d, E1K_LINK_TRIES
 .link_wait:
         mov     eax, [rdi + E1K_STATUS]
@@ -5341,10 +5366,11 @@ e1k_attach:
         mov     rdx, rax
         shr     rdx, 32
         jnz     .ring_high
-        xor     ecx, ecx
-.mta:   mov     dword [rdi + E1K_MTA + rcx*4], 0
-        inc     ecx
-        cmp     ecx, 128
+        mov     ecx, E1K_MTA
+.mta:   xor     eax, eax
+        call    e1k_write
+        add     ecx, 4
+        cmp     ecx, E1K_MTA + 128 * 4
         jb      .mta
         lea     rsi, [e1k_rx_ring]
         lea     rdx, [nic_rx_bufs + VNET_HDR_LEN]
@@ -5357,19 +5383,39 @@ e1k_attach:
         inc     ecx
         cmp     ecx, E1K_RX_DESCS
         jb      .rx_desc
+        ; The ring's base and length are read back after each write (item
+        ; 19, e1k_verify): a register the ME's window swallowed is rewritten,
+        ; and one that will not hold its value is a named error.
         lea     rax, [e1k_rx_ring]
-        mov     [rdi + E1K_RDBAL], eax
+        mov     ecx, E1K_RDBAL
+        call    e1k_write
+        call    e1k_verify
         shr     rax, 32
-        mov     [rdi + E1K_RDBAH], eax
-        mov     dword [rdi + E1K_RDLEN], E1K_RX_DESCS * E1K_DESC
-        mov     dword [rdi + E1K_RDH], 0
-        mov     dword [rdi + E1K_RDT], 0
+        mov     ecx, E1K_RDBAH
+        call    e1k_write
+        call    e1k_verify
+        mov     eax, E1K_RX_DESCS * E1K_DESC
+        mov     ecx, E1K_RDLEN
+        call    e1k_write
+        call    e1k_verify
+        xor     eax, eax
+        mov     ecx, E1K_RDH
+        call    e1k_write
+        mov     ecx, E1K_RDT
+        call    e1k_write
         mov     eax, [rdi + E1K_RFCTL]
         and     eax, ~RFCTL_EXSTEN
-        mov     [rdi + E1K_RFCTL], eax
-        mov     dword [rdi + E1K_MRQC], 0
-        mov     dword [rdi + E1K_RCTL], RCTL_EN | RCTL_BAM | RCTL_SECRC
-        mov     dword [rdi + E1K_RDT], E1K_RX_DESCS - 1
+        mov     ecx, E1K_RFCTL
+        call    e1k_write
+        xor     eax, eax
+        mov     ecx, E1K_MRQC
+        call    e1k_write
+        mov     eax, RCTL_EN | RCTL_BAM | RCTL_SECRC
+        mov     ecx, E1K_RCTL
+        call    e1k_write
+        mov     eax, E1K_RX_DESCS - 1
+        mov     ecx, E1K_RDT
+        call    e1k_write
         mov     dword [e1k_rx_head], 0
 
         ; Transmit: eight descriptors zeroed, the ring's base, length, head
@@ -5382,14 +5428,28 @@ e1k_attach:
         rep     stosq
         pop     rdi
         lea     rax, [e1k_tx_ring]
-        mov     [rdi + E1K_TDBAL], eax
+        mov     ecx, E1K_TDBAL
+        call    e1k_write
+        call    e1k_verify
         shr     rax, 32
-        mov     [rdi + E1K_TDBAH], eax
-        mov     dword [rdi + E1K_TDLEN], E1K_TX_DESCS * E1K_DESC
-        mov     dword [rdi + E1K_TDH], 0
-        mov     dword [rdi + E1K_TDT], 0
-        mov     dword [rdi + E1K_TIPG], E1K_TIPG_COPPER
-        mov     dword [rdi + E1K_TCTL], TCTL_EN | TCTL_PSP | TCTL_CT | TCTL_COLD
+        mov     ecx, E1K_TDBAH
+        call    e1k_write
+        call    e1k_verify
+        mov     eax, E1K_TX_DESCS * E1K_DESC
+        mov     ecx, E1K_TDLEN
+        call    e1k_write
+        call    e1k_verify
+        xor     eax, eax
+        mov     ecx, E1K_TDH
+        call    e1k_write
+        mov     ecx, E1K_TDT
+        call    e1k_write
+        mov     eax, E1K_TIPG_COPPER
+        mov     ecx, E1K_TIPG
+        call    e1k_write
+        mov     eax, TCTL_EN | TCTL_PSP | TCTL_CT | TCTL_COLD
+        mov     ecx, E1K_TCTL
+        call    e1k_write
         mov     dword [e1k_tx_idx], 0
         ret
 .bar_io:
@@ -5428,7 +5488,8 @@ e1k_send:
         inc     eax
         and     eax, E1K_TX_DESCS - 1
         mov     [e1k_tx_idx], eax
-        mov     [rdi + E1K_TDT], eax    ; the tail past the descriptor: sent
+        mov     ecx, E1K_TDT
+        call    e1k_write               ; the tail past the descriptor: sent
         mov     r8d, VQ_POLL_TRIES
 .poll:
         test    byte [rsi + TXD_STA], TXD_DD
@@ -5503,7 +5564,19 @@ e1k_tx_state:
         call    serial_puts
         mov     al, [rbx + TXD_STA]
         call    serial_puthex8
-        lea     rsi, [msg_e1k_ring]
+        lea     rsi, [msg_e1k_tdlen]
+        call    serial_puts
+        mov     eax, [rdi + E1K_TDLEN]
+        call    serial_putdec
+        lea     rsi, [msg_e1k_tdbal]
+        call    serial_puts
+        mov     eax, [rdi + E1K_TDBAL]
+        call    serial_puthex32
+        lea     rsi, [msg_e1k_tdbah]
+        call    serial_puts
+        mov     eax, [rdi + E1K_TDBAH]
+        call    serial_puthex32
+        lea     rsi, [msg_e1k_expect]
         call    serial_puts
         lea     rax, [e1k_tx_ring]
         call    serial_puthex64
@@ -5512,6 +5585,71 @@ e1k_tx_state:
         pop     rbx
         pop     rsi
         ret
+
+; e1k_write - RDI = BAR, ECX = register offset, EAX = the value. Waits for
+; FWSM.PCIM2PCI (bit 24) to clear - the ME's own access to the MAC's
+; registers, during which a host write can be lost (Linux's __ew32_prepare
+; under FLAG2_PCIM2PCI_ARBITER_WA: the 82579 with FW_VALID set, the HP
+; exactly; ring 7c item 19) - bounded as Linux bounds it (2000 x 50 us),
+; then writes; when the bound runs out it writes anyway, as Linux does. On
+; the twin's 82574L FWSM reads 0 and the first read takes the clear path.
+; Preserves every register.
+e1k_write:
+        push    rax
+        push    rdx
+        mov     edx, E1K_PCIM2PCI_TRIES
+.wait:  test    dword [rdi + E1K_FWSM], FWSM_PCIM2PCI
+        jz      .go
+        mov     ax, PIT_50US
+        call    pit_wait
+        dec     edx
+        jnz     .wait
+.go:    pop     rdx
+        pop     rax
+        mov     [rdi + rcx], eax
+        ret
+
+; e1k_verify - RDI = BAR, ECX = offset, EAX = the value just written. Reads
+; the register back; on a mismatch rewrites it (through the wait), at most
+; E1K_HOLD_TRIES times, then the named error with the offset, the value
+; and what the device holds. Preserves every register.
+e1k_verify:
+        push    rdx
+        mov     edx, E1K_HOLD_TRIES
+.check: cmp     eax, [rdi + rcx]
+        je      .ok
+        call    e1k_write
+        dec     edx
+        jnz     .check
+        pop     rdx
+        jmp     e1k_hold_err
+.ok:    pop     rdx
+        ret
+
+; e1k_hold_err - RDI = BAR, ECX = offset, EAX = the value that would not
+; hold. One ERR: line naming the register, the value written and the value
+; read, then the halt - serial_err's shape with three numbers in it.
+e1k_hold_err:
+        mov     ebx, eax
+        lea     rsi, [msg_err]
+        call    serial_puts
+        lea     rsi, [msg_e1k_hold]
+        call    serial_puts
+        mov     eax, ecx
+        call    serial_puthex32
+        lea     rsi, [msg_e1k_wrote]
+        call    serial_puts
+        mov     eax, ebx
+        call    serial_puthex32
+        lea     rsi, [msg_e1k_read]
+        call    serial_puts
+        mov     eax, [rdi + rcx]
+        call    serial_puthex32
+        lea     rsi, [msg_e1k_hold_tail]
+        call    serial_puts
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+        jmp     halt_forever
 
 ; e1k_poll - every frame the device has delivered since the last look,
 ; dispatched by EtherType and its descriptor handed back. Returns EAX = the
@@ -5560,7 +5698,10 @@ e1k_poll:
         add     rsi, rax
         mov     qword [rsi + 8], 0      ; length, status and errors cleared: ours again
         sfence
-        mov     [r12 + E1K_RDT], r13d   ; this descriptor back to the hardware
+        mov     rdi, r12                ; RDI is dead here; RSI is recomputed above
+        mov     ecx, E1K_RDT
+        mov     eax, r13d
+        call    e1k_write               ; this descriptor back to the hardware
         inc     r13d
         and     r13d, E1K_RX_DESCS - 1
         mov     [e1k_rx_head], r13d
@@ -9376,7 +9517,16 @@ msg_e1k_tarc0:  db      ' tarc0 0x', 0
 msg_e1k_ctrlext: db     ' ctrlext 0x', 0
 msg_e1k_fwsm:   db      ' fwsm 0x', 0
 msg_e1k_sta:    db      ' sta 0x', 0
-msg_e1k_ring:   db      ' ring 0x', 0
+; The device's own ring registers beside what we wrote (item 19).
+msg_e1k_tdlen:  db      ' tdlen ', 0
+msg_e1k_tdbal:  db      ' tdbal 0x', 0
+msg_e1k_tdbah:  db      ' tdbah 0x', 0
+msg_e1k_expect: db      ' expect 0x', 0
+; A ring register that would not hold its value (e1k_hold_err, item 19).
+msg_e1k_hold:   db      'nic register 0x', 0
+msg_e1k_wrote:  db      ' wrote 0x', 0
+msg_e1k_read:   db      ' read 0x', 0
+msg_e1k_hold_tail: db   ' - it will not hold its value', 0
 err_disk_big:   db      'disk has 2^32 sectors or more - beyond this stage', 0
 err_vq_size:    db      'virtqueue size is 0, above VQ_MAX, or not a power of two', 0
 err_disk_beyond: db     'disk request beyond the capacity', 0
