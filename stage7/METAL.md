@@ -226,6 +226,7 @@ before that line is not a display finding; read the chart:
 | `i8042: mouse none` | no mouse answered its reset — the boot goes on, keyboard only | the mouse's plug (the socket beside the keyboard's), then the bound |
 | `i8042: self-test ok`, `i8042: mouse reset ok`, `S7: keyboard ready` | the machine is up | — |
 | `S7: keyboard ready` and no prompt on the monitor | the framebuffer: the uncached mapping, the stride, the mode | the serial log is complete and the screen is the bug (CLAUDE.md's first gotcha, in its other half) |
+| `? ping` echoed, then `e1k: tdh N tdt N status 0x… …` and `ERR: nic transmit timed out` | the first frame's descriptor was not completed by the 82579LM within five seconds (the second watched boot, 17 September 2026; item 17 added the `e1k:` line) — the line names the device's state | read it by item 17's rule: **`tdh 0`** — the descriptor was never fetched: the PCH LAN's descriptor-fetch setup, the `TXDCTL0` and `TARC0` bits Linux sets in `e1000_initialize_hw_bits_ich8lan` before it transmits; **`tdh 1`** — the frame went out and only the `DD` write-back is missing; **`status` bit 4** (`TXOFF`) set — transmit is paused by flow control; **`fwsm`** says whether the ME holds the interface; `sta` is the descriptor's own status byte and `ring` its physical address. The twin's line reads `tdh 1 tdt 1 … sta 0x01`. The numbers choose the fix — one item, with `ich8lan.c` open |
 
 Every `S7:` line after `keyboard ready` is the raw echo of what is typed;
 `S7: mouse ready` goes out once, on the first packet, when the mouse first
@@ -289,8 +290,12 @@ Said plainly, so the first surprise on the day is not a surprise:
   boot (17 September 2026) hung on the read of `CTRL` straight after the
   `CTRL.RST` write: no fault, no line. The twin's 82574L answers that
   read, so no gate could show it; item 16 leaves the reset write alone for
-  25 ms, as Intel's own driver does. The ten-second link wait that follows
-  is the next thing the twin could not prove.
+  25 ms, as Intel's own driver does. The link came up on the second boot;
+  **the transmit descriptor path is the next thing the twin could not
+  prove, found on the same day:** the first frame's `DD` never set, `ERR:
+  nic transmit timed out` after five seconds. From item 17 the `e1k:` line
+  before that error names the device's state (step 7's last row); the
+  twin's 82574L completes every descriptor, so only the HP can say.
 - **The 82579LM's PHY.** The twin's e1000e is an 82574L; the HP's NIC is
   the same register family behind the PCH with its own PHY. `SLU` is set,
   the forced speed and duplex cleared, the PHY left to autonegotiate;

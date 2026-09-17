@@ -260,6 +260,13 @@ org 0                           ; file offsets == RVAs
 %define E1K_RAL0            0x5400
 %define E1K_RAH0            0x5404
 %define E1K_MRQC            0x5818
+; Read only by e1k_tx_state, the diagnostic on the transmit timeout path
+; (ring 7c item 17): the registers that say what the PCH's LAN did with a
+; descriptor the twin's 82574L always completes.
+%define E1K_CTRL_EXT        0x0018
+%define E1K_TXDCTL0         0x3828
+%define E1K_TARC0           0x3840
+%define E1K_FWSM            0x5B54      ; firmware semaphore: does the ME hold the interface
 %define CTRL_SLU            (1 << 6)
 %define CTRL_ILOS           (1 << 7)
 %define CTRL_FRCSPD         (1 << 11)
@@ -5341,7 +5348,9 @@ e1k_attach:
 ; length (60 or more: net_send padded it and counted it). One legacy
 ; descriptor at e1k_tx_idx: the address, the length, EOP | IFCS | RS; the
 ; tail moved past it; its DD awaited - bounded, a dead device being an
-; ERR:, not a hang.
+; ERR:, not a hang. On the timeout, e1k_tx_state prints the device's state
+; first (ring 7c item 17: the HP's 82579LM left the first frame's DD clear
+; for five seconds on the second watched boot, 17 September 2026).
 e1k_send:
         mov     rdi, [e1k_bar]
         mov     eax, [e1k_tx_idx]
@@ -5370,9 +5379,80 @@ e1k_send:
         call    pit_wait
         dec     r8d
         jnz     .poll
+        call    e1k_tx_state
         lea     rsi, [err_nic_tx]
         call    serial_err
 .done:
+        ret
+
+; e1k_tx_state - RDI = BAR, RSI = the descriptor that timed out. One line on
+; serial (and, through the tee, on the glass) naming the device's state, so
+; the next boot on the metal says which half the defect is in:
+;
+;   e1k: tdh N tdt N status 0x… ctrl 0x… tctl 0x… txdctl 0x… tarc0 0x…
+;        ctrlext 0x… fwsm 0x… sta 0x… ring 0x…
+;
+; How to read it: tdh still 0 - the descriptor was never fetched, which
+; points at the PCH LAN's descriptor-fetch setup (the TXDCTL and TARC bits
+; Linux sets in e1000_initialize_hw_bits_ich8lan before it transmits); tdh
+; at 1 - the frame went out and only the DD write-back is missing; status
+; bit 4 (TXOFF) set - transmit is paused by flow control; fwsm says whether
+; the ME holds the interface; sta is the descriptor's own status byte, ring
+; the transmit ring's physical address (identity-mapped, so the label's
+; address is the bus address the device was given). A failure path no green
+; run takes: no S7: line, no frozen counter moved. Preserves RSI.
+e1k_tx_state:
+        push    rsi
+        push    rbx
+        mov     rbx, rsi
+        lea     rsi, [msg_e1k_state]
+        call    serial_puts
+        mov     eax, [rdi + E1K_TDH]
+        call    serial_putdec
+        lea     rsi, [msg_e1k_tdt]
+        call    serial_puts
+        mov     eax, [rdi + E1K_TDT]
+        call    serial_putdec
+        lea     rsi, [msg_e1k_status]
+        call    serial_puts
+        mov     eax, [rdi + E1K_STATUS]
+        call    serial_puthex32
+        lea     rsi, [msg_e1k_ctrl]
+        call    serial_puts
+        mov     eax, [rdi + E1K_CTRL]
+        call    serial_puthex32
+        lea     rsi, [msg_e1k_tctl]
+        call    serial_puts
+        mov     eax, [rdi + E1K_TCTL]
+        call    serial_puthex32
+        lea     rsi, [msg_e1k_txdctl]
+        call    serial_puts
+        mov     eax, [rdi + E1K_TXDCTL0]
+        call    serial_puthex32
+        lea     rsi, [msg_e1k_tarc0]
+        call    serial_puts
+        mov     eax, [rdi + E1K_TARC0]
+        call    serial_puthex32
+        lea     rsi, [msg_e1k_ctrlext]
+        call    serial_puts
+        mov     eax, [rdi + E1K_CTRL_EXT]
+        call    serial_puthex32
+        lea     rsi, [msg_e1k_fwsm]
+        call    serial_puts
+        mov     eax, [rdi + E1K_FWSM]
+        call    serial_puthex32
+        lea     rsi, [msg_e1k_sta]
+        call    serial_puts
+        mov     al, [rbx + TXD_STA]
+        call    serial_puthex8
+        lea     rsi, [msg_e1k_ring]
+        call    serial_puts
+        lea     rax, [e1k_tx_ring]
+        call    serial_puthex64
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+        pop     rbx
+        pop     rsi
         ret
 
 ; e1k_poll - every frame the device has delivered since the last look,
@@ -8110,6 +8190,31 @@ serial_puthex64:
         pop     rax
         ret
 
+; serial_puthex32 - EAX = value, as exactly 8 lowercase hex digits (a device
+; register). The 64-bit routine's loop over the value's top half.
+serial_puthex32:
+        push    rax
+        push    rbx
+        push    rcx
+        mov     rbx, rax
+        shl     rbx, 32                 ; the eight digits now sit at the top
+        mov     ecx, 8
+.next:  rol     rbx, 4
+        mov     al, bl
+        and     al, 0x0F
+        cmp     al, 10
+        jb      .dec
+        add     al, 'a' - 10
+        jmp     .out
+.dec:   add     al, '0'
+.out:   call    serial_putc
+        dec     ecx
+        jnz     .next
+        pop     rcx
+        pop     rbx
+        pop     rax
+        ret
+
 ; serial_err - RSI = message. Prints "ERR: <msg>" and stops the machine.
 ;
 ; The ERR: prefix is deliberate. It can never be mistaken for one of the seven
@@ -9202,6 +9307,18 @@ err_e1k_mac:    db      'nic has no address in RAL/RAH', 0
 err_e1k_link:   db      'nic link did not come up within 10 s', 0
 err_e1k_ring:   db      'nic ring sits above 4GB', 0
 err_nic_tx:     db      'nic transmit timed out', 0
+; The state line before that error (e1k_tx_state, ring 7c item 17).
+msg_e1k_state:  db      'e1k: tdh ', 0
+msg_e1k_tdt:    db      ' tdt ', 0
+msg_e1k_status: db      ' status 0x', 0
+msg_e1k_ctrl:   db      ' ctrl 0x', 0
+msg_e1k_tctl:   db      ' tctl 0x', 0
+msg_e1k_txdctl: db      ' txdctl 0x', 0
+msg_e1k_tarc0:  db      ' tarc0 0x', 0
+msg_e1k_ctrlext: db     ' ctrlext 0x', 0
+msg_e1k_fwsm:   db      ' fwsm 0x', 0
+msg_e1k_sta:    db      ' sta 0x', 0
+msg_e1k_ring:   db      ' ring 0x', 0
 err_disk_big:   db      'disk has 2^32 sectors or more - beyond this stage', 0
 err_vq_size:    db      'virtqueue size is 0, above VQ_MAX, or not a power of two', 0
 err_disk_beyond: db     'disk request beyond the capacity', 0
