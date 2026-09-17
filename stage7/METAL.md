@@ -207,7 +207,9 @@ The order of the first boot is the debugging strategy (`stage7/spec.md`):
 serial first, then each device before the next is touched. The twin has
 printed the same lines in the same order — `stage7/out/metal/serial.blank.8.txt`
 from the last green gate is the reference. Where the chart stops says
-where the bug is:
+where the bug is. **The monitor stays black until the glass core's first
+frame** — nothing is drawn before `S7: glass core N` — so a black screen
+before that line is not a display finding; read the chart:
 
 | The chart shows | It means | Look at |
 |---|---|---|
@@ -217,6 +219,7 @@ where the bug is:
 | `S7: gop WxH`, then nothing | `ExitBootServices` or the switch to our own paging | the map key gotcha (CLAUDE.md); the identity map's size against the framebuffer's address in the gop line |
 | through `S7: idt ready`, then nothing or a repeat | the APs: the MADT, INIT-SIPI-SIPI, the x2APIC path or the trampoline — the spec's unproven pair on real silicon | `S7: cores found N` absent: the MADT walk; `found` without `woken`: the trampoline; a repeated `S7: alive`: a triple fault |
 | `S7: console CxR`, then nothing | the AHCI: the controller by class, the ABAR, the ports under `CAP.SSS` | `ERR: ahci port N did not come up after spin-up` names the port (ten seconds); `ERR: no SATA disk on any AHCI port`: the drive is not seen (cable, power, the BIOS's SATA mode must be AHCI, not IDE/RAID); `ERR: no GermOS disk and no blank disk`: the drive holds another table — blank it |
+| `S7: home N apps`, then nothing, black screen — no `ERR:`, no repeat | the e1000e's first touches before the nic line: the function owned, BAR0 mapped, `IMC`, the reset — a hang with no `ERR:` is an MMIO access the PCH's LAN would not take (the 82579LM hangs the processor on a read straight after `CTRL.RST`; the 25 ms wait of item 16 is the first such fix, found on the first watched boot, 17 September 2026) | `e1k_attach` up to `msg_nic`, with `ich8lan.c` open beside the datasheet; `hp-lspci.log` says what the NIC looks like healthy |
 | `S7: home N apps`, then `ERR: nic link did not come up within 10 s` | the 82579LM's PHY — the one thing the twin could not prove (spec: high) | the cable and the switch's port light first; then a ring item with the datasheet open (MDIC, the PHY reset) |
 | `S7: link up`, `S7: component region`, `S7: obs page`, `S7: glass core N` | the wire and the glass core are up | — |
 | `ERR: i8042 self-test failed` / `command byte not answered` / `input buffer never emptied` | the controller | the named step; a controller that answers `0x55` late is the bound (`I8042_WAIT_TRIES`, a second) |
@@ -282,6 +285,12 @@ His word closes the ring and Stage 7.
 
 Said plainly, so the first surprise on the day is not a surprise:
 
+- **The 82579LM's reset timing — found on the day.** The first watched
+  boot (17 September 2026) hung on the read of `CTRL` straight after the
+  `CTRL.RST` write: no fault, no line. The twin's 82574L answers that
+  read, so no gate could show it; item 16 leaves the reset write alone for
+  25 ms, as Intel's own driver does. The ten-second link wait that follows
+  is the next thing the twin could not prove.
 - **The 82579LM's PHY.** The twin's e1000e is an 82574L; the HP's NIC is
   the same register family behind the PCH with its own PHY. `SLU` is set,
   the forced speed and duplex cleared, the PHY left to autonegotiate;

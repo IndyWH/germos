@@ -5195,13 +5195,21 @@ e1k_attach:
         lea     rax, [rdi + E1K_BAR_SIZE - 1]
         call    map_mmio_2m             ; and its last
 
-        ; The reset: interrupts masked, CTRL.RST set and awaited clear,
-        ; interrupts masked again, ICR read once. Assume nothing about the
-        ; state a firmware driver left.
+        ; The reset: interrupts masked, CTRL.RST set, the reset write left
+        ; alone for 25 ms, then CTRL awaited clear, interrupts masked again,
+        ; ICR read once. Assume nothing about the state a firmware driver
+        ; left.
         mov     dword [rdi + E1K_IMC], 0xFFFFFFFF
         mov     eax, [rdi + E1K_CTRL]
         or      eax, CTRL_RST
         mov     [rdi + E1K_CTRL], eax
+        ; No MMIO access for 25 ms: on the PCH's integrated LAN (82579LM) a
+        ; read straight after the reset write hangs the processor - no fault,
+        ; no timeout (ich8lan.c: "cannot issue a flush here because it hangs
+        ; the hardware", then a 20 ms sleep). The twin's 82574L never shows
+        ; it. Found on the HP's first watched boot, 17 September 2026.
+        mov     ax, PIT_25MS
+        call    pit_wait
         mov     r8d, E1K_RESET_TRIES
 .reset_wait:
         mov     eax, [rdi + E1K_CTRL]

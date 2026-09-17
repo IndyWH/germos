@@ -448,6 +448,13 @@ test in the twin.
   boots**, though it writes them to an `esp.img` on SATA every boot (ring
   7a). Neither is a promise: assert what the guest must never do to a boot
   medium (its tables unchanged), never byte-identity and never a change.
+- **On the PCH's integrated LAN an MMIO read straight after `CTRL.RST`
+  hangs the processor** - no fault, no timeout, no line: the HP's first
+  watched boot ended after `S7: home 0 apps` with the 82579LM healthy
+  under Linux (ring 7c item 16). Sleep 20 ms after the reset write before
+  the first register access (`ich8lan.c` says a flush there hangs the
+  hardware); `e1k_attach` waits 25 ms on the PIT. The discrete 82574L in
+  the twin never shows it, so no gate can.
 
 ## Working with the hooks
 
