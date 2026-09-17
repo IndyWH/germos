@@ -270,6 +270,22 @@ org 0                           ; file offsets == RVAs
 %define E1K_TARC0           0x3840
 %define E1K_TARC1           0x3940
 %define E1K_FWSM            0x5B54      ; firmware semaphore: does the ME hold the interface
+; The registers the monitor's d command reads beside the e1k: line (ring
+; 7c item 20): the ones Linux's ich8lan reset and init touch that this
+; driver does not, and the receive ring's own.
+%define E1K_PBA             0x1000
+%define E1K_WUC             0x5800
+%define E1K_WUFC            0x5808
+%define E1K_MANC            0x5820
+%define E1K_FCRTL           0x2160
+%define E1K_FCRTH           0x2168
+%define E1K_FCTTV           0x0170
+%define E1K_KABGTXD         0x3004
+%define E1K_FEXTNVM3        0x003C
+%define E1K_EXTCNF_CTRL     0x0F00
+%define E1K_RXDCTL          0x2828
+%define E1K_GCR             0x5B00
+%define MON_LINE_MAX        64          ; the monitor's line buffer, NUL included
 ; The ME's window (ring 7c item 19), from the HP's fifth watched boot: with
 ; FWSM.FW_VALID (bit 15) set the 82579's Management Engine shares the MAC's
 ; registers, and a host write issued while FWSM.PCIM2PCI (bit 24, "ME
@@ -5471,6 +5487,30 @@ e1k_attach:
 ; for five seconds on the second watched boot, 17 September 2026).
 e1k_send:
         mov     rdi, [e1k_bar]
+        call    e1k_arm                 ; RSI = the descriptor, the tail past it
+        mov     r8d, VQ_POLL_TRIES
+.poll:
+        test    byte [rsi + TXD_STA], TXD_DD
+        jnz     .done
+        mov     ax, PIT_200US
+        call    pit_wait
+        dec     r8d
+        jnz     .poll
+        call    e1k_tx_state
+        push    rsi
+        lea     rsi, [err_nic_tx]
+        call    serial_err_line         ; the named error on the chart, and no halt:
+        pop     rsi
+        jmp     e1k_monitor             ; the monitor (item 20); q halts as before
+.done:
+        ret
+
+; e1k_arm - RDI = BAR, ECX = the frame's length. The legacy descriptor at
+; e1k_tx_idx filled for the frame at nic_tx_buf + TX_BASE, the index
+; advanced, the tail moved past it through e1k_write. Returns RSI = the
+; descriptor. e1k_send's arming, on its own so the monitor's t command
+; re-arms exactly as a send does (item 20).
+e1k_arm:
         mov     eax, [e1k_tx_idx]
         shl     eax, 4                  ; x E1K_DESC
         lea     rsi, [e1k_tx_ring]
@@ -5490,18 +5530,6 @@ e1k_send:
         mov     [e1k_tx_idx], eax
         mov     ecx, E1K_TDT
         call    e1k_write               ; the tail past the descriptor: sent
-        mov     r8d, VQ_POLL_TRIES
-.poll:
-        test    byte [rsi + TXD_STA], TXD_DD
-        jnz     .done
-        mov     ax, PIT_200US
-        call    pit_wait
-        dec     r8d
-        jnz     .poll
-        call    e1k_tx_state
-        lea     rsi, [err_nic_tx]
-        call    serial_err
-.done:
         ret
 
 ; e1k_tx_state - RDI = BAR, RSI = the descriptor that timed out. One line on
@@ -5519,12 +5547,26 @@ e1k_send:
 ; the ME holds the interface; sta is the descriptor's own status byte, ring
 ; the transmit ring's physical address (identity-mapped, so the label's
 ; address is the bus address the device was given). A failure path no green
-; run takes: no S7: line, no frozen counter moved. Preserves RSI.
+; run takes: no S7: line, no frozen counter moved. Preserves RSI. The
+; fields are e1k_tx_fields, shared with the monitor's d command (item 20).
 e1k_tx_state:
         push    rsi
         push    rbx
         mov     rbx, rsi
-        lea     rsi, [msg_e1k_state]
+        lea     rsi, [msg_e1k_prefix]
+        call    serial_puts
+        call    e1k_tx_fields
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+        pop     rbx
+        pop     rsi
+        ret
+
+; e1k_tx_fields - RDI = BAR, RBX = the descriptor. The e1k: line's fields,
+; "tdh N ... expect 0x...", no prefix and no line end. Preserves RSI.
+e1k_tx_fields:
+        push    rsi
+        lea     rsi, [msg_tdh]
         call    serial_puts
         mov     eax, [rdi + E1K_TDH]
         call    serial_putdec
@@ -5580,9 +5622,6 @@ e1k_tx_state:
         call    serial_puts
         lea     rax, [e1k_tx_ring]
         call    serial_puthex64
-        lea     rsi, [msg_crlf]
-        call    serial_puts
-        pop     rbx
         pop     rsi
         ret
 
@@ -5650,6 +5689,282 @@ e1k_hold_err:
         lea     rsi, [msg_crlf]
         call    serial_puts
         jmp     halt_forever
+
+; ---------------------------------------------------------------------------
+; The serial monitor (ring 7c item 20) - the umbilical for the metal's
+; debugging. Entered only on the transmit timeout, after the e1k: line and
+; the named error, so no green run ever reaches it: no S7: line, no frozen
+; counter moved. Items 16 to 19 each cost the owner a flash and a boot for
+; one question; from here the questions go over the serial line, many per
+; boot. Commands are one line each, read from COM1 by polling LSR bit 0;
+; every answer is one line starting "mon: ", through the tee (on the chart
+; and on the glass, as the e1k: line is). Hex arguments, no prefix.
+;
+;   r OFF      the dword at BAR0 + OFF          mon: r 00000400 0003f0fa
+;   w OFF VAL  e1k_write, then read back        mon: w 00003820 00001234 read 00001234
+;   d          the e1k: line's fields and more  mon: tdh 0 tdt 1 ... gcr 0x...
+;   t          the frame re-armed in the next   mon: t tdh 2 tdt 2 sta 0x01
+;              descriptor as e1k_send arms it,
+;              TDT moved, 100 ms, then the head
+;   m ADDR     16 bytes of memory               mon: m 00000000004ce000 00 f0 ...
+;   q          leave: the halt                  mon: bye
+;   anything else                               mon: ?
+;
+; OFF must be below the BAR's size and dword aligned; ADDR at most
+; 0xFFFFFFF0 (the identity map); VAL 32 bits. A w to CTRL with RST set
+; waits 25 ms before its read-back - item 16's rule, so a reset typed
+; through the monitor cannot hang the PCH's LAN. Every wait inside a
+; command is bounded; the wait for the next line is the human's. RDI = BAR
+; throughout; RSI = the descriptor that timed out on entry.
+; ---------------------------------------------------------------------------
+e1k_monitor:
+        mov     [mon_txd], rsi
+        lea     rsi, [msg_mon_ready]
+        call    serial_puts
+.eol:   lea     rsi, [msg_crlf]
+        call    serial_puts
+.loop:
+        call    mon_getline
+        lea     rsi, [mon_line]
+        mov     al, [rsi]
+        inc     rsi                     ; RSI at the first argument, or the NUL
+        cmp     al, 'r'
+        je      .read
+        cmp     al, 'w'
+        je      .write
+        cmp     al, 'd'
+        je      .dump
+        cmp     al, 't'
+        je      .tx
+        cmp     al, 'm'
+        je      .mem
+        cmp     al, 'q'
+        je      .quit
+.unknown:
+        lea     rsi, [msg_mon_what]
+        call    serial_puts
+        jmp     .eol
+
+.read:
+        call    mon_reg                 ; RAX = OFF, in range and aligned
+        jc      .unknown
+        mov     ecx, eax
+        lea     rsi, [msg_mon_r]
+        call    serial_puts
+        call    serial_puthex32
+        mov     al, ' '
+        call    serial_putc
+        mov     eax, [rdi + rcx]
+        call    serial_puthex32
+        jmp     .eol
+
+.write:
+        call    mon_reg
+        jc      .unknown
+        mov     ecx, eax
+        call    mon_hex                 ; RAX = VAL
+        jc      .unknown
+        mov     rdx, rax
+        shr     rdx, 32
+        jnz     .unknown                ; a register is 32 bits
+        call    e1k_write               ; the ME's window awaited, then the write
+        test    ecx, ecx
+        jnz     .w_back
+        test    eax, CTRL_RST
+        jz      .w_back
+        push    rax                     ; CTRL.RST: no access for 25 ms (item 16)
+        mov     ax, PIT_25MS
+        call    pit_wait
+        pop     rax
+.w_back:
+        lea     rsi, [msg_mon_w]
+        call    serial_puts
+        push    rax
+        mov     eax, ecx
+        call    serial_puthex32
+        mov     al, ' '
+        call    serial_putc
+        pop     rax
+        call    serial_puthex32
+        lea     rsi, [msg_mon_read]
+        call    serial_puts
+        mov     eax, [rdi + rcx]
+        call    serial_puthex32
+        jmp     .eol
+
+.dump:
+        lea     rsi, [msg_mon]
+        call    serial_puts
+        push    rbx
+        mov     rbx, [mon_txd]
+        call    e1k_tx_fields
+        pop     rbx
+        ; The rest from a table whose names sit inline beside their offsets
+        ; (never a table of label addresses: those are RVAs): dw offset,
+        ; db kind (0 hex, 1 decimal), the name, 0; dw 0xFFFF ends it.
+        lea     rsi, [mon_d_table]
+.d_next:
+        movzx   ecx, word [rsi]
+        cmp     ecx, 0xFFFF
+        je      .eol
+        movzx   edx, byte [rsi + 2]
+        add     rsi, 3
+        call    serial_puts             ; the name; RSI preserved
+.d_skip:
+        lodsb
+        test    al, al
+        jnz     .d_skip                 ; RSI past the NUL
+        mov     eax, [rdi + rcx]
+        test    edx, edx
+        jnz     .d_dec
+        call    serial_puthex32
+        jmp     .d_next
+.d_dec: call    serial_putdec
+        jmp     .d_next
+
+.tx:
+        mov     rsi, [mon_txd]
+        movzx   ecx, word [rsi + TXD_LEN]       ; the same frame, still in nic_tx_buf
+        call    e1k_arm                 ; RSI = the next descriptor, the tail past it
+        mov     ecx, 10
+.t_wait:
+        mov     ax, PIT_10MS
+        call    pit_wait
+        dec     ecx
+        jnz     .t_wait                 ; 100 ms
+        push    rsi
+        lea     rsi, [msg_mon_t]
+        call    serial_puts
+        mov     eax, [rdi + E1K_TDH]
+        call    serial_putdec
+        lea     rsi, [msg_e1k_tdt]
+        call    serial_puts
+        mov     eax, [rdi + E1K_TDT]
+        call    serial_putdec
+        lea     rsi, [msg_e1k_sta]
+        call    serial_puts
+        pop     rsi
+        mov     al, [rsi + TXD_STA]
+        call    serial_puthex8
+        jmp     .eol
+
+.mem:
+        call    mon_hex                 ; RAX = ADDR
+        jc      .unknown
+        mov     rdx, 0xFFFFFFF0
+        cmp     rax, rdx
+        ja      .unknown                ; beyond the identity map
+        lea     rsi, [msg_mon_m]
+        call    serial_puts
+        call    serial_puthex64
+        mov     rsi, rax
+        mov     ecx, 16
+.m_byte:
+        mov     al, ' '
+        call    serial_putc
+        lodsb
+        call    serial_puthex8
+        dec     ecx
+        jnz     .m_byte
+        jmp     .eol
+
+.quit:
+        lea     rsi, [msg_mon_bye]
+        call    serial_puts
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+        jmp     halt_forever
+
+; mon_getline - one line from COM1 into mon_line, NUL-terminated: LSR bit 0
+; polled, RBR read; CR ignored, LF ends the line, bytes past the buffer
+; dropped. Preserves everything.
+mon_getline:
+        push    rax
+        push    rbx
+        push    rcx
+        push    rdx
+        lea     rbx, [mon_line]
+        xor     ecx, ecx
+.byte:  mov     dx, COM1_LSR
+        in      al, dx
+        test    al, 1                   ; data ready?
+        jz      .byte
+        mov     dx, COM1
+        in      al, dx
+        cmp     al, 13
+        je      .byte
+        cmp     al, 10
+        je      .done
+        cmp     ecx, MON_LINE_MAX - 1
+        jae     .byte
+        mov     [rbx + rcx], al
+        inc     ecx
+        jmp     .byte
+.done:  mov     byte [rbx + rcx], 0
+        pop     rdx
+        pop     rcx
+        pop     rbx
+        pop     rax
+        ret
+
+; mon_hex - RSI at a hex field (leading spaces skipped): up to 16 digits,
+; 0-9 a-f A-F, ended by a space or the NUL. Returns RAX and RSI past the
+; field, or CF set on no digit, a bad character or too many digits.
+mon_hex:
+        push    rcx
+        push    rdx
+        xor     eax, eax
+        xor     ecx, ecx                ; digits taken
+.skip:  cmp     byte [rsi], ' '
+        jne     .digit
+        inc     rsi
+        jmp     .skip
+.digit: movzx   edx, byte [rsi]
+        cmp     dl, '0'
+        jb      .end
+        cmp     dl, '9'
+        jbe     .dec
+        or      dl, 0x20                ; A-F as a-f
+        cmp     dl, 'a'
+        jb      .bad
+        cmp     dl, 'f'
+        ja      .bad
+        sub     dl, 'a' - 10
+        jmp     .take
+.dec:   sub     dl, '0'
+.take:  cmp     ecx, 16
+        jae     .bad
+        shl     rax, 4
+        or      rax, rdx
+        inc     ecx
+        inc     rsi
+        jmp     .digit
+.end:   cmp     byte [rsi], 0
+        je      .term
+        cmp     byte [rsi], ' '
+        jne     .bad
+.term:  test    ecx, ecx
+        jz      .bad
+        clc
+        jmp     .out
+.bad:   stc
+.out:   pop     rdx
+        pop     rcx
+        ret
+
+; mon_reg - mon_hex, then the register rule: below the BAR's size and
+; dword aligned. CF set otherwise.
+mon_reg:
+        call    mon_hex
+        jc      .out
+        cmp     rax, E1K_BAR_SIZE
+        jae     .bad
+        test    al, 3
+        jnz     .bad
+        clc
+        ret
+.bad:   stc
+.out:   ret
 
 ; e1k_poll - every frame the device has delivered since the last look,
 ; dispatched by EtherType and its descriptor handed back. Returns EAX = the
@@ -8421,14 +8736,22 @@ serial_puthex32:
 ; wrong without changing the shape of the log the tests match - and the tests
 ; print the whole capture on failure, so it is seen.
 serial_err:
+        call    serial_err_line
+        jmp     halt_forever
+
+; serial_err_line - the line of serial_err without the halt, for the one
+; path that goes on into the monitor (ring 7c item 20). Preserves everything.
+serial_err_line:
         push    rsi
         lea     rsi, [msg_err]
         call    serial_puts
         pop     rsi
         call    serial_puts
+        push    rsi
         lea     rsi, [msg_crlf]
         call    serial_puts
-        jmp     halt_forever
+        pop     rsi
+        ret
 
 ; ---------------------------------------------------------------------------
 ; Firmware call helpers.
@@ -9506,8 +9829,11 @@ err_e1k_mac:    db      'nic has no address in RAL/RAH', 0
 err_e1k_link:   db      'nic link did not come up within 10 s', 0
 err_e1k_ring:   db      'nic ring sits above 4GB', 0
 err_nic_tx:     db      'nic transmit timed out', 0
-; The state line before that error (e1k_tx_state, ring 7c item 17).
-msg_e1k_state:  db      'e1k: tdh ', 0
+; The state line before that error (e1k_tx_state, ring 7c item 17); its
+; prefix and its first field apart since item 20, the monitor's d command
+; printing the same fields after "mon: ".
+msg_e1k_prefix: db      'e1k: ', 0
+msg_tdh:        db      'tdh ', 0
 msg_e1k_tdt:    db      ' tdt ', 0
 msg_e1k_status: db      ' status 0x', 0
 msg_e1k_ctrl:   db      ' ctrl 0x', 0
@@ -9527,6 +9853,51 @@ msg_e1k_hold:   db      'nic register 0x', 0
 msg_e1k_wrote:  db      ' wrote 0x', 0
 msg_e1k_read:   db      ' read 0x', 0
 msg_e1k_hold_tail: db   ' - it will not hold its value', 0
+; The serial monitor (e1k_monitor, item 20).
+msg_mon:        db      'mon: ', 0
+msg_mon_ready:  db      'mon: ready', 0
+msg_mon_what:   db      'mon: ?', 0
+msg_mon_bye:    db      'mon: bye', 0
+msg_mon_r:      db      'mon: r ', 0
+msg_mon_w:      db      'mon: w ', 0
+msg_mon_read:   db      ' read ', 0
+msg_mon_t:      db      'mon: t tdh ', 0
+msg_mon_m:      db      'mon: m ', 0
+; The d command's registers after the e1k: fields: dw offset, db kind (0
+; eight hex digits, 1 decimal), the name; dw 0xFFFF ends the table. The
+; names sit inline so no address is stored (a dq label would be an RVA).
+mon_d_table:
+        dw      E1K_PBA
+        db      0, ' pba 0x', 0
+        dw      E1K_WUC
+        db      0, ' wuc 0x', 0
+        dw      E1K_WUFC
+        db      0, ' wufc 0x', 0
+        dw      E1K_MANC
+        db      0, ' manc 0x', 0
+        dw      E1K_FCRTL
+        db      0, ' fcrtl 0x', 0
+        dw      E1K_FCRTH
+        db      0, ' fcrth 0x', 0
+        dw      E1K_FCTTV
+        db      0, ' fcttv 0x', 0
+        dw      E1K_KABGTXD
+        db      0, ' kabgtxd 0x', 0
+        dw      E1K_FEXTNVM3
+        db      0, ' fextnvm3 0x', 0
+        dw      E1K_EXTCNF_CTRL
+        db      0, ' extcnf 0x', 0
+        dw      E1K_RDLEN
+        db      1, ' rdlen ', 0
+        dw      E1K_RDH
+        db      1, ' rdh ', 0
+        dw      E1K_RDT
+        db      1, ' rdt ', 0
+        dw      E1K_RXDCTL
+        db      0, ' rxdctl 0x', 0
+        dw      E1K_GCR
+        db      0, ' gcr 0x', 0
+        dw      0xFFFF
 err_disk_big:   db      'disk has 2^32 sectors or more - beyond this stage', 0
 err_vq_size:    db      'virtqueue size is 0, above VQ_MAX, or not a power of two', 0
 err_disk_beyond: db     'disk request beyond the capacity', 0
@@ -9918,6 +10289,9 @@ e1k_rx_head:    resd    1
 e1k_tx_idx:     resd    1
         alignb  16
 e1k_bar:        resq    1
+; The serial monitor's line, and the descriptor that timed out (item 20).
+mon_txd:        resq    1
+mon_line:       resb    MON_LINE_MAX
         alignb  4096
 e1k_rx_ring:    resb    E1K_RX_DESCS * E1K_DESC
         alignb  4096

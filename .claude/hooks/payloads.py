@@ -744,6 +744,7 @@ CASES += [
     (write("stage7/mkstick.py"), ALLOW, "ring 7c freeze allows: the builder is not frozen"),
     (write("broker/relay.py"), ALLOW, "ring 7c freeze allows: the relay is a tool"),
     (write("broker/chart.py"), ALLOW, "ring 7c freeze allows: the serial reader is a tool"),
+    (write("broker/probe.py"), ALLOW, "ring 7c freeze allows: the monitor's tool (item 20)"),
     (write("stage7/stage7.asm"), ALLOW, "ring 7c freeze allows: Write the implementation"),
     (write("stage7/mkimage.sh"), ALLOW, "ring 7c freeze allows: the builder is not frozen"),
     (write("stage7/plan-7c.md"), ALLOW, "ring 7c freeze allows: the plan is paperwork"),
@@ -758,6 +759,7 @@ CASES += [
     (bash("python3 stage7/checkmetal.py --cage"), ALLOW, "ring 7c freeze allows: the checker"),
     (bash("python3 stage7/mkstick.py"), ALLOW, "ring 7c freeze allows: building the stick"),
     (bash("python3 broker/chart.py"), ALLOW, "ring 7c freeze allows: the serial reader's usage"),
+    (bash("python3 broker/probe.py"), ALLOW, "ring 7c freeze allows: the monitor's tool's usage (item 20)"),
     (bash("mformat -i stage7/out/stick.img@@1048576 -F -T 131072 -v GERMOS ::"), ALLOW, "bodyguard allows: mformat at the partition's offset, under out/"),
     (bash("mcopy -i stage7/out/stick.img@@1048576 stage7/out/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI"), ALLOW, "bodyguard allows: mcopy at the offset"),
     (bash("mdir -i stage7/out/stick.img@@1048576 ::/EFI/BOOT"), ALLOW, "bodyguard allows: mdir at the offset"),
@@ -842,6 +844,7 @@ CASES += [(c, ALLOW, "ring 7c bodyguard allows: " + w) for c, w in [
     (bash("python3 .claude/hooks/payloads.py"), "the table itself"),
     (bash("python3 stage7/out/probe7c/spellings.py"), "the probe that holds the spellings as data"),
     (bash("python3 broker/chart.py"), "the serial reader's usage - its port is named inside the file"),
+    (bash("python3 broker/probe.py"), "the monitor's tool's usage - its port is argv[1], never in its source (item 20)"),
     (bash("git commit -F msg.txt"), "a commit message from a file"),
     (bash("echo 'the flash is the owner'\\''s hand; the stick as built'"), "the ring's words in prose"),
 ]]

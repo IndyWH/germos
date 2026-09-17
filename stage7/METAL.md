@@ -192,7 +192,9 @@ day (A7).
    stage7/out/metal.log (Ctrl-C ends it)` and then every line the HP
    sends, as it arrives; the file gets the same lines with a timestamp. If
    the adapter is not `ttyUSB0`, `ls -l /dev/serial/by-id/` names it. A
-   `Permission denied` is step 0's group.
+   `Permission denied` is step 0's group. For a boot that is to end in
+   the serial monitor (section 10), `broker/probe.py` takes this
+   terminal in place of the chart, with the same two arguments.
 
 ## 6. Power on
 
@@ -226,7 +228,7 @@ before that line is not a display finding; read the chart:
 | `i8042: mouse none` | no mouse answered its reset — the boot goes on, keyboard only | the mouse's plug (the socket beside the keyboard's), then the bound |
 | `i8042: self-test ok`, `i8042: mouse reset ok`, `S7: keyboard ready` | the machine is up | — |
 | `S7: keyboard ready` and no prompt on the monitor | the framebuffer: the uncached mapping, the stride, the mode | the serial log is complete and the screen is the bug (CLAUDE.md's first gotcha, in its other half) |
-| `? ping` echoed, then `e1k: tdh N tdt N status 0x… …` and `ERR: nic transmit timed out` | the first frame's descriptor was not completed by the 82579LM within five seconds (the second watched boot, 17 September 2026; item 17 added the `e1k:` line) — the line names the device's state | read it by item 17's rule: **`tdh 0`** — the descriptor was never fetched: the PCH LAN's descriptor-fetch setup, the `TXDCTL0` and `TARC0` bits Linux sets in `e1000_initialize_hw_bits_ich8lan` before it transmits; **`tdh 1`** — the frame went out and only the `DD` write-back is missing; **`status` bit 4** (`TXOFF`) set — transmit is paused by flow control; **`fwsm`** says whether the ME holds the interface; `sta` is the descriptor's own status byte and `ring` its physical address. The twin's line reads `tdh 1 tdt 1 … sta 0x01`. **The fourth watched boot (17 September 2026, 19:50) read** `e1k: tdh 0 tdt 1 status 0x00080483 ctrl 0x00100240 tctl 0x0003f0fa txdctl 0x00000000 tarc0 0x00000403 ctrlext 0x01481000 fwsm 0x6001c04c sta 0x00 ring 0x00000000004ce000` — never fetched, the link up at 1000 full, `TXOFF` clear, TXDCTL zero, TARC0 bare, FWSM with `FW_VALID` (the ME shares the LAN). **Item 18 sets the ich8lan hardware bits** (CTRL_EXT 22, TXDCTL0/1 22, TARC0 23/24/26/27, TARC1 24/26/28/30) in `e1k_attach` before TCTL. **The fifth watched boot (17 September 2026, 20:53) read** `e1k: tdh 0 tdt 1 status 0x00080483 ctrl 0x00100240 tctl 0x0003f0fa txdctl 0x00400000 tarc0 0x0d800403 ctrlext 0x01481000 fwsm 0x6001c04c sta 0x00 ring 0x00000000004ce000` — the bits are in (the 82579LM reads them back) and the descriptor is still never fetched. **Item 19** reads the ME's window: with `FW_VALID` set the Management Engine shares the MAC's registers and a host write can be lost while FWSM bit 24 is set (Linux's `FLAG2_PCIM2PCI_ARBITER_WA`, the 82579 with the ME enabled — this HP), and TDLEN, TDBAL and TDBAH had never been read back. From item 19 every register write waits for that bit (`e1k_write`), the six ring registers are read back and rewritten (`e1k_verify`), and the line gains three fields read from the device — `… sta 0x00 tdlen N tdbal 0x… tdbah 0x… expect 0x…` (`expect` is the old `ring`: the address we wrote). **How to read the sixth boot:** `pong` — step 5 passes. The line again with **`tdlen 128` and `tdbal` equal to the low half of `expect`** — the ring is configured in the device and the fetch is gated elsewhere: the `EXTCNF_CTRL.SWFLAG` semaphore, then the TXDCTL write-back policy and `CTRL_EXT.RO_DIS`. **`tdlen 0` or a `tdbal` that does not match** — a lost write the wait did not catch: the window is not the one Linux waits on. **`ERR: nic register 0x… wrote 0x… read 0x… - it will not hold its value`** — the ME overwrites what the host writes; the rewrite bound is the next number to read. The numbers choose the fix — one item, with `ich8lan.c` open |
+| `? ping` echoed, then `e1k: tdh N tdt N status 0x… …` and `ERR: nic transmit timed out` | the first frame's descriptor was not completed by the 82579LM within five seconds (the second watched boot, 17 September 2026; item 17 added the `e1k:` line) — the line names the device's state | read it by item 17's rule: **`tdh 0`** — the descriptor was never fetched: the PCH LAN's descriptor-fetch setup, the `TXDCTL0` and `TARC0` bits Linux sets in `e1000_initialize_hw_bits_ich8lan` before it transmits; **`tdh 1`** — the frame went out and only the `DD` write-back is missing; **`status` bit 4** (`TXOFF`) set — transmit is paused by flow control; **`fwsm`** says whether the ME holds the interface; `sta` is the descriptor's own status byte and `ring` its physical address. The twin's line reads `tdh 1 tdt 1 … sta 0x01`. **The fourth watched boot (17 September 2026, 19:50) read** `e1k: tdh 0 tdt 1 status 0x00080483 ctrl 0x00100240 tctl 0x0003f0fa txdctl 0x00000000 tarc0 0x00000403 ctrlext 0x01481000 fwsm 0x6001c04c sta 0x00 ring 0x00000000004ce000` — never fetched, the link up at 1000 full, `TXOFF` clear, TXDCTL zero, TARC0 bare, FWSM with `FW_VALID` (the ME shares the LAN). **Item 18 sets the ich8lan hardware bits** (CTRL_EXT 22, TXDCTL0/1 22, TARC0 23/24/26/27, TARC1 24/26/28/30) in `e1k_attach` before TCTL. **The fifth watched boot (17 September 2026, 20:53) read** `e1k: tdh 0 tdt 1 status 0x00080483 ctrl 0x00100240 tctl 0x0003f0fa txdctl 0x00400000 tarc0 0x0d800403 ctrlext 0x01481000 fwsm 0x6001c04c sta 0x00 ring 0x00000000004ce000` — the bits are in (the 82579LM reads them back) and the descriptor is still never fetched. **Item 19** reads the ME's window: with `FW_VALID` set the Management Engine shares the MAC's registers and a host write can be lost while FWSM bit 24 is set (Linux's `FLAG2_PCIM2PCI_ARBITER_WA`, the 82579 with the ME enabled — this HP), and TDLEN, TDBAL and TDBAH had never been read back. From item 19 every register write waits for that bit (`e1k_write`), the six ring registers are read back and rewritten (`e1k_verify`), and the line gains three fields read from the device — `… sta 0x00 tdlen N tdbal 0x… tdbah 0x… expect 0x…` (`expect` is the old `ring`: the address we wrote). **How to read the sixth boot:** `pong` — step 5 passes. The line again with **`tdlen 128` and `tdbal` equal to the low half of `expect`** — the ring is configured in the device and the fetch is gated elsewhere: the `EXTCNF_CTRL.SWFLAG` semaphore, then the TXDCTL write-back policy and `CTRL_EXT.RO_DIS`. **`tdlen 0` or a `tdbal` that does not match** — a lost write the wait did not catch: the window is not the one Linux waits on. **`ERR: nic register 0x… wrote 0x… read 0x… - it will not hold its value`** — the ME overwrites what the host writes; the rewrite bound is the next number to read. The numbers choose the fix — one item, with `ich8lan.c` open. **The sixth watched boot (17 September 2026, 23:12) read** `… sta 0x00 tdlen 128 tdbal 0x004ce000 tdbah 0x00000000 expect 0x00000000004ce000` — the ring configured in the device exactly as written, the lost write ruled out; and its `status 0x00080483` has bit 10 (`PHYRA`, PHY reset asserted) set and bit 9 (`LAN_INIT_DONE`) clear, the reverse of the twin's — the PHY reset Linux issues and completes on this chip. **From item 20 the ERR line is followed by `mon: ready` and the machine stays up**: the serial monitor (section 10) answers questions over the wire, and a CC session on mlrig asks them; nothing more is typed on the HP |
 
 Every `S7:` line after `keyboard ready` is the raw echo of what is typed;
 `S7: mouse ready` goes out once, on the first packet, when the mouse first
@@ -282,6 +284,52 @@ His word closes the ring and Stage 7.
   (The `ip addr add` fallback needs no undoing: it is gone at the next
   reboot.)
 
+## 10. The monitor — the questions asked over the wire (item 20)
+
+From item 20 the transmit timeout no longer halts the machine. After the
+`e1k:` line and `ERR: nic transmit timed out` the guest prints
+`mon: ready` and reads commands from the serial line, one per line,
+answering each with one line starting `mon:`. The questions that cost a
+flash and a boot each at items 16 to 19 are asked from mlrig instead,
+many per boot; the owner's part is the flash and the power button.
+
+**Terminal 3, in place of the chart** — the same two arguments, the port
+exactly as step 5 names it:
+
+```
+python3 broker/probe.py /dev/ttyUSB0 stage7/out/metal.log
+```
+
+It prints `probe: reading … at 115200 8N1, teeing to stage7/out/metal.log,
+listening on 127.0.0.1:9995 (Ctrl-C ends it)` and then every line the HP
+sends, as the chart did; the file gets the same lines with a timestamp.
+Start it before power-on, as the chart was.
+
+**What the owner sees:** the boot's lines as before to `S7: keyboard
+ready`; the glass; then, after `? ping`, the echo, the `e1k:` line, the
+ERR line and `mon: ready` — on the terminal and on the monitor's screen,
+because the monitor's lines go through the tee. The machine stays up with
+the glass painted; it is not hung. **Then type nothing more on the HP.**
+
+**Who asks:** a Claude Code session on mlrig connects to
+`127.0.0.1:9995` (one client at a time) and sends the commands — `r OFF`,
+`w OFF VAL`, `d`, `t`, `m ADDR`, `q`; hex, no prefix — reading each
+answer; `HANDOVER.md` item 20 has the table and the order of questions.
+Every line both ways lands in `stage7/out/metal.log`, the session's lines
+marked `> `. To watch the dialogue without joining it, read the file (or
+the terminal); `nc 127.0.0.1 9995` joins it as the client and is the way
+to type a command by hand if a session is not running.
+
+**Two rules.** A reset (`w 0` with bit 26 set) is the monitor's to wait on
+— it leaves the register alone for 25 ms before reading it back, item
+16's finding; do not type a reset by hand, let the session do it in its
+order. And `q` halts: once typed, the next question costs a power cycle,
+so the session types it last.
+
+**The end of the session:** power off. Ctrl-C ends the probe with the
+file complete. The log is the brief for the fix item, which is one item,
+one flash, and the day again from step 5.
+
 ## What the twin could not prove
 
 Said plainly, so the first surprise on the day is not a surprise:
@@ -302,7 +350,9 @@ Said plainly, so the first surprise on the day is not a surprise:
   can say. The fifth boot said `tdh 0` with the bits in; item 19 waits
   for the ME's window before every register write and reads the ring
   registers back — QEMU has no Management Engine, so the twin's FWSM
-  reads 0 and the wait never waits; only the sixth boot can say.
+  reads 0 and the wait never waits. The sixth boot said the ring is in
+  the device as written; item 20 stops the guessing: the monitor
+  (section 10) lets every remaining question be asked on one boot.
 - **The 82579LM's PHY.** The twin's e1000e is an 82574L; the HP's NIC is
   the same register family behind the PCH with its own PHY. `SLU` is set,
   the forced speed and duplex cleared, the PHY left to autonegotiate;
