@@ -309,13 +309,16 @@ org 0                           ; file offsets == RVAs
 ;   TARC0 bits 23, 24, 27 and TARC1 bits 24, 26, 30 - reserved on the 82574
 ;     and never written there by Linux (it clears TARC0 27); the PCH parts
 ;     only (e1k_idx non-zero: 0x1502, 0x1503).
-;   TARC1 bit 28 - Linux sets it when TCTL.MULR (bit 28) is clear, and our
-;     TCTL never sets MULR; the PCH parts only.
+;   TARC1 bit 28 - Linux sets it when TCTL.MULR (bit 28) is clear and
+;     clears it when MULR is set. From item 21 TCTL always carries MULR, so
+;     the bit is cleared; the PCH parts only. The HP's monitor session, 18
+;     September 2026, proved this pair: TCTL 0x3003f0fa, TARC1 0x45000403.
 %define CTRL_EXT_TXLS_FLOW  (1 << 22)
 %define TXDCTL_BIT22        (1 << 22)
 %define TARC0_COMMON        (1 << 26)
 %define TARC0_PCH           ((1 << 23) | (1 << 24) | (1 << 27))
-%define TARC1_PCH           ((1 << 24) | (1 << 26) | (1 << 28) | (1 << 30))
+%define TARC1_PCH           ((1 << 24) | (1 << 26) | (1 << 30))
+%define TARC1_MULR_CLEAR    (1 << 28)   ; cleared while TCTL.MULR is set (item 21)
 %define CTRL_SLU            (1 << 6)
 %define CTRL_ILOS           (1 << 7)
 %define CTRL_FRCSPD         (1 << 11)
@@ -333,6 +336,9 @@ org 0                           ; file offsets == RVAs
 %define TCTL_PSP            (1 << 3)
 %define TCTL_CT             (0x0F << 4)
 %define TCTL_COLD           (0x3F << 12)
+%define TCTL_CT_FIELD       (0xFF << 4)     ; bits 4 to 11, the collision threshold
+%define TCTL_COLD_FIELD     (0x3FF << 12)   ; bits 12 to 21, the collision distance
+%define TCTL_MULR           (1 << 28)   ; multiple request support: the 82579LM's reset default carries it
 %define E1K_TIPG_COPPER     0x00602008  ; IPGT 8, IPGR1 8, IPGR2 6 - the reset default, written anyway
 %define E1K_DESC            16
 %define E1K_RX_DESCS        16          ; NIC_RX_BUFS
@@ -5325,6 +5331,7 @@ e1k_attach:
         cmp     dword [e1k_idx], 0
         je      .hw_bits_done           ; the 82574L: nothing reserved written
         mov     eax, [rdi + E1K_TARC1]
+        and     eax, ~TARC1_MULR_CLEAR
         or      eax, TARC1_PCH
         mov     ecx, E1K_TARC1
         call    e1k_write
@@ -5463,7 +5470,18 @@ e1k_attach:
         mov     eax, E1K_TIPG_COPPER
         mov     ecx, E1K_TIPG
         call    e1k_write
-        mov     eax, TCTL_EN | TCTL_PSP | TCTL_CT | TCTL_COLD
+        ; TCTL is read, the fields we own masked, our bits ORed in, and
+        ; written (ring 7c item 21) - never an absolute value. The 82579LM's
+        ; reset default is 0x3003f0f8: it carries MULR (bit 28), and with
+        ; MULR clear the PCH's MAC fetches descriptors and takes 16 bytes
+        ; into the transmit FIFO but never commits a packet with EOP to the
+        ; transmitter - no error, no counter, TDH 0, every register as
+        ; written (the HP's seventh watched boot, through item 20's monitor).
+        ; Every other bit keeps its reset default, as Linux's
+        ; e1000_configure_tx leaves them; the twin's 82574L sends either way.
+        mov     eax, [rdi + E1K_TCTL]
+        and     eax, ~(TCTL_CT_FIELD | TCTL_COLD_FIELD)
+        or      eax, TCTL_EN | TCTL_PSP | TCTL_CT | TCTL_COLD | TCTL_MULR
         mov     ecx, E1K_TCTL
         call    e1k_write
         mov     dword [e1k_tx_idx], 0

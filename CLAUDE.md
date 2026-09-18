@@ -455,6 +455,15 @@ test in the twin.
   the first register access (`ich8lan.c` says a flush there hangs the
   hardware); `e1k_attach` waits 25 ms on the PIT. The discrete 82574L in
   the twin never shows it, so no gate can.
+- **Never write a MAC control register absolutely on the PCH's integrated
+  LAN.** TCTL's reset default on the 82579LM carries `MULR` (bit 28). An
+  absolute write of `EN`, `PSP`, `CT` and `COLD` clears it, and with `MULR`
+  clear the MAC fetches descriptors and takes 16 bytes into the transmit
+  FIFO but never commits a packet with `EOP` to the transmitter: no error,
+  no counter, TDH stays 0, and every register reads as written. QEMU's
+  82574L transmits with `MULR` clear, so no gate could show it; it cost six
+  flashes and one monitor session (item 21, 18 September 2026). Read, mask
+  the fields you own, OR in your bits, write, as Linux does.
 
 ## Working with the hooks
 
