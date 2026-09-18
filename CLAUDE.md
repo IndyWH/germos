@@ -464,6 +464,16 @@ test in the twin.
   82574L transmits with `MULR` clear, so no gate could show it; it cost six
   flashes and one monitor session (item 21, 18 September 2026). Read, mask
   the fields you own, OR in your bits, write, as Linux does.
+- **The desktop's automounter writes a stale superblock over a freshly
+  flashed stick.** A stick whose old partition is mounted when the image
+  goes over it gets the mount's writeback on top of the new bytes, and it
+  boots the old world or none. Unmount before the write, `wipefs` the
+  partition and then the stick first, compare the stick against the image
+  afterwards, power the stick off before the plug comes out, and never
+  trust a stick that was flashed while mounted (ring 7c, the owner's
+  flashes of 17 and 18 September 2026; `stage7/METAL.md` step 3 is the
+  block). The flash is the owner's hand; the hook denies CC every word of
+  it.
 
 ## Working with the hooks
 

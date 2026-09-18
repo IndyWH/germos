@@ -85,16 +85,35 @@ udisksctl unmount -b /dev/disk/by-id/usb-<name>-part1
 
 ## 3. The flash — the owner's hand
 
+With the stick's partitions unmounted (step 2), the block as it was run
+once on 17 September 2026 and twice on the 18th:
+
 ```
-sudo dd if=stage7/out/stick.img of=/dev/disk/by-id/usb-<name>-0:0 bs=4M conv=fsync status=progress
+sudo wipefs -a /dev/disk/by-id/usb-<name>-part1
+sudo wipefs -a /dev/disk/by-id/usb-<name>-0:0
+sudo dd if=stage7/out/stick.img of=/dev/disk/by-id/usb-<name>-0:0 bs=4M oflag=direct conv=fsync status=progress
 sync
+sudo blockdev --flushbufs /dev/disk/by-id/usb-<name>-0:0
+sudo cmp -n 69206016 stage7/out/stick.img /dev/disk/by-id/usb-<name>-0:0
+lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINTS /dev/disk/by-id/usb-<name>-0:0
 udisksctl power-off -b /dev/disk/by-id/usb-<name>-0:0
 ```
 
-Then unplug. `conv=fsync` makes `dd` flush before it returns; `sync` is
-belt and braces; `power-off` (A3) spins the stick down cleanly and
-detaches it from the kernel, so nothing is left half-written when the
-plug comes out. The whole image is 66 MiB and takes seconds.
+Then unplug. **`wipefs -a` first, the partition and then the stick:** the
+old signatures go before the new image arrives, so nothing on the desktop
+recognises a filesystem it could mount and write back to while the flash
+is under way (the stale-superblock finding; CLAUDE.md has the gotcha).
+`oflag=direct` writes past the page cache and `conv=fsync` makes `dd`
+flush before it returns; `sync` and `blockdev --flushbufs` are belt and
+braces. **`cmp -n 69206016` must say nothing** — the stick's first
+69,206,016 bytes are `stick.img` byte for byte (the number is the image's
+size; `mkstick.py` prints it) — and **`lsblk` must show the partition as
+`vfat`** with no MOUNTPOINTS. A `cmp` that names a byte, or a partition
+with no FSTYPE, is a flash that did not take: unmount, and run the block
+again; **never boot a stick that was flashed while mounted.** `power-off`
+(A3) spins the stick down cleanly and detaches it from the kernel, so
+nothing is left half-written when the plug comes out. The whole image is
+66 MiB and takes seconds.
 
 ## 4. The wiring
 
@@ -103,9 +122,20 @@ plug comes out. The whole image is 66 MiB and takes seconds.
   anyone else's table is refused by name and never written — so a drive
   with a leftover table must be blanked first, on another machine, or the
   boot ends at `ERR: no GermOS disk and no blank disk`).
-- **The null-modem cable** COM A ↔ the USB-to-serial adapter on mlrig. A
-  three-wire cable (TX, RX, ground) is enough: `chart.py` opens the port
-  in a way that does not wait for DCD (A1).
+- **The null-modem cable** COM A ↔ the USB-to-serial adapter on mlrig. **It
+  must be a null-modem cable — TX and RX crossed. A straight cable was the
+  whole finding of 15 September 2026:** the HP booted blind, formatted its
+  disk and sent every line into a wire nobody was reading, and the chart
+  stayed empty. A three-wire cable (TX, RX, ground) is enough: `chart.py`
+  opens the port in a way that does not wait for DCD (A1). **Before the
+  first GermOS boot, prove the serial path from a live Ubuntu on the HP:**
+  boot the HP from a live Ubuntu stick, check `/proc/tty/driver/serial` on
+  it (the first UART's line must name a port and an IRQ, and its `tx:`
+  count must rise when something is written to the port), send a word out
+  of COM A and see it arrive on mlrig's chart — and a word back the other
+  way. `history/2026-09-15-ring7c-serial-loopback.log` is the 15th's serial
+  test as the chart recorded it: `hello`, twice. Only then the GermOS
+  stick.
 - **Ethernet** from the HP into the home switch, beside mlrig.
 - **The PS/2 keyboard and mouse** into their own sockets — not USB: the
   metal has no USB driver.
@@ -228,7 +258,7 @@ before that line is not a display finding; read the chart:
 | `i8042: mouse none` | no mouse answered its reset — the boot goes on, keyboard only | the mouse's plug (the socket beside the keyboard's), then the bound |
 | `i8042: self-test ok`, `i8042: mouse reset ok`, `S7: keyboard ready` | the machine is up | — |
 | `S7: keyboard ready` and no prompt on the monitor | the framebuffer: the uncached mapping, the stride, the mode | the serial log is complete and the screen is the bug (CLAUDE.md's first gotcha, in its other half) |
-| `? ping` echoed, then `e1k: tdh N tdt N status 0x… …` and `ERR: nic transmit timed out` | the first frame's descriptor was not completed by the 82579LM within five seconds (the second watched boot, 17 September 2026; item 17 added the `e1k:` line) — the line names the device's state | read it by item 17's rule: **`tdh 0`** — the descriptor was never fetched: the PCH LAN's descriptor-fetch setup, the `TXDCTL0` and `TARC0` bits Linux sets in `e1000_initialize_hw_bits_ich8lan` before it transmits; **`tdh 1`** — the frame went out and only the `DD` write-back is missing; **`status` bit 4** (`TXOFF`) set — transmit is paused by flow control; **`fwsm`** says whether the ME holds the interface; `sta` is the descriptor's own status byte and `ring` its physical address. The twin's line reads `tdh 1 tdt 1 … sta 0x01`. **The fourth watched boot (17 September 2026, 19:50) read** `e1k: tdh 0 tdt 1 status 0x00080483 ctrl 0x00100240 tctl 0x0003f0fa txdctl 0x00000000 tarc0 0x00000403 ctrlext 0x01481000 fwsm 0x6001c04c sta 0x00 ring 0x00000000004ce000` — never fetched, the link up at 1000 full, `TXOFF` clear, TXDCTL zero, TARC0 bare, FWSM with `FW_VALID` (the ME shares the LAN). **Item 18 sets the ich8lan hardware bits** (CTRL_EXT 22, TXDCTL0/1 22, TARC0 23/24/26/27, TARC1 24/26/28/30) in `e1k_attach` before TCTL. **The fifth watched boot (17 September 2026, 20:53) read** `e1k: tdh 0 tdt 1 status 0x00080483 ctrl 0x00100240 tctl 0x0003f0fa txdctl 0x00400000 tarc0 0x0d800403 ctrlext 0x01481000 fwsm 0x6001c04c sta 0x00 ring 0x00000000004ce000` — the bits are in (the 82579LM reads them back) and the descriptor is still never fetched. **Item 19** reads the ME's window: with `FW_VALID` set the Management Engine shares the MAC's registers and a host write can be lost while FWSM bit 24 is set (Linux's `FLAG2_PCIM2PCI_ARBITER_WA`, the 82579 with the ME enabled — this HP), and TDLEN, TDBAL and TDBAH had never been read back. From item 19 every register write waits for that bit (`e1k_write`), the six ring registers are read back and rewritten (`e1k_verify`), and the line gains three fields read from the device — `… sta 0x00 tdlen N tdbal 0x… tdbah 0x… expect 0x…` (`expect` is the old `ring`: the address we wrote). **How to read the sixth boot:** `pong` — step 5 passes. The line again with **`tdlen 128` and `tdbal` equal to the low half of `expect`** — the ring is configured in the device and the fetch is gated elsewhere: the `EXTCNF_CTRL.SWFLAG` semaphore, then the TXDCTL write-back policy and `CTRL_EXT.RO_DIS`. **`tdlen 0` or a `tdbal` that does not match** — a lost write the wait did not catch: the window is not the one Linux waits on. **`ERR: nic register 0x… wrote 0x… read 0x… - it will not hold its value`** — the ME overwrites what the host writes; the rewrite bound is the next number to read. The numbers choose the fix — one item, with `ich8lan.c` open. **The sixth watched boot (17 September 2026, 23:12) read** `… sta 0x00 tdlen 128 tdbal 0x004ce000 tdbah 0x00000000 expect 0x00000000004ce000` — the ring configured in the device exactly as written, the lost write ruled out; and its `status 0x00080483` has bit 10 (`PHYRA`, PHY reset asserted) set and bit 9 (`LAN_INIT_DONE`) clear, the reverse of the twin's — the PHY reset Linux issues and completes on this chip. **From item 20 the ERR line is followed by `mon: ready` and the machine stays up**: the serial monitor (section 10) answers questions over the wire, and a CC session on mlrig asks them; nothing more is typed on the HP. **The seventh watched boot (18 September 2026, 09:14) stopped in the monitor with the same line, and the session found the cause in that one boot** (`stage7/out/metal.log` lines 128 onward): receive DMA works (three ARPs from mlrig moved `RDH` 0 to 3), the descriptor and the frame in memory are as `e1k_send` wrote them, and on `t` the transmit FIFO's tail takes 16 bytes (`TDFT` `0xa00` to `0xa02`) and freezes; a descriptor **without `EOP`** is fetched whole, every descriptor **with `EOP`** stalls at the hand-off to the transmitter. `TCTL` read straight after a reset is **`0x3003f0f8`** — the 82579LM's default carries `MULR` (bit 28) — and the driver's absolute write of `0x0003f0fa` cleared it. From a fresh reset: bit 29 alone stalls, **bit 28 alone sends** (`mon: t tdh 1 tdt 1 sta 0x01`), and `TCTL 0x3003f0fa` with `TARC1 0x45000403` sends (`tdh 2 tdt 2 sta 0x01`, `TPT` 2, the HP's MAC in mlrig's neighbour table). **Item 21 is the fix:** `e1k_attach` reads TCTL, masks `CT` and `COLD`, ORs in `EN`, `PSP`, `CT`, `COLD` and `MULR`, and writes it; `TARC1` bit 28 is cleared, as Linux has it with `MULR` set. **How to read the eighth boot:** `pong` on the screen and `w 001` on the strip — step 5 passes; the `e1k:` line again — its `tctl` field says whether `0x3003f0fa` reached the device, and the monitor is there to ask |
+| `? ping` echoed, then `e1k: tdh N tdt N status 0x… …` and `ERR: nic transmit timed out` | the first frame's descriptor was not completed by the 82579LM within five seconds (the second watched boot, 17 September 2026; item 17 added the `e1k:` line) — the line names the device's state | read it by item 17's rule: **`tdh 0`** — the descriptor was never fetched: the PCH LAN's descriptor-fetch setup, the `TXDCTL0` and `TARC0` bits Linux sets in `e1000_initialize_hw_bits_ich8lan` before it transmits; **`tdh 1`** — the frame went out and only the `DD` write-back is missing; **`status` bit 4** (`TXOFF`) set — transmit is paused by flow control; **`fwsm`** says whether the ME holds the interface; `sta` is the descriptor's own status byte and `ring` its physical address. The twin's line reads `tdh 1 tdt 1 … sta 0x01`. **The fourth watched boot (17 September 2026, 19:50) read** `e1k: tdh 0 tdt 1 status 0x00080483 ctrl 0x00100240 tctl 0x0003f0fa txdctl 0x00000000 tarc0 0x00000403 ctrlext 0x01481000 fwsm 0x6001c04c sta 0x00 ring 0x00000000004ce000` — never fetched, the link up at 1000 full, `TXOFF` clear, TXDCTL zero, TARC0 bare, FWSM with `FW_VALID` (the ME shares the LAN). **Item 18 sets the ich8lan hardware bits** (CTRL_EXT 22, TXDCTL0/1 22, TARC0 23/24/26/27, TARC1 24/26/28/30) in `e1k_attach` before TCTL. **The fifth watched boot (17 September 2026, 20:53) read** `e1k: tdh 0 tdt 1 status 0x00080483 ctrl 0x00100240 tctl 0x0003f0fa txdctl 0x00400000 tarc0 0x0d800403 ctrlext 0x01481000 fwsm 0x6001c04c sta 0x00 ring 0x00000000004ce000` — the bits are in (the 82579LM reads them back) and the descriptor is still never fetched. **Item 19** reads the ME's window: with `FW_VALID` set the Management Engine shares the MAC's registers and a host write can be lost while FWSM bit 24 is set (Linux's `FLAG2_PCIM2PCI_ARBITER_WA`, the 82579 with the ME enabled — this HP), and TDLEN, TDBAL and TDBAH had never been read back. From item 19 every register write waits for that bit (`e1k_write`), the six ring registers are read back and rewritten (`e1k_verify`), and the line gains three fields read from the device — `… sta 0x00 tdlen N tdbal 0x… tdbah 0x… expect 0x…` (`expect` is the old `ring`: the address we wrote). **How to read the sixth boot:** `pong` — step 5 passes. The line again with **`tdlen 128` and `tdbal` equal to the low half of `expect`** — the ring is configured in the device and the fetch is gated elsewhere: the `EXTCNF_CTRL.SWFLAG` semaphore, then the TXDCTL write-back policy and `CTRL_EXT.RO_DIS`. **`tdlen 0` or a `tdbal` that does not match** — a lost write the wait did not catch: the window is not the one Linux waits on. **`ERR: nic register 0x… wrote 0x… read 0x… - it will not hold its value`** — the ME overwrites what the host writes; the rewrite bound is the next number to read. The numbers choose the fix — one item, with `ich8lan.c` open. **The sixth watched boot (17 September 2026, 23:12) read** `… sta 0x00 tdlen 128 tdbal 0x004ce000 tdbah 0x00000000 expect 0x00000000004ce000` — the ring configured in the device exactly as written, the lost write ruled out; and its `status 0x00080483` has bit 10 (`PHYRA`, PHY reset asserted) set and bit 9 (`LAN_INIT_DONE`) clear, the reverse of the twin's — the PHY reset Linux issues and completes on this chip. **From item 20 the ERR line is followed by `mon: ready` and the machine stays up**: the serial monitor (section 10) answers questions over the wire, and a CC session on mlrig asks them; nothing more is typed on the HP. **The seventh watched boot (18 September 2026, 09:14) stopped in the monitor with the same line, and the session found the cause in that one boot** (`stage7/out/metal.log` lines 128 onward): receive DMA works (three ARPs from mlrig moved `RDH` 0 to 3), the descriptor and the frame in memory are as `e1k_send` wrote them, and on `t` the transmit FIFO's tail takes 16 bytes (`TDFT` `0xa00` to `0xa02`) and freezes; a descriptor **without `EOP`** is fetched whole, every descriptor **with `EOP`** stalls at the hand-off to the transmitter. `TCTL` read straight after a reset is **`0x3003f0f8`** — the 82579LM's default carries `MULR` (bit 28) — and the driver's absolute write of `0x0003f0fa` cleared it. From a fresh reset: bit 29 alone stalls, **bit 28 alone sends** (`mon: t tdh 1 tdt 1 sta 0x01`), and `TCTL 0x3003f0fa` with `TARC1 0x45000403` sends (`tdh 2 tdt 2 sta 0x01`, `TPT` 2, the HP's MAC in mlrig's neighbour table). **Item 21 is the fix:** `e1k_attach` reads TCTL, masks `CT` and `COLD`, ORs in `EN`, `PSP`, `CT`, `COLD` and `MULR`, and writes it; `TARC1` bit 28 is cleared, as Linux has it with `MULR` set. **How to read the eighth boot:** `pong` on the screen and `w 001` on the strip — step 5 passes; the `e1k:` line again — its `tctl` field says whether `0x3003f0fa` reached the device, and the monitor is there to ask. **The monitor found the fix on 18 September 2026, and the eighth watched boot, with the item 21 binary, gave `pong` at step 5 — from item 21 a `pong` is what step 5 gives** |
 
 Every `S7:` line after `keyboard ready` is the raw echo of what is typed;
 `S7: mouse ready` goes out once, on the first packet, when the mouse first
@@ -291,7 +321,11 @@ From item 20 the transmit timeout no longer halts the machine. After the
 `mon: ready` and reads commands from the serial line, one per line,
 answering each with one line starting `mon:`. The questions that cost a
 flash and a boot each at items 16 to 19 are asked from mlrig instead,
-many per boot; the owner's part is the flash and the power button.
+many per boot; the owner's part is the flash and the power button. **The
+monitor found the fix on 18 September 2026 in one boot (item 21: TCTL's
+`MULR` bit), so from item 21 a `pong` is what step 5 gives and no green
+day reaches this section; it stays for the next device that will not
+speak.**
 
 **Terminal 3, in place of the chart** — the same two arguments, the port
 exactly as step 5 names it:
