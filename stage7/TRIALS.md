@@ -226,7 +226,7 @@ more than five. During a rest the row is blank in either layout.
 
 **On the twin** (1920x1080, C = 120), the four-item row: `w = 30`; boxes
 0–28, 30–58, 60–88, 90–119; gaps at 29, 59, 89; labels `? ask` at 12–16,
-`! grow` at 41–46, `Tab app` at 71–77, `Esc exit` at 100–107. The
+`! grow` at 41–46, `Tab app` at 71–77, `Esc exit` at 101–108 (the last box is thirty cells wide). The
 two-item row at the prompt with nothing installed: `w = 60`; boxes 0–58
 and 60–119; the gap at 59; labels at 27–31 and 87–92.
 

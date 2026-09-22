@@ -2091,6 +2091,26 @@ sittings 1, 3, 4; a block median altered by one refused with the block
 named); a document with one cue row edited to repeat an item is refused
 at import; `--disk` on the 7c gate's disk prints `no sittings`; `--serial`
 on a scratch log of the `trial:` lines prints example A's table.
+**Item 4** — `stage7/test-7d.sh` with test 1, the log and test 2;
+`stage7/checktrials.py` with `--document` and `--row`: the log
+(`stage7/out/gate-7d.log`, a dated header per run, `tee` on every line),
+the port refusals, the build, test 1 (the PE checks, the frozen
+`checkmetal.py --stick` run as it is, `--document`), test 2 (`--row`, one
+boot: the mode-3 refusal through the mock's `test app`, the sitting's
+start with layout A's row to the pixel and the cue, block 1 played by the
+synthetic human, block 2's row as TRIALS.md's boxes in the surface's
+bytes and on the screen). The checker's driver is 7c's skeleton with the
+`play` step; the synthetic human (`Human`) anchors every press on the
+guest's own `trial:` line in the serial file at a 5 ms poll and parks its
+hand on the next target during the pause (plan decision 6); its four
+timing constants are `None` until the item 7 run and it refuses to play
+while any is unset. One number in TRIALS.md corrected before the freeze
+while writing the checker: the last box is thirty cells wide, so `Esc
+exit` sits at 101–108, not 100–107 (the rule was right, the example's
+arithmetic was not — the checker computes the columns by the rule).
+**Test 1 green; test 2 red by design** (the constants unset; on the closed
+binary `! trial` would go to the mock as a grow and no `trial:` line
+would appear).
 
 ## Ring 7c — the metal · opened 15 September 2026 · closed 18 September 2026
 
