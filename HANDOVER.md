@@ -2128,6 +2128,20 @@ named the second miss in "block 5 (A)", but block 5 of `ABBA BAAB` is B;
 the miss sits in block 4 (A), so B's misses (1) are not worse than A's (2)
 and the scripted verdict is B. **Tests 2 and 3 red by design** (the
 constants unset until item 7).
+**Item 6** — `checktrials.py --cage` and test 4: the harness's own
+strings (7c's, with the log's path under `stage7/out/`), the checker's
+command — `checkmetal.qemu_argv` itself — through the frozen
+`check_argv_7c`, the frozen modules' ports and display, the payload table
+as a subprocess with `0 wrong` required, the spot checks as data (every
+mutation of this ring's four files denied, running the gate, the checker
+and the tool allowed), then the three earlier Stage 7 gates run in turn
+from `test-7d.sh` on the same source. Run whole once on the closed binary
+(the log's second run): **test 1 green; tests 2 and 3 red by design; test
+4 red on (c) alone** — the four files are writable today — while (a), (b)
+and (d) pass: the 7c, 7b and 7a gates green inside test 4 (this is the
+one run of the three gates before this commit, A4). TRIALS.md gained one
+clause while the probe was drafted: no rest and no rest line after block
+8 (the sitting's end follows the block note directly).
 
 ## Ring 7c — the metal · opened 15 September 2026 · closed 18 September 2026
 

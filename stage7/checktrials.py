@@ -97,6 +97,9 @@ HIT_WINDOW_MS = None          # the per-hit sanity window, CC's own (plan: 60 un
 READY_LIMIT_S = None          # the ready window for a boot from the stick copy
 SETTLE_S = None               # after ready, before typing (a full notebook's replay)
 POLL_S = 0.005                # the serial file's poll (item 1: a key's round trip is 5-20 ms at this poll)
+if os.environ.get("CHECKTRIALS_PROBE"):          # the item 7 run against the private binary: "offset,hit,ready,settle"
+    OFFSET_MS, HIT_WINDOW_MS, READY_LIMIT_S, SETTLE_S = [float(x) for x in os.environ["CHECKTRIALS_PROBE"].split(",")]
+    OFFSET_MS, HIT_WINDOW_MS = int(OFFSET_MS), int(HIT_WINDOW_MS)
 UNSET = [n for n, v in (("OFFSET_MS", OFFSET_MS), ("HIT_WINDOW_MS", HIT_WINDOW_MS),
                         ("READY_LIMIT_S", READY_LIMIT_S), ("SETTLE_S", SETTLE_S)) if v is None]
 
@@ -252,7 +255,7 @@ class Human:
             L = layout(s, b)
             seq = cue_sequence(b)
             blk = script["blocks"][b - 1]
-            cue_at = anchor + (REST_MS / 1000.0 if b > 1 else 0.0)
+            cue_at = anchor + (REST_MS / 1000.0 if b > 1 else 0.0)     # the first cue: at the sitting line, or after the rest
             for c in range(1, CUES_PER_BLOCK + 1):
                 if abort and abort[0] == b and c == abort[1] + 1:
                     self.type("\x1b")
@@ -266,7 +269,7 @@ class Human:
                 d = blk["ms"][c - 1] / 1000.0
                 if c in blk.get("miss", ()):
                     self.moveto(*self.gap(L))
-                    time.sleep(max(0.0, cue_at + PAUSE_MS / 1000.0 + d - time.time()))
+                    time.sleep(max(0.0, cue_at + d - time.time()))
                     self.press(False)
                     m, t = self.wait_line(rb"trial: %d %d %s %d miss" % (s, b, L.encode(), c), 5.0)
                     if not m:
@@ -275,13 +278,13 @@ class Human:
                     time.sleep(max(0.0, t + d - time.time()))
                 else:
                     self.moveto(*self.target(L, idx))
-                    time.sleep(max(0.0, cue_at + PAUSE_MS / 1000.0 + d - time.time()))
+                    time.sleep(max(0.0, cue_at + d - time.time()))
                 self.press(False)
                 m, t = self.wait_line(rb"trial: %d %d %s %d (\d+)" % (s, b, L.encode(), c), 5.0)
                 if not m:
                     return "no hit line for sitting %d block %d cue %d" % (s, b, c)
                 results.setdefault("hits", {})[(b, c)] = int(m.group(1))
-                cue_at = t                        # the next cue follows the pause after this hit
+                cue_at = t + PAUSE_MS / 1000.0    # the next cue follows the pause after this hit
             m, t = self.wait_line(rb"trial: block %d %d %s (\d+) (\d+) (\d+)" % (s, b, L.encode()), 5.0)
             if not m:
                 return "no block line for sitting %d block %d" % (s, b)
@@ -882,7 +885,7 @@ def run_sitting():
         problems += check_counts(end, {"mode": 0, "trial_sitting": 2, "notes": len(notes), "layout_default": 0, "hits": 0}, "after the abort")
     shot = os.path.join(TRIALS_OUT, "screen.sitting.2.ppm")
     problems += check_table_panel(shot, geometry, notes, 2, "sitting 2's table")
-    problems += check_region_rows(shot, geometry, regs["conversation"], ["click: " + cue_sequence(3)[3], "sitting 2 aborted 3", PROMPT])
+    problems += check_region_rows(shot, geometry, regs["conversation"], ["click: " + cue_sequence(3)[2], "sitting 2 aborted 3", PROMPT])
     problems += check_mode_field(shot, geometry, "prompt")
     if read_image(DISK)[:len(disk_after_1)] == disk_after_1:
         problems.append("the disk did not change during sitting 2")
@@ -1015,6 +1018,81 @@ def run_sitting():
     return 0 if ok else 1
 
 
+# ---------------------------------------------------- test 4: the cage ------
+# (a) is test-7d.sh's own strings and (d) its run of the three earlier
+# gates. Here: (b) the argv check - this checker's command IS
+# checkmetal.qemu_argv, passed through the frozen check_argv_7c; the ports
+# the frozen modules hold; (c) the payload table as a subprocess, 0 wrong,
+# and the spot checks held as data: the four frozen paths of this ring
+# denied every mutation, running them allowed.
+
+FROZEN_7D = ["stage7/TRIALS.md", "stage7/test-7d.sh", "stage7/checktrials.py", "stage7/trials.py"]
+SPOT_DENY_7D = [c for p in FROZEN_7D for c in (
+    "echo x > %s" % p, "sed -i 's/a/b/' %s" % p, "cp /tmp/x %s" % p, "rm -f %s" % p,
+    "python3 - <<'EOF'\nopen('%s','w').write('x')\nEOF" % p)]
+SPOT_ALLOW_7D = [
+    "./stage7/test-7d.sh", "./stage7/test-7d.sh 2>&1 | tail -20",
+    "python3 stage7/checktrials.py --document", "python3 stage7/checktrials.py --row",
+    "python3 stage7/checktrials.py --sitting", "python3 stage7/checktrials.py --cage",
+    "python3 stage7/trials.py --example", "python3 stage7/trials.py --disk stage7/out/trials/disk.img",
+    "python3 stage7/trials.py --serial stage7/out/metal.log",
+    "cat stage7/TRIALS.md | head", "grep -n 'trial' stage7/checktrials.py",
+    "tail -5 stage7/out/gate-7d.log", "echo x >> stage7/out/gate-7d.log",
+    "rm -rf stage7/out/trials stage7/out/probe7d",
+    "git commit -F msg.txt",
+]
+
+
+def check_bodyguard_7d():
+    problems = []
+    r = subprocess.run([sys.executable, checkmetal.PAYLOADS], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    last = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else ""
+    m = re.fullmatch(r"(\d+) payloads: (\d+) must be denied, (\d+) must be allowed, (\d+) wrong", last)
+    if r.returncode != 0 or not m or m.group(4) != "0":
+        problems.append("the payload table: exit %d, last line %r - want exit 0 and 0 wrong" % (r.returncode, last))
+        for line in r.stdout.splitlines():
+            if line.startswith("  WRONG"):
+                problems.append("  " + line.strip())
+    else:
+        say("the payload table: %s" % last)
+    for p in FROZEN_7D:
+        for tool, ti in (("Write", {"file_path": p, "content": "x"}), ("Edit", {"file_path": p, "old_string": "a", "new_string": "b"})):
+            payload = {"tool_name": tool, "tool_input": ti}
+            rr = subprocess.run([sys.executable, checkmetal.HOOK], input=__import__("json").dumps(payload).encode(),
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=dict(os.environ, CLAUDE_PROJECT_DIR=REPO))
+            if rr.returncode != 2:
+                problems.append("the hook allows %s on %s - the four files of this ring must be frozen" % (tool, p))
+    for c in SPOT_DENY_7D:
+        v = checkmetal.hook_verdict(c)
+        if v != "DENY":
+            problems.append("the hook %ss %r - every mutation of this ring's frozen files must be denied" % (v.lower(), c))
+    for c in SPOT_ALLOW_7D:
+        v = checkmetal.hook_verdict(c)
+        if v != "ALLOW":
+            problems.append("the hook %ss %r - running the gate, the checker and the tool must be allowed" % (v.lower(), c))
+    return problems
+
+
+def run_cage():
+    argv = qemu_argv(4, DISK, os.path.join(TRIALS_OUT, "stick.x.img"), os.path.join(TRIALS_OUT, "x"))
+    problems = checkmetal.check_argv_7c(argv, RELAY_PORT, checkmetal.MAC)
+    import wire
+    if twin.DEFAULT_PORT != checkmetal.REHEARSAL_PORT or wire.RELAY_PORT != RELAY_PORT or twin.VGA_ARGS != checkmetal.DISPLAY:
+        problems.append("the frozen modules' ports or display are not ring 7c's")
+    if not report("the checker's QEMU command is not the twin of the HP", problems):
+        return 1
+    say("the checker's QEMU command is checkmetal.qemu_argv itself: one restricted cage to the relay on %d, the e1000e with %s, "
+        "-cpu IvyBridge, the display, the stick copy over xhci, the SATA disk on ide.1, two drives under stage7/out/, no esp.img"
+        % (RELAY_PORT, checkmetal.MAC))
+    problems = check_bodyguard_7d()
+    ok = report("the bodyguard does not freeze this ring's four files", problems)
+    if ok:
+        say("the bodyguard: the four frozen files of this ring denied every mutation (%d spellings), the gate, the checker and the tool "
+            "allowed (%d shapes)" % (len(SPOT_DENY_7D) + 2 * len(FROZEN_7D), len(SPOT_ALLOW_7D)))
+    say("the cage: %s" % ("held, and the criteria frozen" if ok else "not proven"))
+    return 0 if ok else 1
+
+
 # --------------------------------------------------------------- main ------
 
 def main(argv):
@@ -1025,6 +1103,8 @@ def main(argv):
         return run_row()
     if argv == ["--sitting"]:
         return run_sitting()
+    if argv == ["--cage"]:
+        return run_cage()
     say("usage: checktrials.py --document | --row | --sitting | --cage")
     return 1
 

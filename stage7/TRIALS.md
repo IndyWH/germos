@@ -134,7 +134,7 @@ Enter, Backspace, Tab — **except Esc, which aborts** (below).
 <s> <b> <L> <hits> <misses> <median>` and its line — `hits` is 10 for
 every completed block — then `trial_cue` 0, the row blank (both rows
 background, in either layout), the console line `block <b> of 8 - rest`
-in the conversation panel, and **the rest**: 2000 ms; then, for blocks
+in the conversation panel, and **the rest**: 2000 ms (no rest and no rest line after block 8); then, for blocks
 1–7, `trial_block + 1`, `trial_layout` by the order, `trial_hits` and
 `trial_misses` 0, the row set in the new layout, the first cue of the new
 block; after block 8, the sitting's end.

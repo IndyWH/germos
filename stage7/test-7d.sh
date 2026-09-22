@@ -199,6 +199,78 @@ else
 fi
 echo
 
+# ----------------------------------------- test 4: the freeze and the default --
+# Four parts. (a) This harness inspects its OWN cage, machine, display, stick
+# and disk strings, and that no QEMU line of its own names esp.img; (b)-(c)
+# stage7/checktrials.py --cage: the checker's argv (ring 7c's own command)
+# through the frozen check_argv_7c, the payload table 0 wrong with this
+# ring's four frozen paths, the spot checks; (d) the three earlier Stage 7
+# gates run in turn on the same source - the same binary - each exit 0:
+# layout A at the prompt is byte-identical to the row they assert.
+
+echo "Test 4 - The freeze and the default unchanged: the harness's strings, the argv check, the payload table with the four new frozen paths, the 7c, 7b and 7a gates green on the ring's binary"
+cage_probs=()
+case "$CAGE_NETDEV" in
+  user,*) : ;;
+  *) cage_probs+=("the netdev is not slirp user mode: $CAGE_NETDEV") ;;
+esac
+case ",$CAGE_NETDEV," in
+  *,restrict=on,*) : ;;
+  *) cage_probs+=("the netdev lacks restrict=on: $CAGE_NETDEV") ;;
+esac
+n_fwd=$(printf '%s' "$CAGE_NETDEV" | grep -o 'guestfwd=' | wc -l)
+[ "$n_fwd" -eq 1 ] || cage_probs+=("expected exactly one guestfwd, found $n_fwd: $CAGE_NETDEV")
+printf '%s' "$CAGE_NETDEV" | grep -qE "guestfwd=tcp:10\.0\.2\.4:9999-cmd:nc -N 127\.0\.0\.1 ${RELAY_PORT}(,|\$)" || \
+  cage_probs+=("the guestfwd is not tcp:10.0.2.4:9999 via 'nc -N 127.0.0.1 ${RELAY_PORT}': $CAGE_NETDEV")
+case "$CAGE_NETDEV" in
+  *hostfwd*) cage_probs+=("the netdev opens a hostfwd: $CAGE_NETDEV") ;;
+esac
+[ "$CAGE_DEVICE" = "e1000e,netdev=n0,mac=$MAC" ] || cage_probs+=("the device is not an e1000e on netdev n0 with the patient's MAC: $CAGE_DEVICE")
+[ "$MAC" = "6c:3b:e5:3b:86:45" ] || cage_probs+=("the MAC is not the patient's: $MAC")
+[ "$DISPLAY" = "-vga none -device VGA,edid=on,xres=1920,yres=1080" ] || cage_probs+=("the display is not the standard VGA device with the 1920x1080 EDID: $DISPLAY")
+[ "$MACHINE" = "-machine q35 -cpu IvyBridge -m 256M -bios $OVMF" ] || cage_probs+=("the machine is not q35 on the patient's CPU with OVMF: $MACHINE")
+[ "$(sata_drive "$TRIALS/disk.img")" = "-drive if=none,id=d0,format=raw,file=$TRIALS/disk.img -device ide-hd,drive=d0,bus=ide.1" ] || \
+  cage_probs+=("the disk is not the raw file under stage7/out/trials/ on an ide-hd at ide.1")
+[ "$(stick_drive "$TRIALS/stick.x.img")" = "-device qemu-xhci -drive if=none,id=stick,format=raw,file=$TRIALS/stick.x.img -device usb-storage,drive=stick" ] || \
+  cage_probs+=("the stick is not a raw copy under stage7/out/trials/ on usb-storage behind qemu-xhci")
+case "$TRIALS" in
+  "$OUT"/*) : ;;
+  *) cage_probs+=("the scratch $TRIALS is not under stage7/out/") ;;
+esac
+case "$LOG" in
+  "$OUT"/*) : ;;
+  *) cage_probs+=("the log $LOG is not under stage7/out/") ;;
+esac
+if grep -qE 'qemu-system-x86_64.*esp\.img' "${BASH_SOURCE[0]}"; then
+  cage_probs+=("a QEMU line of this harness names esp.img - the stick is the only boot medium on the twin of the HP")
+fi
+
+t4=0
+if [ "${#cage_probs[@]}" -ne 0 ]; then
+  fail "test 4: this harness's own cage, machine, display, stick, disk or log string is not the twin of the HP"
+  for p in "${cage_probs[@]}"; do echo "    - $p"; done
+  t4=1
+else
+  echo "    the harness's own -netdev string carries restrict=on and the single guestfwd to 10.0.2.4:9999 via nc to the relay on 127.0.0.1:$RELAY_PORT; the e1000e with the patient's MAC; q35 on IvyBridge; the VGA device with the 1920x1080 EDID; the stick a copy on usb-storage behind qemu-xhci and the disk a raw file on ide.1, both under stage7/out/trials/; the log under stage7/out/; no QEMU line names esp.img"
+  python3 "$REPO/stage7/checktrials.py" --cage || t4=1
+  for gate in test-7c.sh test-7b.sh test.sh; do
+    echo
+    echo "    --- ./stage7/$gate on the ring's binary (the same source, the same builder) ---"
+    if "$REPO/stage7/$gate"; then
+      echo "    --- ./stage7/$gate: green ---"
+    else
+      echo "    --- ./stage7/$gate: RED ---"
+      t4=1
+    fi
+  done
+  if [ "$t4" -eq 0 ]; then
+    pass "test 4: the four files frozen, the argv check, the payload table 0 wrong, the 7c, 7b and 7a gates green on the ring's binary"
+  else
+    fail "test 4: the freeze or an earlier gate is not proven (see above)"
+  fi
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then
