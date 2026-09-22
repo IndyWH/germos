@@ -849,6 +849,65 @@ CASES += [(c, ALLOW, "ring 7c bodyguard allows: " + w) for c, w in [
     (bash("echo 'the flash is the owner'\\''s hand; the stick as built'"), "the ring's words in prose"),
 ]]
 
+# --- Stage 7 ring 7d: the freeze (plan item 8, decision 11) -----------------
+# The four files of the trials frozen - the document, the tool, the gate,
+# the checker - and the allowances this ring runs: the gate (its output to
+# the log), the checker's four modes, the tool's three, the probe's private
+# copy under out/ built and booted, the section file the owner appends,
+# the guest and the builders written, the ring's words in prose.
+TRIALS7D = "-drive if=none,id=d0,format=raw,file=stage7/out/trials/disk.img -device ide-hd,drive=d0,bus=ide.1 "
+STICK7D = "-device qemu-xhci -drive if=none,id=stick,format=raw,file=stage7/out/trials/stick.sitting.img -device usb-storage,drive=stick "
+FROZEN_7D = ["stage7/TRIALS.md", "stage7/test-7d.sh", "stage7/checktrials.py", "stage7/trials.py"]
+CASES += [(c, v, "ring 7d freeze: " + w) for c, v, w in freeze_cases(FROZEN_7D)]
+CASES += [
+    (write("stage7/TRIALS.md"), DENY, "ring 7d freeze: the document"),
+    (write("stage7/trials.py"), DENY, "ring 7d freeze: the tool"),
+    (write("stage7/checktrials.py"), DENY, "ring 7d freeze: the checker"),
+    (write("stage7/test-7d.sh"), DENY, "ring 7d freeze: the gate"),
+    (edit("stage7/TRIALS.md"), DENY, "ring 7d freeze: Edit on the document"),
+    (bash("python3 - <<'EOF'\nopen('stage7/trials.py','w').write('x')\nEOF"), DENY, "ring 7d freeze: python writing the tool"),
+    (bash("sed -i 's/OFFSET_MS = 39/OFFSET_MS = 40/' stage7/checktrials.py"), DENY, "ring 7d freeze: sed -i on a timing constant"),
+    (bash("sed -i 's/ABBA BAAB/BAAB ABBA/' stage7/TRIALS.md"), DENY, "ring 7d freeze: sed -i on the order"),
+    (bash("cat stage7/glass-7d-section.md >> stage6/GLASS.md"), DENY, "ring 7d freeze: the append to GLASS.md is the owner's hand"),
+    (bash("echo x >> stage7/TRIALS.md"), DENY, "ring 7d freeze: appending to the document"),
+    (write("stage7/glass-7d-section.md"), ALLOW, "ring 7d freeze allows: the section file the owner appends"),
+    (write("stage7/stage7.asm"), ALLOW, "ring 7d freeze allows: Write the implementation"),
+    (write("stage7/mkimage.sh"), ALLOW, "ring 7d freeze allows: the builder is not frozen"),
+    (write("stage7/mkstick.py"), ALLOW, "ring 7d freeze allows: the stick's builder is not frozen"),
+    (write("stage7/plan-7d.md"), ALLOW, "ring 7d freeze allows: the plan is paperwork"),
+    (write("stage7/out/probe7d/stage7.asm"), ALLOW, "ring 7d freeze allows: the probe's private copy under out/"),
+    (write("stage8/TRIALS.md"), ALLOW, "ring 7d freeze allows: a later stage's document of the same name"),
+    (write("stage8/trials.py"), ALLOW, "ring 7d freeze allows: a later stage's tool of the same name"),
+    (bash("./stage7/test-7d.sh"), ALLOW, "ring 7d freeze allows: running the gate"),
+    (bash("./stage7/test-7d.sh 2>&1 | tail -20"), ALLOW, "ring 7d freeze allows: the gate piped"),
+    (bash("tail -5 stage7/out/gate-7d.log"), ALLOW, "ring 7d freeze allows: reading the gate's log"),
+    (bash("echo x >> stage7/out/gate-7d.log"), ALLOW, "ring 7d freeze allows: appending to the gate's log under out/"),
+    (bash("python3 stage7/checktrials.py --document"), ALLOW, "ring 7d freeze allows: the checker's document mode"),
+    (bash("python3 stage7/checktrials.py --row"), ALLOW, "ring 7d freeze allows: the checker's row mode"),
+    (bash("python3 stage7/checktrials.py --sitting"), ALLOW, "ring 7d freeze allows: the checker's sitting mode"),
+    (bash("python3 stage7/checktrials.py --cage"), ALLOW, "ring 7d freeze allows: the checker's cage mode"),
+    (bash("python3 stage7/trials.py --example"), ALLOW, "ring 7d freeze allows: the tool on the worked examples"),
+    (bash("python3 stage7/trials.py --disk stage7/out/trials/disk.img"), ALLOW, "ring 7d freeze allows: the tool on a disk image"),
+    (bash("python3 stage7/trials.py --serial stage7/out/metal.log"), ALLOW, "ring 7d freeze allows: the tool on the chart"),
+    (bash("cat stage7/TRIALS.md | head -40"), ALLOW, "ring 7d freeze allows: reading the document"),
+    (bash("grep -n 'OFFSET' stage7/checktrials.py"), ALLOW, "ring 7d freeze allows: grepping the checker"),
+    (bash("nasm -f bin stage7/out/probe7d/stage7.asm -o stage7/out/probe7d/out/BOOTX64.EFI"), ALLOW, "ring 7d freeze allows: assembling the probe under out/"),
+    (bash("cp stage7/out/probe7d/out/stick.img stage7/out/stick.img"), ALLOW, "bodyguard allows: the probe's stick over the scratch stick, out/ to out/"),
+    (bash("rm -rf stage7/out/trials stage7/out/probe7d"), ALLOW, "ring 7d freeze allows: clearing the gate's scratch and the probe"),
+    (bash("git add stage7/TRIALS.md stage7/test-7d.sh stage7/checktrials.py stage7/trials.py .claude/hooks/protect-tests.py .claude/hooks/payloads.py"),
+     ALLOW, "ring 7d freeze allows: git add"),
+    (bash("git commit -F msg.txt"), ALLOW, "ring 7d freeze allows: a commit message from a file"),
+    (bash(QEMU7 + DISPLAY6B + STICK7D + TRIALS7D + CAGE7B + "-display none -serial file:stage7/out/trials/serial.sitting.1.txt -monitor stdio"),
+     ALLOW, "bodyguard allows: the checker's sitting boot under the trials scratch"),
+    (bash(QEMU7 + DISPLAY6B + STICK7D.replace("stage7/out/trials/stick.sitting.img", "stage7/out/probe7d/measure.stick.img")
+          + TRIALS7D.replace("stage7/out/trials/disk.img", "stage7/out/probe7d/measure.disk.img") + CAGE7B
+          + "-display none -serial file:stage7/out/probe7d/measure.serial.txt -monitor stdio"),
+     ALLOW, "bodyguard allows: the item 7 probe's boot under out/"),
+    (bash(QEMU7 + DISPLAY6B + STICK7D + "-drive if=none,id=d0,format=raw,file=/tmp/trial.img -device ide-hd,drive=d0,bus=ide.1 " + CAGE7B),
+     DENY, "bodyguard: a trial disk outside out/ is denied"),
+    (bash("echo 'the trial, the cue, the hit, the miss, layout B, the synthetic human, the verdict'"), ALLOW, "bodyguard allows: the ring's words in prose"),
+]
+
 
 def run(case):
     tool, tool_input = case

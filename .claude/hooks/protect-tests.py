@@ -208,6 +208,20 @@ PLAN_MARKER = "PLAN_APPROVED"
 # criterion), stage7/mkstick.py (the builder, like every builder),
 # broker/relay.py and broker/chart.py (tools), stage7/mkimage.sh,
 # stage7/stage7.asm, broker/claude_backend.py and stage7/plan-7c.md.
+#
+# Stage 7 ring 7d (plan decision 11) freezes four files: stage7/TRIALS.md
+# (the trial's one text - the cue table, the orders, the verdict rule,
+# layout B's boxes, the notes, the obs fields: the assembler implements
+# it), stage7/trials.py (the criterion's parser: it executes the
+# document's Python and compares it with the document's tables, and its
+# verdict is what the gate judges the guest's against), stage7/test-7d.sh
+# and stage7/checktrials.py (the gate and the synthetic human; its timing
+# constants were written from the item 7 run against a private binary).
+# No new broker module: the one mock is the frozen broker/wire.py.
+# Deliberately NOT frozen: stage7/glass-7d-section.md (the owner appends
+# it to the frozen GLASS.md by his own hand; the copy is paperwork),
+# stage7/stage7.asm, stage7/mkimage.sh, stage7/mkstick.py and
+# stage7/plan-7d.md.
 PROTECTED = (
     "stage0/test.sh",
     "stage0/checkpixels.py",
@@ -268,6 +282,10 @@ PROTECTED = (
     "broker/wire.py",
     "stage7/test-7c.sh",
     "stage7/checkmetal.py",
+    "stage7/TRIALS.md",
+    "stage7/test-7d.sh",
+    "stage7/checktrials.py",
+    "stage7/trials.py",
 )
 
 BASENAMES = sorted({os.path.basename(p) for p in PROTECTED})

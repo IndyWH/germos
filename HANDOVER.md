@@ -2179,6 +2179,22 @@ and `mouse_id` 0, `! trial` prints `no mouse`, `errors` 1, `notes` 0, no
 `trial:` line on serial, the journal empty (`stage7/out/probe7d/nomouse/`).
 **On the probe binary: `--row` and `--sitting` both green** (the log's third
 probe run); on the repository's binary tests 2 and 3 stay red by design.
+**Item 8** — the freeze: `PROTECTED` grows `stage7/TRIALS.md`,
+`stage7/test-7d.sh`, `stage7/checktrials.py`, `stage7/trials.py`, the
+hook's comment saying why each is a criterion or a criterion's parser and
+why the section file, the guest, the builders and the plan are not;
+`payloads.py` gains the ring 7d group (the freeze battery on the four
+paths, `Write`/`Edit`/heredoc/`sed -i`/`>>` denied, the owner's append to
+GLASS.md denied to CC, the gate, the checker's four modes, the tool's
+three, the log, the probe under `out/` and the ring's words allowed, a
+trial disk outside `out/` denied): **1678 payloads, 1117 denied, 561
+allowed, 0 wrong**; immediacy shown live — `echo x > stage7/checktrials.py`
+denied by the hook the moment the paths were in. The gate whole (the log's
+run at this commit): **test 1 green, test 4 green** — the payload table,
+the argv check, and the 7c, 7b and 7a gates green inside test 4 on the
+unchanged binary (the one run of the three gates before this commit, A4)
+— **tests 2 and 3 red by design** (the repository's binary has no trial
+yet).
 
 ## Ring 7c — the metal · opened 15 September 2026 · closed 18 September 2026
 
