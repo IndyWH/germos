@@ -2061,6 +2061,19 @@ does not say where a sitting ran (deviation 7 — the owner's record does).
 
 **Item 0** — this record; `stage7/plan-7d.md` committed verbatim; the
 "Where we are" rows for Omarchy and this ring.
+**Item 1** — the environment, measured on the closed binary (item 21,
+40,960 bytes) booted from a stick copy with a blank SATA disk under
+`stage7/out/probe7d/` (gitignored), nothing listening, `-smp 4`; no source
+changed, nothing frozen touched, no Claude call:
+
+| Fact | Measured how |
+|---|---|
+| **The monitor's clocks under QEMU 11.1.1:** one `xp` of the whole `0x360`-byte page takes **50 ms** (the first 101 ms), one `xp` of a single qword **50 ms** too — `Driver.xp`'s drain sets the floor, not the size; a key's round trip `sendkey` → its echo byte in the `-serial file:` capture, polled at 5 ms, is **5 to 20 ms**; a `mouse_button 1` is seen in `packets` within **100 ms** (two qword reads). So the synthetic human's per-cue trigger cannot be a page read (50 ms a poll, 500 ms pause) and is the guest's own `trial:` line in the serial file at a 5 ms poll, as the plan's decision 6 says; the page is read once per rest and at `done` | `stage7/out/probe7d/probe1.py` |
+| **The pointer's own input-to-photon on this host:** after twenty monitor moves `pointer_last` **2.04 ms**, `pointer_worst` **16.16 ms** — one frame slot at worst, the term the ±30 ms window absorbs | the obs page through `xp` |
+| **`S7: keyboard ready` at 1.4 s** from QEMU's start on the stick copy (7c's number holds); the page's words at `0x2C0`–`0x2D0` read `0xc0141f05`, `0x3f`, `0x1` (DISK.md's `ahci_cap`, `ahci_pi`, `ahci_port` — the trial's fields must start above them, deviation 1) and **`0x2D8`–`0x360` is all zero** on the closed binary | the same |
+| **A full notebook's replay is cheap:** 300 notes written from the host by NOTEBOOK.md's format into the notes partition (LBA 2048 + *n*), the next boot says `S7: notebook 300 notes` and the conversation's cursor word settles at `0x803e0002` (row 62, column 2 — the prompt) **within 0.3 s of ready** (an upper bound: three 50 ms reads agreeing). Three sittings leave about 280 notes; the checker's settle after ready stays 7c's one second | `checkdisk.parse_notebook` on the image; `xp` of the descriptor's cursor word |
+| **The frozen seams on mode 5 and inverse cells, run not read:** `glass.mode_word(5, "")` returns `'?'` padded to 18 — so `strip_rows_6c` and `check_strip_6c` cannot judge a strip in mode 5, and `trials.py` renders the mode word itself; `twin.cell_pixels(font, 0xA0)` renders **background** (16 rows of `BG`) — an inverse cell would fail the twin's criterion 7, and never reaches it: the twin's SATA disk is formatted fresh per rehearsal (`wire.py`'s `twin_extra_args`) and the twin never types `! trial`; `checkglass.check_mode_field` takes any word and pads to 18 | `probe1.py` |
+| **The hook today** on every command shape this ring will run, fed as payloads by `stage7/out/probe7d/verdicts.py`: `Write` on the four new names and on `stage7/glass-7d-section.md` **allowed**; running `trials.py` (`--disk`, `--example`, `--serial`), `test-7d.sh` (bare and piped), the checker's four modes and `checkmetal.py --stick` allowed; the probe's stick copied over `stage7/out/stick.img`, the scratch wipe, the log's `>>` and `tail`, `git add` of the four paths with the hooks, `git commit -F`, `nasm` on the probe copy, the ring's words in prose: all allowed; **`sed -i` on `checktrials.py` and `echo x > stage7/TRIALS.md` allowed today — test 4 is red by design until item 8**; `cat stage7/glass-7d-section.md >> stage6/GLASS.md` **denied** (GLASS.md is frozen; the append is the owner's hand, item 9) | `verdicts.py` |
 
 ## Ring 7c — the metal · opened 15 September 2026 · closed 18 September 2026
 
