@@ -2142,6 +2142,43 @@ and (d) pass: the 7c, 7b and 7a gates green inside test 4 (this is the
 one run of the three gates before this commit, A4). TRIALS.md gained one
 clause while the probe was drafted: no rest and no rest line after block
 8 (the sitting's end follows the block note directly).
+**Item 7** — the probe: the trial drafted on a private copy of the source
+(`stage7/out/probe7d/stage7.asm`, spliced by `splice.py` there in two
+groups — the machinery and layout B — assembled to 45,056 bytes, packed
+into its own stick), the synthetic human played against it, every number
+the checker needs read from the run, nothing of the guest committed (`git
+diff --stat`: the checker and this file). **Measured:** a sitting of
+eighty cues plays in **85.5 s**; the recorded ms minus the scripted delay,
+per cue, over sitting 1's script — **a cue after a pause +31 to +49, median
+39** (the hit's note is journaled, a disk write, before its serial line
+anchors the next press: the guest's clock leads the human's by that
+write); **the first cue of a block −16 to −1, median −8** (anchored on the
+block line and the rest, no write between); a cue missed first carries a
+second interval of the same shape; the residuals against that rule within
+20 ms. So `OFFSET_MS = 39`, `OFFSET_FIRST_MS = -8`, `HIT_WINDOW_MS = 60`
+(CC's own, A3), `READY_LIMIT_S = 60`, `SETTLE_S = 1.0`, each dated in the
+checker; **the ±30 ms window on the median is the spec's and holds:** every
+block median of every sitting inside it. The whole `--sitting` run (five
+boots, four sittings) took **5 min 45 s**; `--row` about 2.5 min with the
+mock's grow. **Three probe runs, three defects found and fixed in the
+draft, none in a frozen file:** the cue's stamp sat inside the pointer's
+conditional in the glass core's frame, so it fired only on frames with a
+mouse packet (the second cue was never stamped); the table's last row
+shared the buffer row 0 overwrote; the box builder read the labels from a
+line buffer the four-item row never filled (`choices_set` takes its text
+from a constant), so it reads row 0 of the choices surface, copied aside
+before the fills. Three checker corrections from the same runs, before
+the freeze: the echo rule is ring 7a's (`S7:`), not Stage 6's; a typed
+line shows as `> …` and a cue line repeats on screen, so the conversation
+checks name unique rows and read the cue lines from the surface; the
+human types `! trial` itself with no gap after the Enter, so the sitting
+line is timed from the key (the first cue read +195 ms with the gap
+after it). **The `no mouse` refusal (deviation 3):** a second private copy
+with the reset answer forced to none boots with `i8042: mouse reset ok`
+and `mouse_id` 0, `! trial` prints `no mouse`, `errors` 1, `notes` 0, no
+`trial:` line on serial, the journal empty (`stage7/out/probe7d/nomouse/`).
+**On the probe binary: `--row` and `--sitting` both green** (the log's third
+probe run); on the repository's binary tests 2 and 3 stay red by design.
 
 ## Ring 7c — the metal · opened 15 September 2026 · closed 18 September 2026
 

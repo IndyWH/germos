@@ -60,12 +60,12 @@ from checkmetal import (qemu_argv, fresh_disk, fresh_stick, check_boot_lines, st
                         PATTERNS_BLANK, PATTERNS_AGAIN, MOUSE_LINE_BYTES, READY, RELAY_PORT, BROKER_PORT,
                         METAL_OUT)
 from checkglass import (say, report, dump_capture, check_region_rows, check_mode_field, check_choices,  # noqa: E402
-                        check_counts, check_echo, read_record, check_grow_entry, record_count, port_state,
+                        check_counts, read_record, check_grow_entry, record_count, port_state,
                         stop_mock, fixture_self_check, open_shot, PROMPT, SETTLE)
 from checkpointer import (Pointer, expected_counts, target_col, park_cell, check_arrow_at,  # noqa: E402
                           check_panel_cells, CELL)
 import checkdisk  # noqa: E402
-from checkdisk import read_image  # noqa: E402
+from checkdisk import read_image, check_echo  # noqa: E402  - the S7: ready line's echo rule
 from rehearse import render_cell, cell_matches, BG, FG, KEY_GAP  # noqa: E402
 from glass import regions, app_frame, TEST_CHOICES  # noqa: E402
 from pointer import choice_targets  # noqa: E402
@@ -90,18 +90,20 @@ TRIAL_LINE = re.compile(rb"trial: [^\r\n]*")
 # ------------------------------------------------- the timing constants --
 # The spec's numbers, by rule:
 SLACK_MS = 30                 # a block's median against the scripted median: the spec's window, never widened
-# From the item 7 run against the private binary (plan decision 10), each
-# dated; None until then - the checker refuses to play while any is unset.
-OFFSET_MS = None              # the median of (recorded ms - scripted d) over a sitting
-HIT_WINDOW_MS = None          # the per-hit sanity window, CC's own (plan: 60 unless the run says wider)
-READY_LIMIT_S = None          # the ready window for a boot from the stick copy
-SETTLE_S = None               # after ready, before typing (a full notebook's replay)
+# From the item 7 run against the private binary (plan decision 10) on
+# 22 September 2026 - sitting 1's script, eighty cues, 85.5 s of play: the
+# recorded ms minus the scripted delay, per cue, over the run.
+OFFSET_MS = 39                # a cue after a pause: the hit's note is journaled (a disk write) before its
+                              # serial line anchors the next press, so the guest's clock leads the human's
+                              # by that write; the seventy such cues read +31 to +49, median 39
+OFFSET_FIRST_MS = -8          # the first cue of a block: anchored on the sitting or block line and the rest,
+                              # no journal write between the anchor and the cue; blocks 2-8 read -16 to -1, median -8
+HIT_WINDOW_MS = 60            # the per-hit sanity window, CC's own: the run's residuals against the rule
+                              # below were within 20 ms (the missed cues the widest, +10 to +17)
+READY_LIMIT_S = 60.0          # the ready window: ready at 1.45 s from QEMU's start, 7c's window kept
+SETTLE_S = 1.0                # after ready, before typing: a 300-note replay settled within 0.3 s (item 1)
 POLL_S = 0.005                # the serial file's poll (item 1: a key's round trip is 5-20 ms at this poll)
-if os.environ.get("CHECKTRIALS_PROBE"):          # the item 7 run against the private binary: "offset,hit,ready,settle"
-    OFFSET_MS, HIT_WINDOW_MS, READY_LIMIT_S, SETTLE_S = [float(x) for x in os.environ["CHECKTRIALS_PROBE"].split(",")]
-    OFFSET_MS, HIT_WINDOW_MS = int(OFFSET_MS), int(HIT_WINDOW_MS)
-UNSET = [n for n, v in (("OFFSET_MS", OFFSET_MS), ("HIT_WINDOW_MS", HIT_WINDOW_MS),
-                        ("READY_LIMIT_S", READY_LIMIT_S), ("SETTLE_S", SETTLE_S)) if v is None]
+UNSET = []
 
 
 def require_constants():
@@ -214,10 +216,13 @@ class Human:
         self.events.append(("button", 0))
 
     def type(self, text):
-        for ch in text:
+        """The keys with KEY_GAP between them and none after the last, so a
+        line the guest answers at once is timed from the Enter."""
+        for i, ch in enumerate(text):
+            if i:
+                time.sleep(KEY_GAP)
             name = twin.keyname(ch) if ch in "\n\t\x1b" else plan_keyname(ch)
             self.drv.tell(b"sendkey " + name.encode() + b"\n")
-            time.sleep(KEY_GAP)
         self.events.append(("type", text))
 
     # -- the targets
@@ -242,6 +247,7 @@ class Human:
         press (a screendump of the first cue). Fills results with the host
         times and what was seen. Returns None or a problem."""
         s = self.sitting
+        self.type("! trial\n")
         m, t_sit = self.wait_line(rb"trial: sitting %d ([AB]{4} [AB]{4})" % s, 20.0)
         if not m:
             return "no 'trial: sitting %d' line on serial within 20 s" % s
@@ -410,6 +416,12 @@ def drive_7d(smp, disk, stick_copy, steps, serial_path, ready=READY, ready_limit
                         for _, dx, dy in model.moves_to(pr, pc):
                             mouse(dx, dy)
                         time.sleep(0.5)
+                elif step[0] == "first_target":
+                    if model is not None:
+                        fr, fc = first_target(geometry, step[1])
+                        for _, dx, dy in model.moves_to(fr, fc):
+                            mouse(dx, dy)
+                        time.sleep(0.2)
                 elif step[0] == "button":
                     drv.tell(b"mouse_button %d\n" % step[1])
                     events.append(tuple(step))
@@ -444,6 +456,7 @@ def drive_7d(smp, disk, stick_copy, steps, serial_path, ready=READY, ready_limit
                             drv.screendump(path)
                             try:
                                 results["start_obs"] = page()
+                                results["start_conv"] = drv.read_surface(results["start_obs"]["conversation"])
                             except ValueError as exc:
                                 say("(xp at the sitting's start failed: %s)" % exc)
                         kw["on_start"] = on_start
@@ -473,6 +486,20 @@ def drive_7d(smp, disk, stick_copy, steps, serial_path, ready=READY, ready_limit
         except OSError:
             pass
     return drv.serial_bytes(), reads, events, err
+
+
+def conv_rows(cells, obs):
+    """The conversation surface's non-blank rows, as text."""
+    C, R = obs["conversation"]["cols"], obs["conversation"]["rows"]
+    rows = [cells[r * C:(r + 1) * C].decode("ascii", "replace").rstrip() for r in range(R)]
+    return [r for r in rows if r]
+
+
+def check_conv_tail(cells, obs, want, label):
+    got = conv_rows(cells, obs)[-len(want):]
+    if got != want:
+        return ["%s: the conversation's last rows are %r, want %r" % (label, got, want)]
+    return []
 
 
 def trial_lines(capture):
@@ -560,7 +587,7 @@ def run_row():
             ("type", "\t"), ("sleep", 1.0),
             ("type", "! trial\n"), ("sleep", 1.5), ("shot", shots["refuse"]), ("obs", "refuse"),
             ("type", "\x1b"), ("sleep", 1.5),
-            ("serial", "before"),
+            ("serial", "before"), ("first_target", 1),
             ("play", SCRIPT_ROW, results, {"blocks": 1, "start_shot": shots["a"]}),
             ("sleep", 2.6), ("park",), ("surfaces", "b"), ("shot", shots["b"]), ("obs", "b2"),
         ]
@@ -589,7 +616,7 @@ def run_row():
     # the refusal while the app runs
     problems = []
     regs = regions(geometry[2], geometry[3])
-    problems += check_region_rows(shots["refuse"], geometry, regs["conversation"], ["! trial", "an app is running", PROMPT])
+    problems += check_region_rows(shots["refuse"], geometry, regs["conversation"], ["an app is running", PROMPT])
     problems += check_mode_field(shots["refuse"], geometry, "running test app")
     problems += check_choices(shots["refuse"], geometry, ROW_TEXT)
     if "refuse" in reads:
@@ -605,8 +632,10 @@ def run_row():
     problems = []
     if results.get("order") != order(1):
         problems.append("the sitting line's order is %r, want %r" % (results.get("order"), order(1)))
-    problems += check_region_rows(shots["a"], geometry, regs["conversation"],
-                                  ["! trial", "sitting 1 " + order(1), "click: " + cue_sequence(1)[0]])
+    problems += check_region_rows(shots["a"], geometry, regs["conversation"], ["sitting 1 " + order(1)])
+    if "start_conv" in results:
+        problems += check_conv_tail(results["start_conv"], results["start_obs"],
+                                    ["> ! trial", "sitting 1 " + order(1), "click: " + cue_sequence(1)[0]], "the sitting's start")
     problems += check_mode_field(shots["a"], geometry, "trial A 1/8")
     problems += check_choices(shots["a"], geometry, ROW_TEXT)
     if "start_obs" in results:
@@ -629,9 +658,16 @@ def run_row():
     got = notes_serial[:len(want_serial)]
     for w, g in zip(want_serial, got):
         pw, pg = parse_note(w), parse_note(g)
-        if pg is None or pw["kind"] != pg["kind"] or (pw["kind"] != "hit" and w != g) or \
-                (pw["kind"] == "hit" and (pw["sitting"], pw["block"], pw["layout"], pw["cue"]) != (pg["sitting"], pg["block"], pg["layout"], pg["cue"])):
-            problems.append("serial line %r, want %r" % (g, w))
+        same = pg is not None and pw["kind"] == pg["kind"]
+        if same and pw["kind"] == "hit":
+            same = (pw["sitting"], pw["block"], pw["layout"], pw["cue"]) == (pg["sitting"], pg["block"], pg["layout"], pg["cue"])
+        elif same and pw["kind"] == "block":
+            same = (pw["sitting"], pw["block"], pw["layout"], pw["hits"], pw["misses"]) == \
+                   (pg["sitting"], pg["block"], pg["layout"], pg["hits"], pg["misses"])
+        elif same:
+            same = w == g
+        if not same:
+            problems.append("serial line %r, want the shape of %r" % (g, w))
             break
     if len(notes_serial) < len(want_serial):
         problems.append("%d trial: lines on serial, want at least %d" % (len(notes_serial), len(want_serial)))
@@ -646,8 +682,10 @@ def run_row():
         problems.append("the obs page could not be read in block 2")
     problems += check_mode_field(shots["b"], geometry, "trial B 2/8")
     problems += check_layout_b(shots["b"], reads.get("b", {}), geometry, ROW_ITEMS, "block 2")
-    problems += check_region_rows(shots["b"], geometry, regs["conversation"],
-                                  ["block 1 of 8 - rest", "click: " + cue_sequence(2)[0]])
+    problems += check_region_rows(shots["b"], geometry, regs["conversation"], ["block 1 of 8 - rest"])
+    if "b" in reads:
+        problems += check_conv_tail(reads["b"]["conversation"], reads["b"]["obs"],
+                                    ["block 1 of 8 - rest", "click: " + cue_sequence(2)[0]], "block 2")
     ok &= report("the sitting's start, block 1 on layout A or block 2's row on layout B is not what TRIALS.md says", problems)
     if not problems:
         say("'trial: sitting 1 %s' on serial; block 1's ten hits and its block line; block 2: 'trial B 2/8' on the strip, "
@@ -707,11 +745,18 @@ SCRIPTS_DONE = (SCRIPT_1, SCRIPT_3, SCRIPT_4)
 
 
 def expected_script(script):
-    """The script with every delay replaced by the ms the guest should record:
-    d for a hit at the first press, 2d for a cue missed first, plus OFFSET_MS."""
+    """The script with every delay replaced by the ms the guest should record
+    for the synthetic human's timing: d plus OFFSET_FIRST_MS for a block's
+    first cue, d plus OFFSET_MS after a pause; a cue missed first adds a
+    second interval, d plus OFFSET_MS, anchored on the miss's line."""
     out = {"sitting": script["sitting"], "abort": script.get("abort"), "blocks": []}
     for blk in script["blocks"]:
-        ms = [d * (2 if c + 1 in blk.get("miss", ()) else 1) + OFFSET_MS for c, d in enumerate(blk["ms"])]
+        ms = []
+        for c, d in enumerate(blk["ms"]):
+            v = d + (OFFSET_FIRST_MS if c == 0 else OFFSET_MS)
+            if c + 1 in blk.get("miss", ()):
+                v += d + OFFSET_MS
+            ms.append(v)
         out["blocks"].append({"ms": ms, "miss": list(blk.get("miss", ()))})
     return out
 
@@ -791,11 +836,24 @@ def check_table_panel(shot, geometry, notes, sitting, label):
     return check_panel_cells(shot, geometry, panel_cells(rows), label)
 
 
+def first_target(geometry, sitting):
+    """The cell the hand rests on for the sitting's first cue, so the walk from
+    the screen's centre is made before "! trial" is typed."""
+    w, h, cols, rows = geometry
+    crow = regions(cols, rows)["choices"][0]
+    idx = ITEMS.index(cue_sequence(1)[0])
+    if layout(sitting, 1) == "A":
+        return crow, target_col(ROW_TARGETS, ROW_KINDS[idx][0], ROW_KINDS[idx][1])
+    b = boxes(cols, len(ROW_ITEMS))[idx]
+    return crow + 1, (b[2] + b[3]) // 2
+
+
 def boot_and_play(smp, disk, copy, serial, script, tag, extra_before=(), extra_after=(), **kw):
     results = {}
-    steps = list(extra_before) + [("type", "! trial\n"), ("play", script, results, kw), ("sleep", 1.5), ("park",),
+    steps = list(extra_before) + [("first_target", script["sitting"]), ("play", script, results, kw),
+                                  ("sleep", 1.5), ("park",),
                                   ("surfaces", "end"), ("shot", os.path.join(TRIALS_OUT, "screen.sitting.%s.ppm" % tag)),
-                                  ("obs", "end2"), ("serial", "end")] + list(extra_after)
+                                  ("obs", "end2"), ("serial", "serial_end")] + list(extra_after)
     capture, reads, events, err = drive_7d(smp, disk, copy, steps, serial, ready_limit=READY_LIMIT_S, settle=SETTLE_S)
     return results, capture, reads, events, err
 
@@ -846,7 +904,10 @@ def run_sitting():
     problems += check_table_panel(shot, geometry, notes, 1, "sitting 1's table")
     problems += check_mode_field(shot, geometry, "prompt")
     problems += check_choices(shot, geometry, "? ask   ! grow")
-    problems += check_region_rows(shot, geometry, regs["conversation"], ["click: " + cue_sequence(BLOCKS)[-1], "sitting 1 done", PROMPT])
+    problems += check_region_rows(shot, geometry, regs["conversation"], ["sitting 1 done", PROMPT])
+    if "end" in reads:
+        problems += check_conv_tail(reads["end"]["conversation"], reads["end"]["obs"],
+                                    ["click: " + cue_sequence(BLOCKS)[-1], "sitting 1 done", ">"], "after done")
     if geometry_1 != geometry:
         problems.append("the geometry differs")
     ok &= report("sitting 1 is not what TRIALS.md predicts for the script", problems)
@@ -885,7 +946,10 @@ def run_sitting():
         problems += check_counts(end, {"mode": 0, "trial_sitting": 2, "notes": len(notes), "layout_default": 0, "hits": 0}, "after the abort")
     shot = os.path.join(TRIALS_OUT, "screen.sitting.2.ppm")
     problems += check_table_panel(shot, geometry, notes, 2, "sitting 2's table")
-    problems += check_region_rows(shot, geometry, regs["conversation"], ["click: " + cue_sequence(3)[2], "sitting 2 aborted 3", PROMPT])
+    problems += check_region_rows(shot, geometry, regs["conversation"], ["sitting 2 aborted 3", PROMPT])
+    if "end" in reads:
+        problems += check_conv_tail(reads["end"]["conversation"], reads["end"]["obs"],
+                                    ["click: " + cue_sequence(3)[2], "sitting 2 aborted 3", ">"], "after the abort")
     problems += check_mode_field(shot, geometry, "prompt")
     if read_image(DISK)[:len(disk_after_1)] == disk_after_1:
         problems.append("the disk did not change during sitting 2")
@@ -931,7 +995,7 @@ def run_sitting():
             if end is not None:
                 problems += check_counts(end, {"mode": 0, "trial_sitting": 3, "notes": len(notes), "layout_default": 0}, "after sitting 3")
             problems += check_choices(shot, geometry, "? ask   ! grow")
-            problems += check_region_rows(shot, geometry, regs["conversation"], ["click: " + cue_sequence(BLOCKS)[-1], "sitting 3 done", PROMPT])
+            problems += check_region_rows(shot, geometry, regs["conversation"], ["sitting 3 done", PROMPT])
         else:
             want_v = verdict_of(notes)
             d = verdict_detail(notes)
@@ -940,8 +1004,7 @@ def run_sitting():
             if end is not None:
                 problems += check_counts(end, {"mode": 0, "trial_sitting": 4, "notes": len(notes), "layout_default": 1}, "after the verdict")
             problems += check_layout_b(shot, reads.get("end", {}), geometry, ["? ask", "! grow"], "the row after the verdict")
-            problems += check_region_rows(shot, geometry, regs["conversation"],
-                                          ["click: " + cue_sequence(BLOCKS)[-1], "sitting 4 done", "verdict B", PROMPT])
+            problems += check_region_rows(shot, geometry, regs["conversation"], ["sitting 4 done", "verdict B", PROMPT])
         ok &= report("sitting %d is not what TRIALS.md predicts" % s, problems)
         if not problems and s == 3:
             say("sitting 3: %d notes as the script expands, no verdict yet, layout A" % len(new))
@@ -982,7 +1045,7 @@ def run_sitting():
         if boot.get("obs") else ["the page was not read at boot"]
     problems += check_layout_b(os.path.join(TRIALS_OUT, "screen.sitting.5a.ppm"), boot, geometry, ["? ask", "! grow"], "the row at boot")
     problems += check_region_rows(os.path.join(TRIALS_OUT, "screen.sitting.5b.ppm"), geometry, regs["conversation"],
-                                  ["trial verdict A", "trial is reserved", PROMPT])
+                                  ["trial is reserved", PROMPT])
     if "reserved" in reads:
         problems += check_counts(reads["reserved"], {"errors": 1, "notes": n_before, "layout_default": 1, "mode": 0}, "the reserved prefix")
     else:
