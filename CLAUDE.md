@@ -474,6 +474,21 @@ test in the twin.
   flashes of 17 and 18 September 2026; `stage7/METAL.md` step 3 is the
   block). The flash is the owner's hand; the hook denies CC every word of
   it.
+- **A fresh clone has no `out/` directories.** Every `<stage>/out/` is
+  gitignored, and the frozen checkers assume they exist (test 3 of the 7c
+  gate assembles `stage6/app.asm` into `stage6/out/app.check.bin` and fails
+  "the app fixture is not what the repository says" when the directory is
+  missing). Before the first gate on a new machine: `mkdir -p stage{0..7}/out`
+  (Omarchy on mlrig, 22 September 2026).
+- **QEMU 11 prints `xp` addresses as eight hex digits, QEMU 10 as sixteen.**
+  The monitor parser `XP_LINE` in `broker/twin.py` demanded exactly sixteen,
+  so under QEMU 11.1.1 every obs-page and surface read returned "xp read 0
+  of N bytes", the rehearsal judged "the app did not run", and test 3 of the
+  7c gate fell over from that one line while the guest booted perfectly. The
+  project's sixth freeze opening, by the owner's hand: `{16}` became
+  `{8,16}` (22 September 2026). A parser of the host's tools is a criterion's
+  eye, not the criterion, and the tools move under it: pin nothing about a
+  tool's output format that the tool does not document.
 
 ## Working with the hooks
 

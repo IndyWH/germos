@@ -115,7 +115,7 @@ class AppListener(Listener):
 
 # ------------------------------------------------------------ the driver ---
 
-XP_LINE = re.compile(rb"([0-9a-f]{16}): ((?:0x[0-9a-f]+ ?)+)")
+XP_LINE = re.compile(rb"([0-9a-f]{8,16}): ((?:0x[0-9a-f]+ ?)+)")
 
 
 class Driver:
