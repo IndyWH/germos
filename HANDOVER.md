@@ -2075,6 +2075,23 @@ changed, nothing frozen touched, no Claude call:
 | **The frozen seams on mode 5 and inverse cells, run not read:** `glass.mode_word(5, "")` returns `'?'` padded to 18 — so `strip_rows_6c` and `check_strip_6c` cannot judge a strip in mode 5, and `trials.py` renders the mode word itself; `twin.cell_pixels(font, 0xA0)` renders **background** (16 rows of `BG`) — an inverse cell would fail the twin's criterion 7, and never reaches it: the twin's SATA disk is formatted fresh per rehearsal (`wire.py`'s `twin_extra_args`) and the twin never types `! trial`; `checkglass.check_mode_field` takes any word and pads to 18 | `probe1.py` |
 | **The hook today** on every command shape this ring will run, fed as payloads by `stage7/out/probe7d/verdicts.py`: `Write` on the four new names and on `stage7/glass-7d-section.md` **allowed**; running `trials.py` (`--disk`, `--example`, `--serial`), `test-7d.sh` (bare and piped), the checker's four modes and `checkmetal.py --stick` allowed; the probe's stick copied over `stage7/out/stick.img`, the scratch wipe, the log's `>>` and `tail`, `git add` of the four paths with the hooks, `git commit -F`, `nasm` on the probe copy, the ring's words in prose: all allowed; **`sed -i` on `checktrials.py` and `echo x > stage7/TRIALS.md` allowed today — test 4 is red by design until item 8**; `cat stage7/glass-7d-section.md >> stage6/GLASS.md` **denied** (GLASS.md is frozen; the append is the owner's hand, item 9) | `verdicts.py` |
 
+**Item 2** — `stage7/TRIALS.md`: the one text (the design, the sitting
+step by step, the verdict rule, layout B, the notes, the serial lines,
+mode 5, the obs page from `0x2E0`, the panel's table, two worked examples,
+the Python). The spec corrected in two places, stated in the document:
+the obs fields from `0x2E0` (DISK.md owns `0x2C0`–`0x2D0`) and a click on
+the `! grow` box typing `!`. Cross-checked by the item 3 tool before its
+commit: both examples reproduced.
+**Item 3** — `stage7/trials.py`: executes the document's Python as its
+own definitions and compares them with the document's tables (the cue
+table, the orders, the obs rows, the zero rule), so the two cannot drift;
+`--example` reproduces both worked examples (A's 93 notes, table and
+serial lines; B's verdict B by 10 of 12 with misses 2 against 2 over
+sittings 1, 3, 4; a block median altered by one refused with the block
+named); a document with one cue row edited to repeat an item is refused
+at import; `--disk` on the 7c gate's disk prints `no sittings`; `--serial`
+on a scratch log of the `trial:` lines prints example A's table.
+
 ## Ring 7c — the metal · opened 15 September 2026 · closed 18 September 2026
 
 `stage7/plan-7c.md` was approved on 15 September 2026 with Cowork's seven
