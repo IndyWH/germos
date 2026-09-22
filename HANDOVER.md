@@ -2195,6 +2195,17 @@ the argv check, and the 7c, 7b and 7a gates green inside test 4 on the
 unchanged binary (the one run of the three gates before this commit, A4)
 — **tests 2 and 3 red by design** (the repository's binary has no trial
 yet).
+**Item 9** — `stage7/glass-7d-section.md`: the GLASS.md section for this
+ring in the 6c section's shape — the standing sentence, the three
+supersessions (the page's zero rule from `0x360`; `! trial` answered
+before the home lookup and the broker; the `trial ` prefix never a note,
+A1), the obs table from `0x2E0` with writer and meaning, the cue's stamp,
+mode 5 and its word, the inverse cell byte, layout B's boxes and the click
+rule on them, the trial's press rule, and a pointer to TRIALS.md for the
+rest. **The session stops here: the owner appends the file to
+`stage6/GLASS.md` by his own hand** (the shell's append of the section
+file onto the document, then his commit) and says it is in before the
+next commit; the hook denies CC that append.
 
 ## Ring 7c — the metal · opened 15 September 2026 · closed 18 September 2026
 
