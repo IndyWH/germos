@@ -287,7 +287,7 @@ class Human:
                 return "no block line for sitting %d block %d" % (s, b)
             results.setdefault("blocks", {})[b] = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
             anchor = t
-            if after:
+            if after and b < BLOCKS:
                 after(b)
         if n_blocks == BLOCKS:
             m, t = self.wait_line(rb"trial: sitting %d done" % s, 5.0)
@@ -654,6 +654,367 @@ def run_row():
     return 0 if ok else 1
 
 
+# --------------------------------------------------- test 3: the sittings ---
+# Five boots on one disk (plan decision 8, deviations 4 and 8): sitting 1 to
+# done with the numbers predicted; sitting 2 aborted in block 3; sittings 3
+# and 4 to done and the verdict B; then a boot with no trial - the default
+# read from the notebook, the reserved prefix refused (A1), a click on a box.
+# The scripts: ten delays a block in ms and the cues missed first; every
+# expected note is notes_of(script) through TRIALS.md's rules; every block
+# median is the rule over the scripted delays plus OFFSET_MS.
+
+def _blocks(*lists, miss=()):
+    m = dict(miss)
+    return [{"ms": list(l), "miss": list(m.get(i + 1, ()))} for i, l in enumerate(lists)]
+
+
+SCRIPT_1 = {"sitting": 1, "abort": None, "blocks": _blocks(
+    [280, 320, 300, 340, 260, 310, 330, 290, 300, 270],     # 1 A
+    [180, 220, 200, 240, 160, 210, 230, 190, 200, 170],     # 2 B  - cue 4 missed first
+    [190, 210, 170, 230, 200, 180, 220, 160, 240, 200],     # 3 B
+    [300, 330, 270, 310, 290, 340, 280, 320, 300, 260],     # 4 A  - cue 7 missed first
+    [170, 200, 190, 220, 180, 240, 160, 230, 210, 200],     # 5 B
+    [290, 310, 300, 280, 340, 320, 260, 330, 270, 300],     # 6 A
+    [310, 280, 300, 340, 290, 260, 330, 320, 270, 300],     # 7 A  - cue 2 missed first
+    [200, 170, 230, 190, 210, 160, 240, 180, 220, 200],     # 8 B
+    miss={2: (4,), 4: (7,), 7: (2,)})}
+SCRIPT_ABORT = {"sitting": 2, "abort": (3, 3), "blocks": _blocks(
+    [200, 220, 180, 210, 190, 230, 170, 200, 240, 160],     # 1 B
+    [300, 280, 320, 290, 310, 260, 340, 300, 270, 330],     # 2 A
+    [290, 300, 310, 280, 320, 270, 330, 260, 340, 300])}    # 3 A - three hits, then Esc
+SCRIPT_3 = {"sitting": 3, "abort": None, "blocks": _blocks(
+    [270, 300, 330, 290, 310, 260, 340, 280, 320, 300],     # 1 A
+    [160, 200, 240, 180, 220, 170, 230, 190, 210, 200],     # 2 B
+    [200, 180, 220, 160, 240, 190, 210, 170, 230, 200],     # 3 B
+    [330, 290, 310, 270, 340, 300, 260, 320, 280, 300],     # 4 A
+    [230, 190, 210, 170, 240, 200, 160, 220, 180, 200],     # 5 B
+    [260, 320, 280, 340, 300, 270, 330, 290, 310, 300],     # 6 A
+    [300, 260, 340, 280, 320, 290, 310, 270, 330, 300],     # 7 A
+    [240, 180, 220, 200, 160, 230, 190, 210, 170, 200])}    # 8 B
+SCRIPT_4 = {"sitting": 4, "abort": None, "blocks": _blocks(
+    [210, 170, 230, 190, 200, 240, 160, 220, 180, 200],     # 1 B
+    [320, 280, 300, 260, 340, 290, 310, 330, 270, 300],     # 2 A
+    [280, 340, 260, 320, 300, 310, 270, 330, 290, 300],     # 3 A
+    [220, 160, 240, 200, 180, 210, 170, 230, 190, 200],     # 4 B
+    [310, 270, 330, 290, 300, 260, 340, 280, 320, 300],     # 5 A
+    [190, 230, 170, 210, 200, 160, 240, 180, 220, 200],     # 6 B
+    [170, 210, 190, 230, 200, 240, 160, 220, 180, 200],     # 7 B
+    [340, 300, 260, 320, 280, 330, 270, 310, 290, 300])}    # 8 A
+SCRIPTS_DONE = (SCRIPT_1, SCRIPT_3, SCRIPT_4)
+
+
+def expected_script(script):
+    """The script with every delay replaced by the ms the guest should record:
+    d for a hit at the first press, 2d for a cue missed first, plus OFFSET_MS."""
+    out = {"sitting": script["sitting"], "abort": script.get("abort"), "blocks": []}
+    for blk in script["blocks"]:
+        ms = [d * (2 if c + 1 in blk.get("miss", ()) else 1) + OFFSET_MS for c, d in enumerate(blk["ms"])]
+        out["blocks"].append({"ms": ms, "miss": list(blk.get("miss", ()))})
+    return out
+
+
+def compare_notes(actual, script, label):
+    """The notes a script left against the notes on the record: every non-hit
+    note byte for byte; every hit note's five fields exact and its ms inside
+    the per-hit window; every block note's median inside SLACK_MS of the
+    rule over the expected ms; the block notes agreeing with their own hits
+    (A2)."""
+    want = notes_of(expected_script(script))
+    problems = []
+    if len(actual) != len(want):
+        problems.append("%s: %d notes, want %d" % (label, len(actual), len(want)))
+    exp_ms = {}
+    for i, (a, w) in enumerate(zip(actual, want)):
+        pa, pw = parse_note(a), parse_note(w)
+        if pa is None or pa["kind"] != pw["kind"]:
+            problems.append("%s: note %d is %r, want the shape of %r" % (label, i + 1, a, w))
+            break
+        if pw["kind"] == "hit":
+            key = (pa["sitting"], pa["block"], pa["layout"], pa["cue"])
+            if key != (pw["sitting"], pw["block"], pw["layout"], pw["cue"]):
+                problems.append("%s: note %d is %r, want %r" % (label, i + 1, a, w))
+                break
+            exp_ms.setdefault(pw["block"], []).append(pw["ms"])
+            if abs(pa["ms"] - pw["ms"]) > HIT_WINDOW_MS:
+                problems.append("%s: note %d %r - %d ms is outside %d +/- %d" % (label, i + 1, a, pa["ms"], pw["ms"], HIT_WINDOW_MS))
+        elif pw["kind"] == "block":
+            if (pa["sitting"], pa["block"], pa["layout"], pa["hits"], pa["misses"]) != \
+                    (pw["sitting"], pw["block"], pw["layout"], pw["hits"], pw["misses"]):
+                problems.append("%s: note %d is %r, want %r but for the median" % (label, i + 1, a, w))
+                break
+            want_med = median(exp_ms.get(pw["block"], [0] * CUES_PER_BLOCK))
+            if abs(pa["median"] - want_med) > SLACK_MS:
+                problems.append("%s: block %d's median is %d ms, the scripted delays give %d +/- %d (the spec's window)"
+                                % (label, pa["block"], pa["median"], want_med, SLACK_MS))
+        elif a != w:
+            problems.append("%s: note %d is %r, want %r" % (label, i + 1, a, w))
+            break
+    problems += ["%s: %s" % (label, p) for p in check_blocks(actual)]
+    return problems
+
+
+def check_serial_notes(capture, notes, label):
+    got, _ = trial_lines(capture)
+    if got != notes:
+        n = next((i for i, (a, b) in enumerate(zip(got, notes)) if a != b), min(len(got), len(notes)))
+        return ["%s: the trial: lines on serial are not the notes: %d lines against %d notes, first difference at %d: %r vs %r"
+                % (label, len(got), len(notes), n + 1, got[n] if n < len(got) else None, notes[n] if n < len(notes) else None)]
+    return []
+
+
+def check_rests(results, script, label):
+    problems = []
+    s = script["sitting"]
+    for b in range(1, BLOCKS):
+        o = results.get("rest_obs", {}).get(b)
+        if o is None:
+            problems.append("%s: no obs page read at the rest after block %d" % (label, b))
+            continue
+        problems += check_counts(o, {"mode": MODE_TRIAL, "trial_sitting": s, "trial_block": b, "trial_cue": 0,
+                                     "trial_layout": "AB".index(layout(s, b)), "trial_hits": CUES_PER_BLOCK,
+                                     "trial_misses": len(script["blocks"][b - 1].get("miss", ())), "hits": 0},
+                                 "%s, the rest after block %d" % (label, b))
+    return problems
+
+
+def panel_cells(rows):
+    return {(r, c): ch for r, row in enumerate(rows) for c, ch in enumerate(row)}
+
+
+def check_table_panel(shot, geometry, notes, sitting, label):
+    rows = dict(table_of(notes)).get(sitting)
+    if rows is None:
+        return ["%s: no table for sitting %d in the notes" % (label, sitting)]
+    return check_panel_cells(shot, geometry, panel_cells(rows), label)
+
+
+def boot_and_play(smp, disk, copy, serial, script, tag, extra_before=(), extra_after=(), **kw):
+    results = {}
+    steps = list(extra_before) + [("type", "! trial\n"), ("play", script, results, kw), ("sleep", 1.5), ("park",),
+                                  ("surfaces", "end"), ("shot", os.path.join(TRIALS_OUT, "screen.sitting.%s.ppm" % tag)),
+                                  ("obs", "end2"), ("serial", "end")] + list(extra_after)
+    capture, reads, events, err = drive_7d(smp, disk, copy, steps, serial, ready_limit=READY_LIMIT_S, settle=SETTLE_S)
+    return results, capture, reads, events, err
+
+
+def run_sitting():
+    if not require_constants():
+        return 1
+    smp = STAGES_SMP
+    for port in (BROKER_PORT, RELAY_PORT):
+        if port_state(port) == "open":
+            say("something is listening on 127.0.0.1:%d - the trial needs nothing on the wire and asserts it" % port)
+            return 1
+    copy = fresh_stick(os.path.join(TRIALS_OUT, "stick.sitting.img"))
+    fresh_disk(DISK)
+    ok = True
+    notes = []
+    shots = {}
+
+    # ------------------------------------------------ boot 1: sitting 1 --
+    say("boot 1: a fresh disk, -smp %d, nothing on the wire; '! trial', sitting 1 (%s) to done - %d cues, three misses "
+        "(blocks 2, 4, 7), the page at every rest" % (smp, order(1), BLOCKS * CUES_PER_BLOCK))
+    results, capture, reads, events, err = boot_and_play(smp, DISK, copy, os.path.join(TRIALS_OUT, "serial.sitting.1.txt"),
+                                                         SCRIPT_1, "1", read_at_rest=True)
+    if err:
+        say(err)
+        if capture:
+            dump_capture(capture)
+        return 1
+    geometry = reads["geometry"]
+    regs = regions(geometry[2], geometry[3])
+    _, stripped = trial_lines(capture)
+    problems, geometry_1 = check_boot_lines(stripped, smp, True, "formatted", 0, checkmetal.DISK_SECTORS)
+    problems += check_echo(stripped, b"! trial\r\n")
+    ok &= report("boot 1's serial log is not what the plan asks for", problems, capture)
+    notes = notes_on_disk(DISK)
+    problems = compare_notes(notes, SCRIPT_1, "sitting 1")
+    problems += check_serial_notes(capture, notes, "sitting 1")
+    problems += check_rests(results, SCRIPT_1, "sitting 1")
+    end = reads.get("end2")
+    if end is None:
+        problems.append("the obs page could not be read after done")
+    else:
+        problems += check_counts(end, {"mode": 0, "trial_sitting": 1, "trial_block": 0, "trial_cue": 0, "layout_default": 0,
+                                       "notes": len(notes), "hits": 0, "errors": 0, "wire_conns": 0,
+                                       "clicks": reads["counts"]["end2"]["clicks"], "packets": reads["counts"]["end2"]["packets"]},
+                                 "after done")
+    shot = os.path.join(TRIALS_OUT, "screen.sitting.1.ppm")
+    problems += check_table_panel(shot, geometry, notes, 1, "sitting 1's table")
+    problems += check_mode_field(shot, geometry, "prompt")
+    problems += check_choices(shot, geometry, "? ask   ! grow")
+    problems += check_region_rows(shot, geometry, regs["conversation"], ["click: " + cue_sequence(BLOCKS)[-1], "sitting 1 done", PROMPT])
+    if geometry_1 != geometry:
+        problems.append("the geometry differs")
+    ok &= report("sitting 1 is not what TRIALS.md predicts for the script", problems)
+    if not problems:
+        say("sitting 1: %d notes on the notebook exactly as the script expands - the three misses where scripted, every block's "
+            "median within %d ms of the scripted delays' median plus %d, the block notes agreeing with their hits; the same lines "
+            "on serial; the page at the seven rests; after done mode 0, layout_default 0, the table in the app panel, layout A's row"
+            % (len(notes), SLACK_MS, OFFSET_MS))
+    disk_after_1 = read_image(DISK)
+
+    # ------------------------------------------------ boot 2: the abort --
+    say("boot 2: the same disk; sitting 2 (%s), blocks 1-2, three cues of block 3, Esc" % order(2))
+    n_before = len(notes)
+    results, capture, reads, events, err = boot_and_play(smp, DISK, copy, os.path.join(TRIALS_OUT, "serial.sitting.2.txt"),
+                                                         SCRIPT_ABORT, "2", abort=(3, 3))
+    if err:
+        say(err)
+        if capture:
+            dump_capture(capture)
+        return 1
+    _, stripped = trial_lines(capture)
+    problems, _ = check_boot_lines(stripped, smp, False, "%d notes" % n_before, 0, checkmetal.DISK_SECTORS)
+    problems += check_echo(stripped, b"! trial\r\n")
+    ok &= report("boot 2's serial log is not what the plan asks for", problems, capture)
+    notes_before, notes = notes, notes_on_disk(DISK)
+    problems = []
+    if notes[:n_before] != notes_before:
+        problems.append("the earlier notes changed on the journal")
+    new = notes[n_before:]
+    problems += compare_notes(new, SCRIPT_ABORT, "sitting 2")
+    problems += check_serial_notes(capture, new, "sitting 2")
+    if results.get("aborted") != 3 or results.get("order") != order(2):
+        problems.append("the abort line says block %r and the order %r" % (results.get("aborted"), results.get("order")))
+    end = reads.get("end2")
+    if end is not None:
+        problems += check_counts(end, {"mode": 0, "trial_sitting": 2, "notes": len(notes), "layout_default": 0, "hits": 0}, "after the abort")
+    shot = os.path.join(TRIALS_OUT, "screen.sitting.2.ppm")
+    problems += check_table_panel(shot, geometry, notes, 2, "sitting 2's table")
+    problems += check_region_rows(shot, geometry, regs["conversation"], ["click: " + cue_sequence(3)[3], "sitting 2 aborted 3", PROMPT])
+    problems += check_mode_field(shot, geometry, "prompt")
+    if read_image(DISK)[:len(disk_after_1)] == disk_after_1:
+        problems.append("the disk did not change during sitting 2")
+    ok &= report("the abort is not what TRIALS.md says", problems)
+    if not problems:
+        say("sitting 2: 'S7: notebook %d notes' at boot, the order %s, blocks 1-2 stand, block 3's three hits on the journal with no "
+            "block note, 'trial sitting 2 aborted 3', its table with 'aborted 3', the prompt back" % (n_before, order(2)))
+
+    # ------------------------------------- boots 3 and 4: to the verdict --
+    for script, tag in ((SCRIPT_3, "3"), (SCRIPT_4, "4")):
+        s = script["sitting"]
+        n_before = len(notes)
+        say("boot %s: the same disk; sitting %d (%s) to done%s" % (tag, s, order(s), " - the third done sitting: the verdict" if s == 4 else ""))
+        results, capture, reads, events, err = boot_and_play(smp, DISK, copy, os.path.join(TRIALS_OUT, "serial.sitting.%s.txt" % tag),
+                                                             script, tag)
+        if err:
+            say(err)
+            if capture:
+                dump_capture(capture)
+            return 1
+        _, stripped = trial_lines(capture)
+        problems, _ = check_boot_lines(stripped, smp, False, "%d notes" % n_before, 0, checkmetal.DISK_SECTORS)
+        problems += check_echo(stripped, b"! trial\r\n")
+        ok &= report("boot %s's serial log is not what the plan asks for" % tag, problems, capture)
+        notes = notes_on_disk(DISK)
+        new = notes[n_before:]
+        verdict_note = []
+        if s == 4:
+            if new and new[-1].startswith("trial verdict "):
+                verdict_note = [new[-1]]
+                new = new[:-1]
+            else:
+                problems = ["no verdict note after the third done sitting: the record ends %r" % (new[-1:],)]
+        problems = compare_notes(new, script, "sitting %d" % s)
+        problems += check_serial_notes(capture, new + verdict_note, "sitting %d" % s)
+        end = reads.get("end2")
+        shot = os.path.join(TRIALS_OUT, "screen.sitting.%s.ppm" % tag)
+        problems += check_table_panel(shot, geometry, notes, s, "sitting %d's table" % s)
+        problems += check_mode_field(shot, geometry, "prompt")
+        if s == 3:
+            if verdict_of(notes) is not None:
+                problems.append("a verdict after two done sittings")
+            if end is not None:
+                problems += check_counts(end, {"mode": 0, "trial_sitting": 3, "notes": len(notes), "layout_default": 0}, "after sitting 3")
+            problems += check_choices(shot, geometry, "? ask   ! grow")
+            problems += check_region_rows(shot, geometry, regs["conversation"], ["click: " + cue_sequence(BLOCKS)[-1], "sitting 3 done", PROMPT])
+        else:
+            want_v = verdict_of(notes)
+            d = verdict_detail(notes)
+            if want_v != "B" or verdict_note != ["trial verdict B"] or d is None or d[0] != [1, 3, 4]:
+                problems.append("the verdict: the rule gives %r over %r, the record says %r" % (want_v, d, verdict_note))
+            if end is not None:
+                problems += check_counts(end, {"mode": 0, "trial_sitting": 4, "notes": len(notes), "layout_default": 1}, "after the verdict")
+            problems += check_layout_b(shot, reads.get("end", {}), geometry, ["? ask", "! grow"], "the row after the verdict")
+            problems += check_region_rows(shot, geometry, regs["conversation"],
+                                          ["click: " + cue_sequence(BLOCKS)[-1], "sitting 4 done", "verdict B", PROMPT])
+        ok &= report("sitting %d is not what TRIALS.md predicts" % s, problems)
+        if not problems and s == 3:
+            say("sitting 3: %d notes as the script expands, no verdict yet, layout A" % len(new))
+        elif not problems:
+            say("sitting 4: the third done sitting; 'trial verdict B' on the notebook by %d wins of 12 with misses A %d B %d over sittings "
+                "%s; 'verdict B' in the panel and the conversation; layout_default 1; the row two boxes at the prompt" % (d[1], d[2], d[3], d[0]))
+    disk_after_4 = read_image(DISK)
+
+    # ----------------------------------------- boot 5: the default, no trial --
+    say("boot 5: the same disk, no trial: layout B at the prompt, 'trial verdict A' typed and refused, a click on the '! grow' box")
+    n_before = len(notes)
+    grow_box = boxes(geometry[2], 2)[1]
+    crow = regs["choices"][0]
+    steps = [
+        ("sleep", 0.5), ("surfaces", "boot"), ("shot", os.path.join(TRIALS_OUT, "screen.sitting.5a.ppm")),
+        ("type", "trial verdict A\n"), ("sleep", 1.5),
+        ("shot", os.path.join(TRIALS_OUT, "screen.sitting.5b.ppm")), ("obs", "reserved"),
+        ("mouse", 1, 0), ("sleep", 0.5),
+        ("moveto", crow + 1, (grow_box[2] + grow_box[3]) // 2),
+        ("button", 1, "hit"), ("button", 0), ("sleep", 1.5),
+        ("park",), ("shot", os.path.join(TRIALS_OUT, "screen.sitting.5c.ppm")), ("obs", "click"), ("serial", "end"),
+    ]
+    capture, reads, events, err = drive_7d(smp, DISK, copy, steps, os.path.join(TRIALS_OUT, "serial.sitting.5.txt"),
+                                           ready_limit=READY_LIMIT_S, settle=SETTLE_S)
+    if err:
+        say(err)
+        if capture:
+            dump_capture(capture)
+        return 1
+    problems, stripped = strip_mouse_line(capture)
+    more, _ = check_boot_lines(stripped, smp, False, "%d notes" % n_before, 0, checkmetal.DISK_SECTORS)
+    problems += more
+    problems += check_echo(stripped, b"trial verdict A\r\n!")
+    ok &= report("boot 5's serial log is not what the plan asks for", problems, capture)
+    problems = []
+    boot = reads.get("boot", {})
+    problems += check_counts(boot.get("obs", {}), {"mode": 0, "layout_default": 1, "trial_sitting": 0, "notes": n_before}, "at boot") \
+        if boot.get("obs") else ["the page was not read at boot"]
+    problems += check_layout_b(os.path.join(TRIALS_OUT, "screen.sitting.5a.ppm"), boot, geometry, ["? ask", "! grow"], "the row at boot")
+    problems += check_region_rows(os.path.join(TRIALS_OUT, "screen.sitting.5b.ppm"), geometry, regs["conversation"],
+                                  ["trial verdict A", "trial is reserved", PROMPT])
+    if "reserved" in reads:
+        problems += check_counts(reads["reserved"], {"errors": 1, "notes": n_before, "layout_default": 1, "mode": 0}, "the reserved prefix")
+    else:
+        problems.append("the page was not read after the reserved line")
+    if notes_on_disk(DISK) != notes:
+        problems.append("the notebook changed on the no-trial boot - the reserved prefix was journaled, or something else was")
+    problems += check_layout_b(os.path.join(TRIALS_OUT, "screen.sitting.5b.ppm"), boot, geometry, ["? ask", "! grow"], "the row after the refusal")
+    if "click" in reads:
+        c = reads["counts"]["click"]
+        problems += check_counts(reads["click"], {"hits": 1, "clicks": 1, "packets": c["packets"], "mode": 0, "layout_default": 1,
+                                                  "notes": n_before}, "the click")
+        row, col = reads["model"]["click"]
+        problems += check_arrow_at(os.path.join(TRIALS_OUT, "screen.sitting.5c.ppm"), geometry, row, col, "screen 5c")
+    else:
+        problems.append("the page was not read after the click")
+    if read_image(DISK) != disk_after_4:
+        problems.append("the disk changed during the no-trial boot")
+    problems += check_stick_tables_unchanged(copy, "the sitting boots")
+    r = subprocess.run([sys.executable, os.path.join(HERE, "trials.py"), "--disk", DISK], stdout=subprocess.PIPE,
+                       stderr=subprocess.STDOUT, text=True)
+    if r.returncode != 0 or "verdict B:" not in r.stdout:
+        problems.append("trials.py --disk on the image: exit %d, %r" % (r.returncode, r.stdout.strip().splitlines()[-1:]))
+    else:
+        for sitting, rows in table_of(notes):
+            if "\n".join(rows) not in r.stdout:
+                problems.append("trials.py --disk does not print sitting %d's table as the panel showed it" % sitting)
+    ok &= report("the default read at boot, the reserved prefix or the click on a box is not what TRIALS.md says", problems)
+    if not problems:
+        say("boot 5: 'S7: notebook %d notes', layout_default 1 and the two boxes at the prompt before any packet; 'trial verdict A' "
+            "refused with 'trial is reserved', errors 1, the notebook unchanged, the row still layout B; the click on the '! grow' box "
+            "typed '!' (hits 1); the disk and the stick copy untouched; trials.py --disk prints the four tables and 'verdict B'" % n_before)
+    say("the sittings: %s" % ("three sittings to a verdict as TRIALS.md predicts, and the DE's default follows it" if ok else "not what TRIALS.md predicts"))
+    return 0 if ok else 1
+
+
 # --------------------------------------------------------------- main ------
 
 def main(argv):
@@ -662,6 +1023,8 @@ def main(argv):
         return run_document()
     if argv == ["--row"]:
         return run_row()
+    if argv == ["--sitting"]:
+        return run_sitting()
     say("usage: checktrials.py --document | --row | --sitting | --cage")
     return 1
 

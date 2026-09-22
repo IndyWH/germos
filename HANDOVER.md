@@ -2111,6 +2111,23 @@ arithmetic was not — the checker computes the columns by the rule).
 **Test 1 green; test 2 red by design** (the constants unset; on the closed
 binary `! trial` would go to the mock as a grow and no `trial:` line
 would appear).
+**Item 5** — `checktrials.py --sitting` (test 3): the four scripts
+(`SCRIPT_1` three misses, `SCRIPT_ABORT` Esc after three cues of block 3,
+`SCRIPT_3`, `SCRIPT_4`; A blocks' delays with median 300, B blocks' 200),
+five boots on one disk, every expectation the script expanded by
+`trials.py` (`notes_of` on the expected ms — `d`, or `2d` for a cue
+missed first, plus `OFFSET_MS`), every hit inside the per-hit window,
+every block median inside the spec's ±30 ms of the rule over the expected
+ms, `check_blocks` on every record (A2), the serial `trial:` lines equal
+to the notes, the page at every rest, the tables in the app panel, the
+verdict B by the rule over sittings 1, 3 and 4, layout B at the prompt,
+the reserved prefix refused with the notebook unchanged (A1), the click on
+the `! grow` box typing `!`, `trials.py --disk` agreeing with the panels.
+One correction of the plan's text while writing the script: the plan
+named the second miss in "block 5 (A)", but block 5 of `ABBA BAAB` is B;
+the miss sits in block 4 (A), so B's misses (1) are not worse than A's (2)
+and the scripted verdict is B. **Tests 2 and 3 red by design** (the
+constants unset until item 7).
 
 ## Ring 7c — the metal · opened 15 September 2026 · closed 18 September 2026
 

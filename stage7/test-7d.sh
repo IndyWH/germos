@@ -179,6 +179,26 @@ else
 fi
 echo
 
+# ------------------------------------------------ test 3: the sittings -----
+# Five boots at -smp 4 on one disk, nothing on the wire (checktrials.py
+# --sitting): sitting 1 to done with the numbers predicted from the script
+# by TRIALS.md's rules - the notes, the serial lines, the page at every
+# rest, the table in the app panel; sitting 2 aborted in block 3, blocks 1-2
+# standing; sittings 3 and 4 to done and the verdict B on the notebook; then
+# a boot with no trial - layout B at the prompt from the notebook, the
+# reserved prefix refused, a click on the "! grow" box typing "!", and
+# trials.py --disk agreeing with the panels.
+
+echo "Test 3 - A sitting, the numbers predicted; the abort; three sittings to a verdict; the default read at boot; the reserved prefix; a click on a box"
+if [ ! -f "$STICK" ] || [ ! -f "$EFI" ]; then
+  fail "test 3: no stick was built"
+elif python3 "$REPO/stage7/checktrials.py" --sitting; then
+  pass "test 3: three sittings to the verdict B as TRIALS.md predicts, and the DE's default follows it"
+else
+  fail "test 3: the sittings are not what TRIALS.md predicts (see above)"
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then
