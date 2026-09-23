@@ -908,6 +908,8 @@ def run_sitting():
     if "end" in reads:
         problems += check_conv_tail(reads["end"]["conversation"], reads["end"]["obs"],
                                     ["click: " + cue_sequence(BLOCKS)[-1], "sitting 1 done", ">"], "after done")
+    else:
+        problems.append("the conversation surface could not be read after done")
     if geometry_1 != geometry:
         problems.append("the geometry differs")
     ok &= report("sitting 1 is not what TRIALS.md predicts for the script", problems)
@@ -942,7 +944,9 @@ def run_sitting():
     if results.get("aborted") != 3 or results.get("order") != order(2):
         problems.append("the abort line says block %r and the order %r" % (results.get("aborted"), results.get("order")))
     end = reads.get("end2")
-    if end is not None:
+    if end is None:
+        problems.append("the obs page could not be read after the abort")
+    else:
         problems += check_counts(end, {"mode": 0, "trial_sitting": 2, "notes": len(notes), "layout_default": 0, "hits": 0}, "after the abort")
     shot = os.path.join(TRIALS_OUT, "screen.sitting.2.ppm")
     problems += check_table_panel(shot, geometry, notes, 2, "sitting 2's table")
@@ -950,6 +954,8 @@ def run_sitting():
     if "end" in reads:
         problems += check_conv_tail(reads["end"]["conversation"], reads["end"]["obs"],
                                     ["click: " + cue_sequence(3)[2], "sitting 2 aborted 3", ">"], "after the abort")
+    else:
+        problems.append("the conversation surface could not be read after the abort")
     problems += check_mode_field(shot, geometry, "prompt")
     if read_image(DISK)[:len(disk_after_1)] == disk_after_1:
         problems.append("the disk did not change during sitting 2")
@@ -977,13 +983,14 @@ def run_sitting():
         notes = notes_on_disk(DISK)
         new = notes[n_before:]
         verdict_note = []
+        problems = []
         if s == 4:
             if new and new[-1].startswith("trial verdict "):
                 verdict_note = [new[-1]]
                 new = new[:-1]
             else:
-                problems = ["no verdict note after the third done sitting: the record ends %r" % (new[-1:],)]
-        problems = compare_notes(new, script, "sitting %d" % s)
+                problems.append("no verdict note after the third done sitting: the record ends %r" % (new[-1:],))
+        problems += compare_notes(new, script, "sitting %d" % s)
         problems += check_serial_notes(capture, new + verdict_note, "sitting %d" % s)
         end = reads.get("end2")
         shot = os.path.join(TRIALS_OUT, "screen.sitting.%s.ppm" % tag)
@@ -992,7 +999,9 @@ def run_sitting():
         if s == 3:
             if verdict_of(notes) is not None:
                 problems.append("a verdict after two done sittings")
-            if end is not None:
+            if end is None:
+                problems.append("the obs page could not be read after sitting 3")
+            else:
                 problems += check_counts(end, {"mode": 0, "trial_sitting": 3, "notes": len(notes), "layout_default": 0}, "after sitting 3")
             problems += check_choices(shot, geometry, "? ask   ! grow")
             problems += check_region_rows(shot, geometry, regs["conversation"], ["sitting 3 done", PROMPT])
@@ -1001,7 +1010,9 @@ def run_sitting():
             d = verdict_detail(notes)
             if want_v != "B" or verdict_note != ["trial verdict B"] or d is None or d[0] != [1, 3, 4]:
                 problems.append("the verdict: the rule gives %r over %r, the record says %r" % (want_v, d, verdict_note))
-            if end is not None:
+            if end is None:
+                problems.append("the obs page could not be read after the verdict")
+            else:
                 problems += check_counts(end, {"mode": 0, "trial_sitting": 4, "notes": len(notes), "layout_default": 1}, "after the verdict")
             problems += check_layout_b(shot, reads.get("end", {}), geometry, ["? ask", "! grow"], "the row after the verdict")
             problems += check_region_rows(shot, geometry, regs["conversation"], ["sitting 4 done", "verdict B", PROMPT])
