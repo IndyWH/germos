@@ -7573,8 +7573,15 @@ row_to_boxes:
         mov     edx, r12d
         sub     edx, r10d
         inc     edx                     ; the filled width
+        cmp     ecx, edx                ; a label wider than its box (a narrow
+        jbe     .centred                ; screen): its first `filled` characters
+        mov     ecx, edx                ; from the box's first column (item 13)
+        xor     edx, edx
+        jmp     .placed
+.centred:
         sub     edx, ecx
         shr     edx, 1
+.placed:
         add     edx, r10d               ; the label's first column
         mov     [rsi + HT_FIRST], r10w  ; the target: the filled span
         mov     [rsi + HT_LAST], r12w
@@ -7830,6 +7837,8 @@ trial_press:
         cmp     eax, edx
         jne     .miss
         mov     rax, [mse_cur + ME_STAMP]       ; a hit: the press's stamp minus the cue's
+        cmp     rax, [obs_page + OBS_CUE_STAMP] ; a packet stamped before the cue's frame
+        jb      .ret                            ; end saw no cue: counted, nothing more (item 13)
         sub     rax, [obs_page + OBS_CUE_STAMP]
         mov     [obs_page + OBS_HIT_LAST], rax
         cmp     rax, [obs_page + OBS_HIT_WORST]
@@ -8259,6 +8268,8 @@ note_verdict_check:
         cmp     word [sector_buf + 8], 15
         jne     .out
         cmp     dword [sector_buf + NB_TEXT_OFF], 'tria'
+        jne     .out
+        cmp     word [sector_buf + NB_TEXT_OFF + 4], 'l '   ; as journal_scan judges it (item 13)
         jne     .out
         cmp     dword [sector_buf + NB_TEXT_OFF + 6], 'verd'
         jne     .out
@@ -9357,7 +9368,8 @@ draw_glyph:
         push    r8
         push    r9
         push    r10
-        jmp     draw_cell.from_font
+        mov     dword [cell_inverse], 0 ; the arrow is never inverse, whatever the
+        jmp     draw_cell.from_font     ; last cell painted (review, item 13)
 
 ; draw_cell - EAX = character, EBX = cell row, ECX = cell column. Preserves
 ; everything. Each glyph bit becomes a 2x2 block of foreground or background;

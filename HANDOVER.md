@@ -139,7 +139,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | | |
 |---|---|
 | Stage | **7 — Metal — ring 7d, the trials, OPENED 22 September 2026** (Stage 7's last ring by the owner's order of 22 September: the trials first, the molt after); `stage7/spec-7d.md` approved by the owner with all seven decisions; `stage7/plan-7d.md` approved at the plan gate with Cowork's four amendments (A1 the reserved prefix `trial `, A2 every block median recomputed exactly, A3 the ±30 ms window never widened by CC, A4 the three Stage 7 gates once per commit) and all fourteen deviations accepted. Rings 7a, 7b, 7c closed (9, 15, 18 September); Stages 0–6 closed |
-| Status | **Ring 7d: all four automated tests PASS** (`./stage7/test-7d.sh`, 21 min, the log's item 11 run; items 0–12 committed, one per item, the section appended by the owner's hand at item 9) — **test 5 pending: Wajira's three sittings**, the first in the windowed twin, two on the HP; his word on the third closes the ring. Ring 7c: all five tests PASS (18 September). Rings 7b and 7a: all five PASS. Stages 0–5 and the three ring 6 gates green on their own binaries |
+| Status | **Ring 7d: all four automated tests PASS** (`./stage7/test-7d.sh`, 21 min, the log's item 11 run; items 0–13 committed, one per item, item 13 the four fixes of Cowork's pre-oracle review, the section appended by the owner's hand at item 9) — **test 5 pending: Wajira's three sittings**, the first in the windowed twin, two on the HP; his word on the third closes the ring. Ring 7c: all five tests PASS (18 September). Rings 7b and 7a: all five PASS. Stages 0–5 and the three ring 6 gates green on their own binaries |
 | Repo | `/home/indy/Work/germos` (branch `main`) on Omarchy since 22 September 2026 (`/home/indy/Projects/ai-os` was the Ubuntu path) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, **Omarchy (Arch Linux, kernel 7.2.5-3-omarchy), dual boot on the Crucial P2** since 22 September 2026 (native Ubuntu 26.04 before), 32 logical CPUs |
 | Toolchain | NASM 3.02, QEMU 11.1.1, Python 3.14.7, OVMF at `/usr/share/ovmf/OVMF.fd`, mtools, OpenBSD netcat, xxd, the `claude` CLI 2.1.280 (the kickoff said 2.1.278; `claude --version` at item 0 read 2.1.280) — ring 7d needs no new package; every `<stage>/out/` exists (the fresh-clone gotcha) |
@@ -2249,6 +2249,36 @@ the payload table 0 wrong, and the 7c, 7b and 7a gates green inside test
 4 (A4: the one run of the three gates for this commit). **The whole gate's
 wall time: 21 min (1250 s)** — into CLAUDE.md's build block at item 12. The binary
 stays 45,056 bytes.
+**Item 12** — this file to the green-pending-oracle state, CLAUDE.md's
+build block and the windowed run's sentence, README's ring 7d, the payload
+table re-run (1678, 0 wrong), the three ring 6 gates and Stages 0–5 green
+on their own binaries.
+**Item 13** — Cowork's pre-oracle review (23 September 2026): **fix first,
+four defects, all in the unfrozen guest**, fixed in one commit. (1)
+`draw_glyph` jumped into `draw_cell` past the `cell_inverse` reset but
+before the colour swap, so the arrow was drawn inverse whenever the last
+cell painted before it carried bit 7 — `cursor_draw` repaints the old
+cell first, so an arrow leaving a box would have been inverted; the reset
+now precedes the jump. **The gate cannot show this one:** its block 2
+screendump has the arrow parked in the conversation panel, so **the
+oracle's eye is the check** — the arrow over a box, and after leaving it,
+must be the plain arrow. (2) `row_to_boxes` with a label wider than its
+box's filled span computed a negative width, shifted it huge, and stored
+the label far outside the surface (a narrow screen); now such a label is
+cut to its first `filled` characters from the box's first column, the
+target the filled span as ever — **the rule, one sentence:** *a label
+wider than its box is cut to the box's filled width, from the box's first
+column.* TRIALS.md is frozen and does not say it; the sentence is written
+unapplied for the owner at `stage7/out/trials-md-label-rule.txt`. (3)
+`trial_press` subtracted the cue's stamp from the packet's without a
+compare: a packet stamped at its first byte before the cue's frame end,
+consumed after it, would wrap to a huge hit; a press stamped below
+`cue_stamp` is now "no cue showing" — counted in `clicks`, nothing more.
+(4) `note_verdict_check` now compares bytes 4–5 against `l ` as
+`journal_scan` does, so both readers of the verdict note judge the same
+bytes. The binary stays 45,056 bytes. **All four automated tests green on
+the fixed binary** (the log's item 13 run, 21 min (1248 s)), the three Stage 7 gates
+inside test 4 (A4).
 
 ## Ring 7c — the metal · opened 15 September 2026 · closed 18 September 2026
 
