@@ -2227,6 +2227,28 @@ one page from 40,960). The row is still layout A everywhere: layout B is
 item 11. **The three Stage 7 gates run on their own on this binary** (A4:
 tests 2 and 3 of this ring are red by design here) — the log's item 10
 run.
+**Item 11** — layout B, and the default from the notebook: the probe's
+splice (group 2) — `draw_cell` swaps the two colours for a byte with bit 7
+set (`0xA0` the solid cell); `choices_update`'s `.layout` tail calls
+`row_to_boxes` in a B block of a sitting and, outside one, when
+`layout_default` is 1 — the row just built (row 0 of the choices surface
+copied aside, the hit table) redrawn as TRIALS.md's boxes with the gap
+columns blank and the labels centred inverse, the hit table's spans the
+filled spans; `notebook_replay` redraws the row after the walk when the
+verdict said B. **All four automated tests green** on `./stage7/test-7d.sh`
+(the log's item 11 run): TRIALS.md parsed cold and both worked examples;
+the mode-3 refusal, the sitting's start, layout A's row to the pixel,
+block 1 played, block 2's boxes in the surface and on the screen; sitting
+1 predicted to the note with the three misses and every median inside the
+spec's window, the abort with blocks 1–2 standing, sittings 3 and 4 to
+`trial verdict B` by 12 of 12 with misses A 2 B 1, layout B at the prompt
+before any packet on the next boot, `trial verdict A` typed and refused
+with the notebook unchanged, the click on the `! grow` box typing `!`,
+`trials.py --disk` agreeing with the panels; the freeze, the argv check,
+the payload table 0 wrong, and the 7c, 7b and 7a gates green inside test
+4 (A4: the one run of the three gates for this commit). **The whole gate's
+wall time: 21 min (1250 s)** — into CLAUDE.md's build block at item 12. The binary
+stays 45,056 bytes.
 
 ## Ring 7c — the metal · opened 15 September 2026 · closed 18 September 2026
 

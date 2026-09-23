@@ -7490,7 +7490,108 @@ choices_update:
         mov     rcx, rdi
         sub     rcx, rsi
         call    choices_set
-.layout:                                ; ring 7d: layout B rewrites the row (item 11)
+.layout:                                ; ring 7d (TRIALS.md, "Layout B - the boxes"):
+        cmp     dword [trial_active], 0 ; in a B block, or at the prompt when the
+        je      .default                ; verdict said B, the items become boxes
+        cmp     qword [obs_page + OBS_TRIAL_LAYOUT], 0
+        je      .done
+        jmp     .boxes
+.default:
+        cmp     qword [obs_page + OBS_LAYOUT_DEFAULT], 0
+        je      .done
+.boxes:
+        call    row_to_boxes
+.done:
+        ret
+
+; row_to_boxes - the row choices_update just built (row 0 of the choices
+; surface, the hit table) redrawn as layout B: n = the items, w = C / n, box i at i*w with
+; the last column of every box but the last a gap; the filled cells 0xA0,
+; the label centred on row 0 inverse; the hit table's spans become the
+; filled spans. Clobbers registers freely.
+row_to_boxes:
+        mov     ecx, [hit_count]
+        test    ecx, ecx
+        jz      .out
+        lea     rsi, [choices_cells]    ; the labels' source: row 0 as choices_set
+        lea     rdi, [choices_line]     ; wrote it, copied aside before the fills
+        mov     ecx, [scr_cols]         ; overwrite it (layout A's text lies within
+        cmp     ecx, 128                ; the first 128 columns: five items at most)
+        jbe     .copy
+        mov     ecx, 128
+.copy:
+        rep     movsb
+        mov     ecx, [hit_count]
+        mov     eax, [scr_cols]
+        xor     edx, edx
+        div     ecx                     ; EAX = w
+        mov     r8d, eax
+        xor     r9d, r9d                ; the item
+.item:
+        cmp     r9d, [hit_count]
+        jae     .dirty
+        mov     eax, r9d
+        imul    eax, r8d                ; first = i * w
+        mov     r10d, eax
+        lea     r11d, [rax + r8 - 1]    ; last = first + w - 1 ...
+        mov     eax, r9d
+        inc     eax
+        cmp     eax, [hit_count]
+        jne     .not_last
+        mov     r11d, [scr_cols]
+        dec     r11d                    ; ... or C - 1 for the last box
+        mov     r12d, r11d              ; the filled last: the same
+        jmp     .fill
+.not_last:
+        lea     r12d, [r11 - 1]         ; the gap: the box's last column, blank
+        lea     rdi, [choices_cells]
+        mov     byte [rdi + r11], ' '
+        mov     eax, [scr_cols]
+        add     eax, r11d
+        mov     byte [rdi + rax], ' '
+.fill:
+        lea     rdi, [choices_cells]
+        mov     ecx, r10d
+.cell:
+        cmp     ecx, r12d
+        ja      .filled
+        mov     byte [rdi + rcx], 0xA0
+        mov     eax, [scr_cols]
+        add     eax, ecx
+        mov     byte [rdi + rax], 0xA0  ; row 1
+        inc     ecx
+        jmp     .cell
+.filled:
+        lea     rsi, [hit_table]        ; the label: choices_line[first..last] of entry i
+        mov     eax, r9d
+        shl     eax, 3
+        add     rsi, rax
+        movzx   ecx, word [rsi + HT_LAST]
+        movzx   eax, word [rsi + HT_FIRST]
+        sub     ecx, eax
+        inc     ecx                     ; the label's length
+        mov     edx, r12d
+        sub     edx, r10d
+        inc     edx                     ; the filled width
+        sub     edx, ecx
+        shr     edx, 1
+        add     edx, r10d               ; the label's first column
+        mov     [rsi + HT_FIRST], r10w  ; the target: the filled span
+        mov     [rsi + HT_LAST], r12w
+        lea     rsi, [choices_line]
+        add     rsi, rax
+.label:
+        lodsb
+        or      al, 0x80
+        mov     [rdi + rdx], al
+        inc     edx
+        dec     ecx
+        jnz     .label
+        inc     r9d
+        jmp     .item
+.dirty:
+        mov     word [choices_dirty], 0x0101
+.out:
         ret
 
 ; draw_answer - RSI = bytes, ECX = how many: drawn through console_putc from
@@ -8679,6 +8780,10 @@ notebook_replay:
         inc     ebx
         jmp     .note
 .done:
+        cmp     qword [obs_page + OBS_LAYOUT_DEFAULT], 0
+        je      .ret
+        call    choices_update          ; ring 7d: the row in the verdict's layout
+.ret:
         ret
 
 ; notebook_append - the line buffer becomes the next record on disk, written
@@ -9268,6 +9373,12 @@ draw_cell:
         push    r9
         push    r10
 
+        mov     dword [cell_inverse], 0
+        test    al, 0x80                ; ring 7d: an inverse cell (layout B)
+        jz      .colours_known
+        mov     dword [cell_inverse], 1
+        and     eax, 0x7F
+.colours_known:
         cmp     al, 0x20
         jb      .special
         cmp     al, 0x7E
@@ -9304,6 +9415,10 @@ draw_cell:
 
         mov     r9d, [fg_pix]
         mov     r10d, [bg_pix]
+        cmp     dword [cell_inverse], 0
+        je      .plain_colours
+        xchg    r9d, r10d               ; the glyph in the background colour on foreground
+.plain_colours:
 
         mov     ecx, 8                  ; the glyph's 8 rows
 .frow:
