@@ -2279,6 +2279,13 @@ consumed after it, would wrap to a huge hit; a press stamped below
 bytes. The binary stays 45,056 bytes. **All four automated tests green on
 the fixed binary** (the log's item 13 run, 21 min (1248 s)), the three Stage 7 gates
 inside test 4 (A4).
+**Item 13b** (`1020754`, the owner's hand, 23 September 2026) — **the
+project's seventh freeze opening**, from Cowork's pre-oracle review: the
+frozen `stage7/checktrials.py` now records a failed monitor read after
+boots 1 to 4 of `--sitting` as a problem instead of skipping it, and keeps
+the missing-verdict message. **Item 14** — the gate run whole on the
+patched checker: all four automated tests green, 21 min (1249 s) (the log's item 14
+run).
 
 ## Ring 7c — the metal · opened 15 September 2026 · closed 18 September 2026
 
