@@ -139,7 +139,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | | |
 |---|---|
 | Stage | **7 — Metal — ring 7d, the trials, OPENED 22 September 2026** (Stage 7's last ring by the owner's order of 22 September: the trials first, the molt after); `stage7/spec-7d.md` approved by the owner with all seven decisions; `stage7/plan-7d.md` approved at the plan gate with Cowork's four amendments (A1 the reserved prefix `trial `, A2 every block median recomputed exactly, A3 the ±30 ms window never widened by CC, A4 the three Stage 7 gates once per commit) and all fourteen deviations accepted. Rings 7a, 7b, 7c closed (9, 15, 18 September); Stages 0–6 closed |
-| Status | **Ring 7d: no test exists yet — item 0 (the plan's commit) done.** On this machine today, on the item 21 binary (40,960 bytes, commit `ebf5794`): the Stage 0 gate, the 7c gate and the payload table green (the Omarchy regression, 22 September 2026). Ring 7c: all five tests PASS (test 5 by Wajira on the HP, 18 September). Ring 7b and 7a: all five tests PASS. Stages 0–5 and the three ring 6 gates green on their own binaries |
+| Status | **Ring 7d: all four automated tests PASS** (`./stage7/test-7d.sh`, 21 min, the log's item 11 run; items 0–12 committed, one per item, the section appended by the owner's hand at item 9) — **test 5 pending: Wajira's three sittings**, the first in the windowed twin, two on the HP; his word on the third closes the ring. Ring 7c: all five tests PASS (18 September). Rings 7b and 7a: all five PASS. Stages 0–5 and the three ring 6 gates green on their own binaries |
 | Repo | `/home/indy/Work/germos` (branch `main`) on Omarchy since 22 September 2026 (`/home/indy/Projects/ai-os` was the Ubuntu path) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, **Omarchy (Arch Linux, kernel 7.2.5-3-omarchy), dual boot on the Crucial P2** since 22 September 2026 (native Ubuntu 26.04 before), 32 logical CPUs |
 | Toolchain | NASM 3.02, QEMU 11.1.1, Python 3.14.7, OVMF at `/usr/share/ovmf/OVMF.fd`, mtools, OpenBSD netcat, xxd, the `claude` CLI 2.1.280 (the kickoff said 2.1.278; `claude --version` at item 0 read 2.1.280) — ring 7d needs no new package; every `<stage>/out/` exists (the fresh-clone gotcha) |
@@ -2045,11 +2045,11 @@ in by the owner's hand at item 9. Every gate run appends to
 
 | Test | State |
 |---|---|
-| 1 — the artefact, the stick, TRIALS.md parsed cold, the worked examples | not written |
-| 2 — the refusal, both layouts' rows, the cue | not written |
-| 3 — a sitting predicted, the abort, three sittings to a verdict, the default | not written |
-| 4 — the freeze, the argv check, the three Stage 7 gates | not written |
-| 5 — Wajira's: sitting 1 in the twin, 2–3 on the HP | pending |
+| 1 — the artefact, the stick, TRIALS.md parsed cold, the worked examples | **PASS** (item 4 on) |
+| 2 — the refusal, both layouts' rows, the cue | **PASS** (item 11) |
+| 3 — a sitting predicted, the abort, three sittings to a verdict, the default, the reserved prefix, a click on a box | **PASS** (item 11) |
+| 4 — the freeze, the argv check, the payload table, the three Stage 7 gates | **PASS** (item 8 on) |
+| 5 — Wajira's: sitting 1 in the twin, 2–3 on the HP | **pending** — the owner's word on the third sitting closes the ring |
 
 **Carried into this ring:** everything Stage 7 carried (the PHY speed
 after a reset, TIPG, WIRE.md's halting sentence, the nineteen-line first
@@ -3298,16 +3298,34 @@ flash was the owner's hand.
 
 ## Next action
 
-**Ring 7d, the trials, opened 22 September 2026.** The spec approved with all seven
-decisions; Fable 5.1 at medium effort, the owner's decision at the kickoff;
-the plan approved at the gate with Cowork's four amendments (A1–A4) and all
-fourteen deviations. Item 0 is done. **Next: item 1**, the environment
-measured (the monitor's clocks under QEMU 11, the pointer's own
-input-to-photon, a full notebook's replay, the frozen seams on mode 5, the
-hook), then the document, the tool and the four tests red, in the plan's
-order. Every gate run goes to `stage7/out/gate-7d.log`; the chat carries one
-line per test. The owner's part is item 9 (append the GLASS.md section by
-`cat >>`) and test 5 (one sitting a session). Earlier — **Ring 7c and Stage 7 are CLOSED — 18 September 2026, by the owner's
+**Ring 7d, the trials, is GREEN PENDING THE ORACLE — 23 September 2026.**
+All four automated tests pass on `./stage7/test-7d.sh` (21 min; every run in
+`stage7/out/gate-7d.log`): the document parsed cold with its worked
+examples; the refusal while an app runs, the sitting's start, layout A's
+row to the pixel, the boxes in the surface and on the screen; the
+synthetic human's three sittings to `trial verdict B` with every block
+median inside the spec's ±30 ms, the abort, the default read at boot, the
+reserved prefix refused, a click on a box; the freeze, the payload table
+(1678 cases, 0 wrong) and the 7c, 7b and 7a gates green inside test 4 on
+the same binary (45,056 bytes). Items 0–12, one commit each; the four
+files frozen at item 8; the GLASS.md section by the owner's hand at item
+9; one probe binary at item 7 with every timing number read from its run;
+no freeze opening. **Test 5 is Wajira's: one sitting a session, three
+sittings, his word on the third closes the ring.** Sitting 1 in the
+windowed twin — three terminals at the repo root, the 7c shape below,
+then `! trial` at the prompt with the mouse grabbed: eighty clicks and
+seven rests, about four minutes; the table appears in the app panel at
+the end, and `python3 stage7/trials.py --disk stage7/out/disk.img` prints
+it from the disk. Sittings 2 and 3 on the HP by `stage7/METAL.md`'s day:
+one flash of the ring's stick (`stage7/out/stick.img` as built at item
+11), then boots only — the HP's disk already holds a note and the
+calculator, and the sitting number counts from the notebook, so sitting
+1 there would be sitting 1 of that disk's trial; **the twin's sitting and
+the HP's are two notebooks, and the verdict on each is over its own three
+sittings** — the owner decides which record is the trial (deviation 7:
+the sitting line does not say where it ran). With the chart running,
+`python3 stage7/trials.py --serial stage7/out/metal.log` prints a sitting
+from the serial lines without reading the disk. Earlier — **Ring 7c and Stage 7 are CLOSED — 18 September 2026, by the owner's
 word, after test 5 passed on the HP, all eight steps.** Nothing is owed
 on Stage 7. **Next: the N-of-1 trials ring, per `stage7/spec.md`'s order
 ("The N-of-1 trials ring comes after the metal") — a fresh session for

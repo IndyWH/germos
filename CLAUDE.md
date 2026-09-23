@@ -118,6 +118,25 @@ python3 stage7/mkstick.py   # after mkimage.sh: stage7/out/stick.img - a protect
                        # rehearsals. Rings 7a and 7b stay the regressions on
                        # the same binary from esp.img.
 
+# Stage 7 ring 7d - the trials
+./stage7/test-7d.sh    # acceptance tests 1-4 on the 7c shape, the PS/2 mouse
+                       # through the monitor, every run appended to
+                       # stage7/out/gate-7d.log: TRIALS.md parsed cold and its
+                       # worked examples reproduced; the "! trial" refusal
+                       # while an app runs, the sitting's start, layout A's row
+                       # to the pixel, block 2's boxes in the surface and on
+                       # the screen; three sittings played by a synthetic human
+                       # to a scripted verdict B with every median inside the
+                       # spec's window, the abort, the default read at boot,
+                       # the reserved prefix refused, a click on a box; the
+                       # freeze and the payload table, then the 7c, 7b and 7a
+                       # gates on the same binary. Needs 9999, 9998 and 9997
+                       # free. About 21 min: six boots and one grow of its own,
+                       # then the three earlier gates.
+python3 stage7/trials.py --disk stage7/out/disk.img   # the sitting tables and the
+                       # verdict from a GermOS disk image; --serial LOG from the
+                       # HP's chart; --example the document's worked examples
+
 # The mock brokers (what the gates talk to; never spend a token)
 python3 broker/broker.py --mock --port 9999     # Stage 4
 python3 broker/plans.py --mock                  # Stage 6 (answers, apps, installs)
@@ -128,7 +147,7 @@ python3 broker/relay.py --bind 127.0.0.1 --port 9997   # the relay in the twin, 
                                                 # (unfrozen; refuses every bind but 10.0.2.4 and 127.0.0.1)
 
 # The hook's payload table - every freeze and bodyguard case, 0 wrong or exit 1
-python3 .claude/hooks/payloads.py
+python3 .claude/hooks/payloads.py       # 1678 cases at ring 7d
 ```
 
 Windowed, for the oracle test (Stage 7 ring 7c shape - the twin of the HP,
@@ -140,7 +159,9 @@ on the relay; one 64 MB SATA disk the guest partitions on its first boot -
 remove `disk.img` first for a blank one, `truncate` on a file already 64 MB
 changes nothing, and no gate touches that path; the copy because QEMU locks
 the file it boots and the owner flashes `stick.img` as built; click in the
-QEMU window to grab the mouse, Ctrl+Alt+G releases it; ring 7b's shape is
+QEMU window to grab the mouse, Ctrl+Alt+G releases it; for ring 7d's sitting
+type `! trial` at the prompt and click the cued item - eighty clicks and
+seven rests, Esc abandons it; ring 7b's shape is
 the same line with `-drive format=raw,file=stage7/out/esp.img` in place of
 the stick's two devices; ring 7a's is that with `virtio-net-pci` and the
 guestfwd on 9999 with `python3 broker/metal.py`; Stage 6 keeps its virtio
