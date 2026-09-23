@@ -2206,6 +2206,27 @@ rest. **The session stops here: the owner appends the file to
 `stage6/GLASS.md` by his own hand** (the shell's append of the section
 file onto the document, then his commit) and says it is in before the
 next commit; the hook denies CC that append.
+The owner appended it and committed (`6beb717`, 22 September 2026).
+**Item 10** — the guest, the machinery on layout A: the probe's splice
+(group 1) into `stage7/stage7.asm` — the sixteen obs defines and mode 5;
+the five-byte `trial` compare in `bang_line` before the undo and the home
+lookup; `trial_start` with the four refusals in order; keys dropped in
+mode 5 but Esc in `handle_key`, and the reserved prefix refused at Enter
+before the note path (A1); the press routed to `trial_press` from
+`click_dispatch`; `trial_step` from the main loop, which no longer sleeps
+while a sitting runs; the cue's stamp in the glass core's frame beside
+the pointer's, every frame; `trial A 3/8` in `strip_format`; the last
+verdict note read into `layout_default` in `notebook_replay`'s walk; the
+four-item row during a sitting from `choices_update`; the trial section
+itself — the cue, the hit and its median, the miss, the pause and the
+rest, the block note, the sitting's end with the table in the app panel
+and the verdict scan, the abort, the journal walk, the decimal helpers,
+`note_emit` (the journal through `notebook_append`, the raw line through
+`serial_raw_puts`). The binary is **45,056 bytes** (the section stepped up
+one page from 40,960). The row is still layout A everywhere: layout B is
+item 11. **The three Stage 7 gates run on their own on this binary** (A4:
+tests 2 and 3 of this ring are red by design here) — the log's item 10
+run.
 
 ## Ring 7c — the metal · opened 15 September 2026 · closed 18 September 2026
 
