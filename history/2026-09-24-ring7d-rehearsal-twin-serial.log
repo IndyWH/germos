@@ -1,0 +1,125 @@
+BdsDxe: failed to load Boot0002 "UEFI QEMU HARDDISK QM00003 " from PciRoot(0x0)/Pci(0x1F,0x2)/Sata(0x1,0xFFFF,0x0): Not Found
+BdsDxe: loading Boot0003 "UEFI QEMU QEMU USB HARDDRIVE 1-0000:00:02.0-1" from PciRoot(0x0)/Pci(0x2,0x0)/USB(0x0,0x0)
+BdsDxe: starting Boot0003 "UEFI QEMU QEMU USB HARDDRIVE 1-0000:00:02.0-1" from PciRoot(0x0)/Pci(0x2,0x0)/USB(0x0,0x0)
+S7: alive
+S7: edid 1920x1080
+S7: gop 1920x1080 fb 0x0000000080000000
+S7: boot services exited
+S7: gdt and paging ours
+S7: idt ready
+S7: cores found 4
+S7: cores woken 4
+S7: console 120x67
+S7: gpt written
+S7: disk port 1 131072 notes 2048 home 34816
+S7: notebook formatted
+S7: home 0 apps
+S7: nic 6c:3b:e5:3b:86:45
+S7: link up
+S7: component region 0x00000000004d2080 1048576 bytes
+S7: obs page 0x00000000004d1000
+S7: glass core 1
+i8042: self-test ok
+i8042: mouse reset ok
+S7: keyboard ready
+S7: mouse ready
+! trial
+trial: sitting 1 ABBA BAAB
+trial: 1 1 A 1 3792
+trial: 1 1 A 2 4653
+trial: 1 1 A 3 3245
+trial: 1 1 A 4 3777
+trial: 1 1 A 5 2996
+trial: 1 1 A 6 2499
+trial: 1 1 A 7 2504
+trial: 1 1 A 8 miss
+trial: 1 1 A 8 6335
+trial: 1 1 A 9 2684
+trial: 1 1 A 10 2821
+trial: block 1 1 A 10 1 3120
+trial: 1 2 B 1 6503
+trial: 1 2 B 2 3390
+trial: 1 2 B 3 2126
+trial: 1 2 B 4 4508
+trial: 1 2 B 5 3459
+trial: 1 2 B 6 2108
+trial: 1 2 B 7 1959
+trial: 1 2 B 8 1746
+trial: 1 2 B 9 1186
+trial: 1 2 B 10 1636
+trial: block 1 2 B 10 0 2117
+trial: 1 3 B 1 1998
+trial: 1 3 B 2 2118
+trial: 1 3 B 3 1151
+trial: 1 3 B 4 1166
+trial: 1 3 B 5 1661
+trial: 1 3 B 6 1177
+trial: 1 3 B 7 1835
+trial: 1 3 B 8 1397
+trial: 1 3 B 9 1247
+trial: 1 3 B 10 1835
+trial: block 1 3 B 10 0 1529
+trial: 1 4 A 1 2472
+trial: 1 4 A 2 1489
+trial: 1 4 A 3 1639
+trial: 1 4 A 4 1227
+trial: 1 4 A 5 miss
+trial: 1 4 A 5 4218
+trial: 1 4 A 6 2150
+trial: 1 4 A 7 1707
+trial: 1 4 A 8 2462
+trial: 1 4 A 9 3146
+trial: 1 4 A 10 1482
+trial: block 1 4 A 10 1 1928
+trial: 1 5 B 1 2095
+trial: 1 5 B 2 1817
+trial: 1 5 B 3 1903
+trial: 1 5 B 4 1804
+trial: 1 5 B 5 1991
+trial: 1 5 B 6 1344
+trial: 1 5 B 7 1959
+trial: 1 5 B 8 2540
+trial: 1 5 B 9 1236
+trial: 1 5 B 10 1450
+trial: block 1 5 B 10 0 1860
+trial: 1 6 A 1 2523
+trial: 1 6 A 2 miss
+trial: 1 6 A 2 4493
+trial: 1 6 A 3 1413
+trial: 1 6 A 4 1718
+trial: 1 6 A 5 2528
+trial: 1 6 A 6 1414
+trial: 1 6 A 7 1949
+trial: 1 6 A 8 1534
+trial: 1 6 A 9 1568
+trial: 1 6 A 10 4306
+trial: block 1 6 A 10 1 1833
+trial: 1 7 A 1 3020
+trial: 1 7 A 2 1475
+trial: 1 7 A 3 2519
+trial: 1 7 A 4 1300
+trial: 1 7 A 5 1621
+trial: 1 7 A 6 2055
+trial: 1 7 A 7 1035
+trial: 1 7 A 8 miss
+trial: 1 7 A 8 3699
+trial: 1 7 A 9 1618
+trial: 1 7 A 10 1289
+trial: block 1 7 A 10 1 1619
+trial: 1 8 B 1 1619
+trial: 1 8 B 2 miss
+trial: 1 8 B 2 4234
+trial: 1 8 B 3 1320
+trial: 1 8 B 4 1438
+trial: 1 8 B 5 1860
+trial: 1 8 B 6 1999
+trial: 1 8 B 7 2244
+trial: 1 8 B 8 1688
+trial: 1 8 B 9 miss
+trial: 1 8 B 9 miss
+trial: 1 8 B 9 miss
+trial: 1 8 B 9 104726
+trial: 1 8 B 10 3979
+trial: block 1 8 B 10 4 1929
+trial: sitting 1 done
+f
