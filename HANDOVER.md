@@ -139,7 +139,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | | |
 |---|---|
 | Stage | **8 — The molt — ring 8a, the floor, OPENED 25 September 2026.** `stage8/spec.md` approved by the owner with all fourteen decisions settled (rings 8a–8g; the first slot `i8042`); `stage8/plan-8a.md` approved at the plan gate with Cowork's six amendments (A1–A6) and all seventeen deviations accepted. Stage 7 closed with ring 7d on 25 September 2026 (rings 7a–7d closed 9, 15, 18 and 25 September); Stages 0–6 closed |
-| Status | **Ring 8a: no test exists yet** (items 0 and 1: the plan's commit; Stage 8 opened on ring 7d's source, the build byte-identical to ring 7d's, and D3's seams proven by a run - every 7c and 7d entry point returns 0 on the stage8 build with nothing escaping to `stage7/out/`). Every earlier gate green on its own binary, as ring 7d closed. **Eight freeze openings on the record** — the eighth the TRIALS.md label-width sentence, by the owner's hand, 25 September 2026 (`076d74b`), 7d's test 1 green once after it. Earlier — **Ring 7d: all four automated tests PASS** (`./stage7/test-7d.sh`, 21 min, the log's item 11 run; items 0–13 committed, one per item, item 13 the four fixes of Cowork's pre-oracle review, the section appended by the owner's hand at item 9) — **test 5: the rehearsal ran in the windowed twin on 24 September 2026 (not trial data, by the owner's pre-registration); the trial is three sittings on the HP's notebook, one a session, the verdict on the third closes the ring. HP sittings 1, 2 and 3 PASSED on 24 September 2026 (the owner's word on each; one, one and two misses); the verdict A — B's median lower in 8 of 12 pairs, ten needed; misses A 4, B 0 — the owner's word on it 25 September 2026; the verdict boot answered `trial concluded`. Ring 7d CLOSED 25 September 2026, by the owner's word.** Ring 7c: all five tests PASS (18 September). Rings 7b and 7a: all five PASS. Stages 0–5 and the three ring 6 gates green on their own binaries |
+| Status | **Ring 8a: no test exists yet** (items 0 to 2: the plan's commit; Stage 8 opened on ring 7d's source, the build byte-identical to ring 7d's, and D3's seams proven by a run - every 7c and 7d entry point returns 0 on the stage8 build with nothing escaping to `stage7/out/`; item 2: D1 measured - the ICH9 TCO resets the twin at 2 × `TCO_TMR` × 0.6 s as the 7-series datasheet says, `TCO_TMR` 25 for 30 s, `SECOND_TO_STS` survives the reset, so the one twin path is the watchdog's). Every earlier gate green on its own binary, as ring 7d closed. **Eight freeze openings on the record** — the eighth the TRIALS.md label-width sentence, by the owner's hand, 25 September 2026 (`076d74b`), 7d's test 1 green once after it. Earlier — **Ring 7d: all four automated tests PASS** (`./stage7/test-7d.sh`, 21 min, the log's item 11 run; items 0–13 committed, one per item, item 13 the four fixes of Cowork's pre-oracle review, the section appended by the owner's hand at item 9) — **test 5: the rehearsal ran in the windowed twin on 24 September 2026 (not trial data, by the owner's pre-registration); the trial is three sittings on the HP's notebook, one a session, the verdict on the third closes the ring. HP sittings 1, 2 and 3 PASSED on 24 September 2026 (the owner's word on each; one, one and two misses); the verdict A — B's median lower in 8 of 12 pairs, ten needed; misses A 4, B 0 — the owner's word on it 25 September 2026; the verdict boot answered `trial concluded`. Ring 7d CLOSED 25 September 2026, by the owner's word.** Ring 7c: all five tests PASS (18 September). Rings 7b and 7a: all five PASS. Stages 0–5 and the three ring 6 gates green on their own binaries |
 | Repo | `/home/indy/Work/germos` (branch `main`) on Omarchy since 22 September 2026 (`/home/indy/Projects/ai-os` was the Ubuntu path) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, **Omarchy (Arch Linux, kernel 7.2.5-3-omarchy), dual boot on the Crucial P2** since 22 September 2026 (native Ubuntu 26.04 before), 32 logical CPUs |
 | Toolchain | NASM 3.02, QEMU 11.1.1, Python 3.14.7, OVMF at `/usr/share/ovmf/OVMF.fd`, mtools, OpenBSD netcat, xxd, the `claude` CLI **2.1.282** (the spec said 2.1.280; `claude --version` at ring 8a's planning read 2.1.282) — ring 8a needs no new package; every `stage0..8/out/` exists (the fresh-clone gotcha; the ring 8a gate makes its own) |
@@ -3722,16 +3722,97 @@ listened on 9999, 9998 or 9997 before or after.
 
 No ring 8a test exists yet; no guest code changed.
 
+**Item 2** — D1, the watchdog, measured on 25 September 2026. **The twin
+agrees with the datasheet; the ICH9 TCO resets the twin; the evidence bit
+survives the reset.** The probe is a private copy of `stage8.asm` with
+`probe.inc` included straight after `S7: keyboard ready` (interrupts still
+off, on the BSP). It prints the LPC bridge and the TCO registers, and it
+can arm the timer, never pet it (watching `TCO_RLD` and both status
+registers, one line per change), pet it for a time, or keep the evidence
+and halt. The mode and `TCO_TMR` are chosen with `nasm -D`. It is built
+under `stage8/out/probe8a/tco/b-*/` by stage8's own `mkstick` with its
+paths rebound. `d1.py` boots it on **`checkmetal.qemu_argv` unchanged**
+(the 7c twin: q35, IvyBridge, OVMF, the stick copy over `qemu-xhci`, a
+blank 64 MB SATA disk, the e1000e cage) with a fresh disk per run. It
+stamps every serial chunk with the host's monotonic clock (10 ms polls)
+and keeps the monitor on stdin. Ten runs, twenty-five boots, fourteen
+watchdog resets (one more start of the `noreboot` run failed on `d1.py`'s
+own argument parsing before any boot and was rerun); the
+summaries are `stage8/out/probe8a/tco/run-*/summary.txt` and `batch.log`.
+Nothing is committed from there, and nothing outside `stage8/out/`
+changed.
+
+**The datasheet** is the Intel 7 Series / C216 Chipset Family PCH
+Datasheet, order number 326776-003 (June 2012), the Q77's:
+
+- **§13.9.** The TCO registers sit at TCOBASE = PMBASE + 60h.
+- **§13.9.11, `TCO_TMR` (TCOBASE+12h, bits 9:0):** "The timer is clocked at approximately 0.6 seconds, and thus allows timeouts ranging from 1.2 second to 613.8 seconds"; values 0 and 1 are ignored. The default is 0004h.
+- **§13.9.4, `TCO2_STS.SECOND_TO_STS` (bit 1):** set when "the TIMEOUT bit had been (or is currently) set and a second timeout occurred before the TCO_RLD register was written. If this bit is set and the NO_REBOOT config bit is 0, then the PCH will reboot the system after the second timeout". It is cleared by writing 1, "or by a RSMRST#", so on silicon it survives a platform reset.
+- **`BOOT_STS` (bit 2):** "Software should first clear the SECOND_TO_STS bit before writing a 1 to clear the BOOT_STS bit".
+- **§13.9.6, `TCO1_CNT`:** `TCO_TMR_HLT` is bit 11, `TCO_LOCK` bit 12, and `NMI_NOW` (bit 8) is R/WC, so it is never written back.
+- **GCS (RCBA+3410h) bit 5, No Reboot:** "may not override the strap when it indicates 'No Reboot'".
+- **§5.14.1.1:** "the TCO timer times out twice and the PCH asserts PLTRST#".
+
+**So the rule gives `TCO_TMR` = 25 for a 30 s deadline**: the first
+expiry at 25 × 0.6 = 15 s sets TIMEOUT and counts again, and the second
+at 30 s resets.
+
+| Fact | Measured how |
+|---|---|
+| **The LPC bridge as OVMF leaves it:** `8086:2918` rev `02` (class `0601`), at 00:1f.0. PMBASE (cfg `0x40`) **`0x600`**, so TCOBASE `0x660`; ACPI_CNTL (cfg `0x44`) `0x80`, enabled. GEN_PMCON_1 (cfg `0xA0`) `0`: no SMI lock. RCBA (cfg `0xF0`) **`0xFED1C001`**: the base is `0xFED1C000`, enabled, and it is mapped uncached with `map_mmio_2m` for the read. **GCS = `0`, so `NO_REBOOT` is already clear.** SMI_EN `0` (no `GBL_SMI_EN`: this OVMF has no SMM), SMI_STS `0` | the probe's status line, every boot of every run |
+| **The TCO at rest (a cold boot):** `TCO_RLD` 0, `TCO1_STS` 0, `TCO2_STS` 0, `TCO1_CNT` `0` (halt bit clear), `TCO2_CNT` `8`, `TCO_TMR` **4** (the datasheet's default), and **the timer is not running**: 40 s of a mode-0 boot and no expiry, no status bit and no reset. QEMU starts it only when the guest reloads it. On silicon it counts from reset unless the firmware halts it, so the loader writes the halt, the value, the reload and the unhalt explicitly. **`enable_tco` defaults to `true` and `noreboot` to `false`** (`qom-get` on the `ICH9-LPC` object, `/machine/unattached/device[2]`) | `run-smoke`; `qom-get` in a `-S` QEMU |
+| **`TCO_EN` (SMI_EN bit 13) sticks both ways under OVMF:** from `0`, a write with it set reads `0x2000` and a write with it clear reads `0`. `TCO_LOCK` is 0. The loader's clear therefore sticks. The first expiry is not routed anywhere with `TCO_EN` clear, and nothing happened at it in any run | the probe's `tco_en` line, every arming |
+| **The twin agrees with the datasheet's rule.** After arming, `TCO_RLD` reads *n*−1 at once and falls by one every **599–600 ms** (the guest's TSC: 29,425 ms from 24 to the second 0 at *n* = 25; the host's stamps: 0.595–0.606 s per step). At the first expiry TIMEOUT (`TCO1_STS` bit 3) sets and the count starts again from *n*−1. **At the second expiry the machine resets: at 2 × *n* × 0.6 s after the reload, within the 10 ms polling, for every *n* measured** (2, 4, 10, 25 and 50). No tick error was seen in the twin; the datasheet allows about one tick on silicon | runs `arm2`, `arm4-smp2`, `arm10-smp8`, `arm25`, `arm50` |
+| **The reset's latency, arming line → OVMF's first bytes of the next boot, in the same capture:** *n* = 2: 3.390, 3.380 s; *n* = 4 (`-smp 2`): 5.735, 5.732 s; *n* = 4 (`-smp 4`, three runs): 5.791–5.800 s; *n* = 10 (`-smp 8`): 13.144, 13.143 s; **n = 25 (`-smp 4`): 31.017, 30.995 s**, and 31.0 s from the last pet in the pet run; *n* = 50: 60.986 s. **After subtracting 1.2 *n*, the reset to OVMF's first byte is 0.93 s at `-smp 2`, 0.98–1.02 s at 4 and 1.14 s at 8.** A cold QEMU start to OVMF's first byte is 0.65–0.69 s | the stamps (`stamps.json`), the `armed` line to the first ESC after it |
+| **QEMU stays running across the reset.** The next boot is in the same process and the same serial capture, and the monitor answers `VM status: running` after two and three resets. No flag is needed: the default action is `reset` | `info status` at the end of every run |
+| **The evidence survives the reset.** At the next boot's first read after a watchdog reset: **`TCO1_STS` = `0x0008` (TIMEOUT) and `TCO2_STS` = `0x0006` (`SECOND_TO_STS` and `BOOT_STS`)**, every time (14 resets). A cold boot (a new QEMU process) reads 0. **A monitor `system_reset` keeps them too:** in the keep run the boot after the watchdog reset left the bits set and halted, the checker sent `system_reset`, and the boot after that read `0x0008` / `0x0006` again. So only a new QEMU process clears them in the twin, as RSMRST# does on silicon | `keep4`; every armed run's second and later boots |
+| **Clearing:** writing 1 to TIMEOUT and to `SECOND_TO_STS`, then 1 to `BOOT_STS` (the datasheet's order), reads back 0 and 0. **In QEMU, writing `SECOND_TO_STS` alone also clears `BOOT_STS`** (mode 4 never writes `BOOT_STS`, and still reads `TCO2_STS` 0 and arms normally). The loader keeps the datasheet's two writes regardless | `bootsts4` |
+| **The pet holds.** Armed at 25 and reloaded once a second (by the TSC) 90 times, the count read just before each pet was always 23, and there was **no reset in 90 s**. When the pets stopped, the reset came 31.0 s later (30 s + OVMF). A second boot in the same process armed and petted again normally | `pet25` |
+| **`-global ICH9-LPC.noreboot=on` (the strap):** GCS reads **`0x20`** at boot (`NO_REBOOT` set). A write of 0 **reads back 0**, so the bit appears to clear, but **the machine never resets**. `SECOND_TO_STS` and `BOOT_STS` set at the second expiry (6.2 s at *n* = 4) and the timer cycles on, for 25 s. **So in the twin the strap is invisible to a GCS read-back:** `S8: watchdog tco locked` cannot be shown with `noreboot=on`. The one guest-visible sign of a strap is `SECOND_TO_STS` set during a boot that is still running. Silicon "may not override the strap", so on the HP the read-back may show it | `noreboot4` |
+| **The no-evidence path (A4, point 9):** in every armed boot the probe cleared the bits by hand before arming, and from then on every read in that boot showed `TCO2_STS` 0 until the reset: a loader reading after that point sees a boot with no evidence. The watchdog still reset the machine 1.2 *n* s after the reload, and the next boot read the evidence afresh. **So the twin walks the no-evidence path only when the bit is cleared by hand before the loader reads it.** Left alone, the twin always keeps the evidence | every armed run (`cleared` line, then the watch lines) |
+| **`-smp` does not change the timing.** The tick and the reset point are identical at 2, 4 and 8; only OVMF's own start moves (0.93 / 1.0 / 1.14 s) | `arm4-smp2`, `arm25`, `arm10-smp8` |
+
+**The single choices (A5)**, which PARTS.md (item 4) and the checker carry:
+
+- **`TCO_TMR` = 25** by the datasheet's rule (0.6 s ticks, 10 bits, reset on the second expiry: 2 × 25 × 0.6 = 30.0 s). **The twin agrees**, so item 2 does not stop.
+- **The watchdog is the ICH9 TCO**, built into q35. There is no new device and no new flag, so `check_argv_7c` is unchanged (item 3 runs it as data) and `i6300esb` is not needed. **The one watchdog line in the twin is `S8: watchdog tco 30 s`.**
+- **`SECOND_TO_STS` survives the reset**, so **the one recovery path test 3 expects is the watchdog's**: the next boot's `S8: recovery i8042 watchdog` and `molt i8042 demoted <sha16> watchdog`, in the same QEMU process and the same capture as the hang. The `unhealthy` path is the HP's alternative (A4), in `HP-8a.md` only. In the twin that row is proven by a probe that clears the bit by hand before the loader reads it (point 9's mechanism): deviation 13's mirror image, carried to items 12 and 16.
+- **`RESET_S`'s terms:**
+  - the 30.0 s deadline, counted from the last reload, not from the hanging input;
+  - plus the time from the last pet to the hang, which is at most the pet's rate limit (item 4 sets it);
+  - plus the reset to OVMF's first byte, 1.14 s at worst (`-smp 8`);
+  - plus no tick error, since the twin showed none.
+
+  Item 12's run writes the number.
+- **The consequences for the checker** (items 10 and 12):
+  - a hang's boot and its recovery boot must be one QEMU process, because only a new process clears the bit;
+  - a boot that should see no evidence must be a fresh process;
+  - the monitor's `system_reset` does not clear the evidence either.
+- **`S8: watchdog tco locked` stays probe-only** (deviation 16): `noreboot=on` does not show as a lock in the twin.
+
+The HP may differ in three places, each a finding of test 5:
+
+- its firmware may clear the bit in POST (A4);
+- its strap may read back as a lock;
+- its tick may be off by one.
+
+HP-8a.md step 10 reads the HP's own deadline from the chart (A2).
+
+No ring 8a test exists yet; no guest code changed.
+
 ## Next action
 
-**Ring 8a, item 2:** D1, the watchdog, measured on a private copy under
-`stage8/out/probe8a/tco/` (plan item 2): the LPC bridge, PMBASE, RCBA,
-GCS and `NO_REBOOT`; `TCO_TMR` for 30 s by the Intel 7-series PCH
-datasheet's rule and whether the twin agrees (if not, stop and ask the
-owner); the reset's latency; whether `SECOND_TO_STS` survives the reset,
-which fixes the one recovery path test 3 expects; the pet; the no-evidence
-path. `/clear` first; one commit per item. Item 1 (Stage 8 opened on ring
-7d's source, D3's seams) is done.
+**Ring 8a, item 3:** D2, `-icount` under QEMU 11.1.1 (a bench copy of
+the decoder, three modes, `-smp` 2 and 4, a straight-line loop against
+`rdtsc`); D4 — the argv (the ICH9 TCO needs no flag, so `check_argv_7c`
+on `checkmetal.qemu_argv` unchanged, as data), Esc at power-on through
+the monitor with the loader's minimal setup (A3), the key and packet
+rates, the identity (CPUID leaf 1 under `-cpu IvyBridge`; the LPC
+bridge is `8086:2918` rev `02`, from D1); the hook's verdicts on the
+ring's command shapes. `/clear` first; one commit per item. Items 1 and
+2 are done: D3's seams, and D1 (`TCO_TMR` 25, the twin agreeing with
+the datasheet, `SECOND_TO_STS` surviving the reset, so the watchdog path
+and `S8: watchdog tco 30 s`).
 
 Earlier — **Ring 7d is CLOSED (25 September 2026), and with it every ring of Stage
 7's order. Next: Stage 8 — the molt**, by the owner's order of 22
