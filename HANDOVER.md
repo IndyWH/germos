@@ -139,7 +139,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | | |
 |---|---|
 | Stage | **8 — The molt — ring 8a, the floor, OPENED 25 September 2026.** `stage8/spec.md` approved by the owner with all fourteen decisions settled (rings 8a–8g; the first slot `i8042`); `stage8/plan-8a.md` approved at the plan gate with Cowork's six amendments (A1–A6) and all seventeen deviations accepted. Stage 7 closed with ring 7d on 25 September 2026 (rings 7a–7d closed 9, 15, 18 and 25 September); Stages 0–6 closed |
-| Status | **Ring 8a: no test exists yet** (item 0, the plan's commit). Every earlier gate green on its own binary, as ring 7d closed. **Eight freeze openings on the record** — the eighth the TRIALS.md label-width sentence, by the owner's hand, 25 September 2026 (`076d74b`), 7d's test 1 green once after it. Earlier — **Ring 7d: all four automated tests PASS** (`./stage7/test-7d.sh`, 21 min, the log's item 11 run; items 0–13 committed, one per item, item 13 the four fixes of Cowork's pre-oracle review, the section appended by the owner's hand at item 9) — **test 5: the rehearsal ran in the windowed twin on 24 September 2026 (not trial data, by the owner's pre-registration); the trial is three sittings on the HP's notebook, one a session, the verdict on the third closes the ring. HP sittings 1, 2 and 3 PASSED on 24 September 2026 (the owner's word on each; one, one and two misses); the verdict A — B's median lower in 8 of 12 pairs, ten needed; misses A 4, B 0 — the owner's word on it 25 September 2026; the verdict boot answered `trial concluded`. Ring 7d CLOSED 25 September 2026, by the owner's word.** Ring 7c: all five tests PASS (18 September). Rings 7b and 7a: all five PASS. Stages 0–5 and the three ring 6 gates green on their own binaries |
+| Status | **Ring 8a: no test exists yet** (items 0 and 1: the plan's commit; Stage 8 opened on ring 7d's source, the build byte-identical to ring 7d's, and D3's seams proven by a run - every 7c and 7d entry point returns 0 on the stage8 build with nothing escaping to `stage7/out/`). Every earlier gate green on its own binary, as ring 7d closed. **Eight freeze openings on the record** — the eighth the TRIALS.md label-width sentence, by the owner's hand, 25 September 2026 (`076d74b`), 7d's test 1 green once after it. Earlier — **Ring 7d: all four automated tests PASS** (`./stage7/test-7d.sh`, 21 min, the log's item 11 run; items 0–13 committed, one per item, item 13 the four fixes of Cowork's pre-oracle review, the section appended by the owner's hand at item 9) — **test 5: the rehearsal ran in the windowed twin on 24 September 2026 (not trial data, by the owner's pre-registration); the trial is three sittings on the HP's notebook, one a session, the verdict on the third closes the ring. HP sittings 1, 2 and 3 PASSED on 24 September 2026 (the owner's word on each; one, one and two misses); the verdict A — B's median lower in 8 of 12 pairs, ten needed; misses A 4, B 0 — the owner's word on it 25 September 2026; the verdict boot answered `trial concluded`. Ring 7d CLOSED 25 September 2026, by the owner's word.** Ring 7c: all five tests PASS (18 September). Rings 7b and 7a: all five PASS. Stages 0–5 and the three ring 6 gates green on their own binaries |
 | Repo | `/home/indy/Work/germos` (branch `main`) on Omarchy since 22 September 2026 (`/home/indy/Projects/ai-os` was the Ubuntu path) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, **Omarchy (Arch Linux, kernel 7.2.5-3-omarchy), dual boot on the Crucial P2** since 22 September 2026 (native Ubuntu 26.04 before), 32 logical CPUs |
 | Toolchain | NASM 3.02, QEMU 11.1.1, Python 3.14.7, OVMF at `/usr/share/ovmf/OVMF.fd`, mtools, OpenBSD netcat, xxd, the `claude` CLI **2.1.282** (the spec said 2.1.280; `claude --version` at ring 8a's planning read 2.1.282) — ring 8a needs no new package; every `stage0..8/out/` exists (the fresh-clone gotcha; the ring 8a gate makes its own) |
@@ -3692,12 +3692,46 @@ amendments and all seventeen deviations accepted:
 
 **Item 0** — this record; `stage8/plan-8a.md` committed verbatim; the "Where we are" rows (Stage, Status, Toolchain, Model); the eighth freeze opening recorded; `CLAUDE.md`'s windowed QEMU line gains `-display gtk,zoom-to-fit=on`. No ring 8a test exists yet; every earlier gate is unchanged.
 
+**Item 1** — Stage 8 opened on ring 7d's source, 25 September 2026.
+`stage8/stage8.asm` is `stage7/stage7.asm` byte for byte (`cmp` silent).
+`stage8/mkimage.sh` and `stage8/mkstick.py` are 7c's builders with only
+the paths (and the comments naming them) moved to `stage8/`; the font's
+`incbin` stays `stage2/font8x8.bin`. After a fresh `./stage7/mkimage.sh`
+and `python3 stage7/mkstick.py`, **`stage8/out/BOOTX64.EFI` equals
+`stage7/out/BOOTX64.EFI` byte for byte: 45,056 bytes, SHA-256
+`bbf80635a83beeca2254ef35aa492306d30224950b4f405b434b900475b28cd5`**; the
+two sticks built the same minute were byte-identical too (not a promise:
+the FAT carries timestamps, which is why SEED.md's seed is the EFI).
+
+**D3, the frozen checkers' seams, found by a run.** A private driver,
+`stage8/out/probe8a/seams.py` (never committed), imports `checkmetal` and
+`checktrials`, rebinds their module paths, and runs the seven entry points
+test 2 will run on the stage8 build. It audits every `open()`,
+`shutil.copyfile` and `subprocess.Popen` in its own process for a path
+under `stage7/out/`, and lists the mtimes of every file under
+`stage*/out/` and `germline/` before and after each entry point. Nothing
+listened on 9999, 9998 or 9997 before or after.
+
+| Fact | Measured how |
+|---|---|
+| **The rebindings that hold (attempt 2):** `checkmetal.OUT` → `stage8/out`; `checkmetal.METAL_OUT` → `stage8/out/seven/metal`, with `DISK`, `GERMLINE`, `REHEARSAL` and `TWIN_WORKDIR` under it; `checkmetal.STICK`, `EFI` and `ESP` → `stage8/out/stick.img`, `BOOTX64.EFI` and `esp.img`; `checktrials.OUT` → `stage8/out`, `TRIALS_OUT` → `stage8/out/seven/trials` with `DISK` under it, `STICK` → stage8's; the two bound defaults, `checkmetal.check_stick.__defaults__ = (stick, efi)` and `check_stick_tables_unchanged.__defaults__ = (stick,)` (one function object, so `checktrials`' by-name import follows); and **two seams the plan did not list: `checkdisk.OUT` → `stage8/out/seven/metal` and `checkglass.OUT` → `stage8/out/seven`**. `checktrials`' by-name `qemu_argv`, `fresh_stick` and `start_mock` need no rebinding: they read `checkmetal`'s globals at call time. `checktrials.METAL_OUT` is imported but never read | `seams.py`; read of the call sites |
+| **Attempt 1 found two escapes**, both from `run_stages` (and `run_row` for the second): `checkdisk.extract_partition` writes `stage7/out/notes.part.img` and `home.part.img` through `checkdisk.OUT`, and `checkglass.fixture_self_check` writes `stage6/out/app.check.bin` and `echo.check.bin` through `checkglass.OUT`. Every other `OUT` use in those two modules sits on a path 7c and 7d never call. The two files attempt 1 left in `stage7/out/` are scratch that ring 7a's gate rewrites itself | the audit (`seams.result.attempt1.json`) |
+| **Attempt 2, the whole run: every entry point returns 0 on the stage8 build**, and nothing under `stage7/out/` is opened, copied or handed to a subprocess; no file outside `stage8/` changes. `run_stick` 0.0 s; `run_serial` blank 8, again 4 and novga 2 4.4, 4.2 and 4.2 s (one boot each); `run_stages` 68.5 s (two boots; the mock's twin rehearses `! install echo` on `stage8/out/esp.img`); `checktrials.run_row` 43.6 s (one boot); `run_sitting` 301.7 s (five boots). **Total 426.6 s**, eleven boots, every drive under `stage8/out/seven/` | `seams.log`, `seams.result.json` |
+| **How the entry points report failure:** each `run_*` returns 0 or 1, through `report()`/`say()` on stdout; none calls `sys.exit` (only the modules' `main` does) and none catches an exception. So test 2 calls them in-process and treats a non-zero return or any exception as a failure | read, and the run's return values |
+| **The shell gates cannot be pointed elsewhere** (`stage7/test-7c.sh` and `test-7d.sh` hard-code `stage7/out` and rebuild from `stage7.asm`), as the plan found, so test 2 drives the Python entry points, and the shell gates run only in test 4 (d) on ring 7d's own binary. The fallback (copying stage8's build over `stage7/out/`) was not needed | read |
+
+No ring 8a test exists yet; no guest code changed.
+
 ## Next action
 
-**Ring 8a, item 1:** Stage 8 opened on ring 7d's source (`stage8/stage8.asm`
-byte-identical, `stage8/mkimage.sh`, `stage8/mkstick.py`) and D3, the
-frozen checkers' seams, found by a run on that build. `/clear` first; one
-commit per item.
+**Ring 8a, item 2:** D1, the watchdog, measured on a private copy under
+`stage8/out/probe8a/tco/` (plan item 2): the LPC bridge, PMBASE, RCBA,
+GCS and `NO_REBOOT`; `TCO_TMR` for 30 s by the Intel 7-series PCH
+datasheet's rule and whether the twin agrees (if not, stop and ask the
+owner); the reset's latency; whether `SECOND_TO_STS` survives the reset,
+which fixes the one recovery path test 3 expects; the pet; the no-evidence
+path. `/clear` first; one commit per item. Item 1 (Stage 8 opened on ring
+7d's source, D3's seams) is done.
 
 Earlier — **Ring 7d is CLOSED (25 September 2026), and with it every ring of Stage
 7's order. Next: Stage 8 — the molt**, by the owner's order of 22
