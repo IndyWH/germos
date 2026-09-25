@@ -139,7 +139,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | | |
 |---|---|
 | Stage | **8 — The molt — ring 8a, the floor, OPENED 25 September 2026.** `stage8/spec.md` approved by the owner with all fourteen decisions settled (rings 8a–8g; the first slot `i8042`); `stage8/plan-8a.md` approved at the plan gate with Cowork's six amendments (A1–A6) and all seventeen deviations accepted. Stage 7 closed with ring 7d on 25 September 2026 (rings 7a–7d closed 9, 15, 18 and 25 September); Stages 0–6 closed |
-| Status | **Ring 8a: no test exists yet** (items 0 to 3: the plan's commit; Stage 8 opened on ring 7d's source, the build byte-identical to ring 7d's, and D3's seams proven by a run - every 7c and 7d entry point returns 0 on the stage8 build with nothing escaping to `stage7/out/`; item 2: D1 measured - the ICH9 TCO resets the twin at 2 × `TCO_TMR` × 0.6 s as the 7-series datasheet says, `TCO_TMR` 25 for 30 s, `SECOND_TO_STS` survives the reset, so the one twin path is the watchdog's; item 3: D2 - `-icount shift=0` repeats exactly at `-smp 4`, not quite at 2, `auto` never; D4 - `qemu_argv` passes `check_argv_7c` unchanged, Esc arrives as `0x01`/`0x81` with no repeats and the checker's hold is 5,000 ms, keys match the byte rule, packets equal moves at any pace from 1 ms, the identity `cpu 000306a9 pci 8086:2918:02`; the hook allows every ring 8a shape, and allows removing a whole directory of frozen files, a finding for the owner). Every earlier gate green on its own binary, as ring 7d closed. **Eight freeze openings on the record** — the eighth the TRIALS.md label-width sentence, by the owner's hand, 25 September 2026 (`076d74b`), 7d's test 1 green once after it. Earlier — **Ring 7d: all four automated tests PASS** (`./stage7/test-7d.sh`, 21 min, the log's item 11 run; items 0–13 committed, one per item, item 13 the four fixes of Cowork's pre-oracle review, the section appended by the owner's hand at item 9) — **test 5: the rehearsal ran in the windowed twin on 24 September 2026 (not trial data, by the owner's pre-registration); the trial is three sittings on the HP's notebook, one a session, the verdict on the third closes the ring. HP sittings 1, 2 and 3 PASSED on 24 September 2026 (the owner's word on each; one, one and two misses); the verdict A — B's median lower in 8 of 12 pairs, ten needed; misses A 4, B 0 — the owner's word on it 25 September 2026; the verdict boot answered `trial concluded`. Ring 7d CLOSED 25 September 2026, by the owner's word.** Ring 7c: all five tests PASS (18 September). Rings 7b and 7a: all five PASS. Stages 0–5 and the three ring 6 gates green on their own binaries |
+| Status | **Ring 8a: no test exists yet** (items 0 to 4: the plan's commit; Stage 8 opened on ring 7d's source, the build byte-identical to ring 7d's, and D3's seams proven by a run - every 7c and 7d entry point returns 0 on the stage8 build with nothing escaping to `stage7/out/`; item 2: D1 measured - the ICH9 TCO resets the twin at 2 × `TCO_TMR` × 0.6 s as the 7-series datasheet says, `TCO_TMR` 25 for 30 s, `SECOND_TO_STS` survives the reset, so the one twin path is the watchdog's; item 3: D2 - `-icount shift=0` repeats exactly at `-smp 4`, not quite at 2, `auto` never; D4 - `qemu_argv` passes `check_argv_7c` unchanged, Esc arrives as `0x01`/`0x81` with no repeats and the checker's hold is 5,000 ms, keys match the byte rule, packets equal moves at any pace from 1 ms, the identity `cpu 000306a9 pci 8086:2918:02`; the hook allows every ring 8a shape, and allows removing a whole directory of frozen files, a finding for the owner, whose decision of 25 September 2026 adds a directory rule at item 13; item 4: `stage8/PARTS.md` written, its worked examples reproduced from its own Python block, 0 wrong). Every earlier gate green on its own binary, as ring 7d closed. **Eight freeze openings on the record** — the eighth the TRIALS.md label-width sentence, by the owner's hand, 25 September 2026 (`076d74b`), 7d's test 1 green once after it. Earlier — **Ring 7d: all four automated tests PASS** (`./stage7/test-7d.sh`, 21 min, the log's item 11 run; items 0–13 committed, one per item, item 13 the four fixes of Cowork's pre-oracle review, the section appended by the owner's hand at item 9) — **test 5: the rehearsal ran in the windowed twin on 24 September 2026 (not trial data, by the owner's pre-registration); the trial is three sittings on the HP's notebook, one a session, the verdict on the third closes the ring. HP sittings 1, 2 and 3 PASSED on 24 September 2026 (the owner's word on each; one, one and two misses); the verdict A — B's median lower in 8 of 12 pairs, ten needed; misses A 4, B 0 — the owner's word on it 25 September 2026; the verdict boot answered `trial concluded`. Ring 7d CLOSED 25 September 2026, by the owner's word.** Ring 7c: all five tests PASS (18 September). Rings 7b and 7a: all five PASS. Stages 0–5 and the three ring 6 gates green on their own binaries |
 | Repo | `/home/indy/Work/germos` (branch `main`) on Omarchy since 22 September 2026 (`/home/indy/Projects/ai-os` was the Ubuntu path) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, **Omarchy (Arch Linux, kernel 7.2.5-3-omarchy), dual boot on the Crucial P2** since 22 September 2026 (native Ubuntu 26.04 before), 32 logical CPUs |
 | Toolchain | NASM 3.02, QEMU 11.1.1, Python 3.14.7, OVMF at `/usr/share/ovmf/OVMF.fd`, mtools, OpenBSD netcat, xxd, the `claude` CLI **2.1.282** (the spec said 2.1.280; `claude --version` at ring 8a's planning read 2.1.282) — ring 8a needs no new package; every `stage0..8/out/` exists (the fresh-clone gotcha; the ring 8a gate makes its own) |
@@ -3950,22 +3950,65 @@ says plainly that a rule which reads the command cannot catch every
 route: a script that removes a folder, for example, still gets past it.
 The item 13 record will list the shapes as the table holds them.
 
+**Item 4** — `stage8/PARTS.md`, 25 September 2026: 1,366 lines, written
+with the Write tool. It covers decisions 2–9 and 11 in the manner of TRIALS.md, with D1's and
+D4's single choices in it:
+- `TCO_TMR` 25 by the datasheet's rule, and the twin's agreement;
+- `S8: watchdog tco 30 s`, and `S8: recovery i8042 watchdog` as the one twin path;
+- W = 3 s, set 1 and set 2, and the checker's hold of 5,000 ms named as the checker's own;
+- the key-byte rule;
+- the identity `cpu 000306a9 pci 8086:2918:02`;
+- `HOLD_S` = 60 s and `RESET_S`'s three terms;
+- the corpus reserved for ring 8b.
+
+**Its "Parsing it cold" block** is the Python `parts.py` will execute. A
+scratch self-check (not committed) exec'd the block from the document
+itself and reproduced every worked example: 53 checks, 0 wrong. Those are:
+- the request frame's `xxd`, the key, and the made-up part's header, build and frame;
+- the liar's rule on it;
+- the tables along disk G's history, and the undo cases;
+- every recovery row, the Esc byte sequences, the 124 keyboard bytes, `TCO_TMR`, the known answer and the round constants.
+
+The fixtures' frames and the liar's bytes are marked "completed at item 7",
+as the plan says. A grep for a twin expectation offering two lines (A5)
+finds none.
+
+**Details the plan left open, fixed here** (for Cowork's review; none
+changes a decision):
+- **The install note carries the threshold:** `molt <slot> shadow <sha16> <boots> <keys> <packets>`. HOME.md's entry has no field for it, and its choice slots must stay valid for HOME.md's frozen parser.
+- **Every molt note is mirrored to serial**, raw, as `molt:` and the note from its fifth byte (the ring 7d `trial:` pattern), so `parts.py --serial` can rebuild the table from the HP's chart.
+- **The part's shape:**
+  - a 96-byte header, then the body; 65,536 bytes at most;
+  - a part region per slot in BSS, never the component region;
+  - the service table passed to `byte` and `health` as well, since shadow never calls `init`;
+  - in shadow a table whose hardware services do nothing.
+- **The state:**
+  - every state change takes effect at the next boot;
+  - the shadow counts and probation both count from the build's last entry into shadow (an install, or an undo from `demoted`); an undo from `live` keeps them, which is what gives G7 probation 2;
+  - an undo from shadow returns to the state before the build's install only if the home entry's previous build is that build; otherwise it goes to `generic`;
+  - the unhealthy run restarts at a `healthy`, `demoted` or `recovery` note.
+- **The comparison:** events are written `k<hex>`, `m<dx>,<dy>,<b>` and `-`. At each count point the raw ring is drained into the part first, and a side left ahead then counts its extra events as disagreements.
+- **The boot:** the `S8:` block sits after `S7: glass core <n>` and before the `i8042:` or `part:` pair, in eight numbered steps.
+- **The `part-` supersession** also covers `undo install part-…` and an app frame named `part-…`.
+- **Smaller fixes:**
+  - the blame line is `+0x` and 8 hex digits, after `exc_common`'s own line;
+  - the liar's torn write flips bit 0 of the part's byte 96;
+  - the pet's rate limit is 1,000 ms.
+
+No ring 8a test exists yet; no guest code changed.
+
 ## Next action
 
-**Ring 8a, item 4:** `stage8/PARTS.md`, decisions 2–9 and 11 in one text
-(plan item 4), with D1's and D4's single choices in it:
-- `TCO_TMR` 25 by the datasheet's rule;
-- `S8: watchdog tco 30 s` and the watchdog recovery path;
-- W = 3 s and both scancode sets;
-- the key-byte rule (plain 2, shifted 4, E0 4), confirmed by D4;
-- the identity format (`cpu 000306a9 pci 8086:2918:02` in the twin).
-
-`/clear` first; one commit per item. Items 1–3 are done: D3's seams, D1
-the watchdog, and item 3's D2 and D4 with the hook's verdicts. Carried
-to item 13, by the owner's decision of 25 September 2026: the freeze's
-directory rule (`rm`, `rmdir`, `mv`, `git rm`, `git mv` on the repo root,
-on a directory holding a frozen file, or on a glob covering one) with its
-shapes in the payload table, 0 wrong.
+**Ring 8a, item 5:** the five fixtures, `stage8/fixtures/i8042-{good,wrong,
+hang,fault,liar}.{asm,bin}`, by PARTS.md's header, entries and fixture
+table (plan item 5). `good` is the seed's own i8042 code as a part; the
+others follow the table's triggers. Each has a banner stating its fate,
+and each `.bin` is built with `nasm -f bin`. `/clear` first; one commit
+per item. Items 1–4 are done. Carried to item 13, by the owner's decision
+of 25 September 2026: the freeze's directory rule (`rm`, `rmdir`, `mv`,
+`git rm`, `git mv` on the repo root, on a directory holding a frozen
+file, or on a glob covering one), with its shapes in the payload table, 0
+wrong.
 
 Earlier — **Ring 7d is CLOSED (25 September 2026), and with it every ring of Stage
 7's order. Next: Stage 8 — the molt**, by the owner's order of 22
