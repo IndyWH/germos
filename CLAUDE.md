@@ -178,7 +178,7 @@ qemu-system-x86_64 -machine q35 -cpu IvyBridge -m 256M -smp 4 -bios /usr/share/o
   -device qemu-xhci -drive if=none,id=stick,format=raw,file=stage7/out/stick.twin.img -device usb-storage,drive=stick \
   -drive if=none,id=d0,format=raw,file=stage7/out/disk.img -device ide-hd,drive=d0,bus=ide.1 \
   -netdev 'user,id=n0,restrict=on,guestfwd=tcp:10.0.2.4:9999-cmd:nc -N 127.0.0.1 9997' \
-  -device e1000e,netdev=n0,mac=6c:3b:e5:3b:86:45 -serial stdio
+  -device e1000e,netdev=n0,mac=6c:3b:e5:3b:86:45 -display gtk,zoom-to-fit=on -serial stdio
 ```
 
 Each stage's `test.sh` is its gate. It must be green before every commit that
