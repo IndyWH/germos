@@ -139,7 +139,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | | |
 |---|---|
 | Stage | **8 — The molt — ring 8a, the floor, OPENED 25 September 2026.** `stage8/spec.md` approved by the owner with all fourteen decisions settled (rings 8a–8g; the first slot `i8042`); `stage8/plan-8a.md` approved at the plan gate with Cowork's six amendments (A1–A6) and all seventeen deviations accepted. Stage 7 closed with ring 7d on 25 September 2026 (rings 7a–7d closed 9, 15, 18 and 25 September); Stages 0–6 closed |
-| Status | **Ring 8a: no test exists yet** (items 0 to 2: the plan's commit; Stage 8 opened on ring 7d's source, the build byte-identical to ring 7d's, and D3's seams proven by a run - every 7c and 7d entry point returns 0 on the stage8 build with nothing escaping to `stage7/out/`; item 2: D1 measured - the ICH9 TCO resets the twin at 2 × `TCO_TMR` × 0.6 s as the 7-series datasheet says, `TCO_TMR` 25 for 30 s, `SECOND_TO_STS` survives the reset, so the one twin path is the watchdog's). Every earlier gate green on its own binary, as ring 7d closed. **Eight freeze openings on the record** — the eighth the TRIALS.md label-width sentence, by the owner's hand, 25 September 2026 (`076d74b`), 7d's test 1 green once after it. Earlier — **Ring 7d: all four automated tests PASS** (`./stage7/test-7d.sh`, 21 min, the log's item 11 run; items 0–13 committed, one per item, item 13 the four fixes of Cowork's pre-oracle review, the section appended by the owner's hand at item 9) — **test 5: the rehearsal ran in the windowed twin on 24 September 2026 (not trial data, by the owner's pre-registration); the trial is three sittings on the HP's notebook, one a session, the verdict on the third closes the ring. HP sittings 1, 2 and 3 PASSED on 24 September 2026 (the owner's word on each; one, one and two misses); the verdict A — B's median lower in 8 of 12 pairs, ten needed; misses A 4, B 0 — the owner's word on it 25 September 2026; the verdict boot answered `trial concluded`. Ring 7d CLOSED 25 September 2026, by the owner's word.** Ring 7c: all five tests PASS (18 September). Rings 7b and 7a: all five PASS. Stages 0–5 and the three ring 6 gates green on their own binaries |
+| Status | **Ring 8a: no test exists yet** (items 0 to 3: the plan's commit; Stage 8 opened on ring 7d's source, the build byte-identical to ring 7d's, and D3's seams proven by a run - every 7c and 7d entry point returns 0 on the stage8 build with nothing escaping to `stage7/out/`; item 2: D1 measured - the ICH9 TCO resets the twin at 2 × `TCO_TMR` × 0.6 s as the 7-series datasheet says, `TCO_TMR` 25 for 30 s, `SECOND_TO_STS` survives the reset, so the one twin path is the watchdog's; item 3: D2 - `-icount shift=0` repeats exactly at `-smp 4`, not quite at 2, `auto` never; D4 - `qemu_argv` passes `check_argv_7c` unchanged, Esc arrives as `0x01`/`0x81` with no repeats and the checker's hold is 5,000 ms, keys match the byte rule, packets equal moves at any pace from 1 ms, the identity `cpu 000306a9 pci 8086:2918:02`; the hook allows every ring 8a shape, and allows removing a whole directory of frozen files, a finding for the owner). Every earlier gate green on its own binary, as ring 7d closed. **Eight freeze openings on the record** — the eighth the TRIALS.md label-width sentence, by the owner's hand, 25 September 2026 (`076d74b`), 7d's test 1 green once after it. Earlier — **Ring 7d: all four automated tests PASS** (`./stage7/test-7d.sh`, 21 min, the log's item 11 run; items 0–13 committed, one per item, item 13 the four fixes of Cowork's pre-oracle review, the section appended by the owner's hand at item 9) — **test 5: the rehearsal ran in the windowed twin on 24 September 2026 (not trial data, by the owner's pre-registration); the trial is three sittings on the HP's notebook, one a session, the verdict on the third closes the ring. HP sittings 1, 2 and 3 PASSED on 24 September 2026 (the owner's word on each; one, one and two misses); the verdict A — B's median lower in 8 of 12 pairs, ten needed; misses A 4, B 0 — the owner's word on it 25 September 2026; the verdict boot answered `trial concluded`. Ring 7d CLOSED 25 September 2026, by the owner's word.** Ring 7c: all five tests PASS (18 September). Rings 7b and 7a: all five PASS. Stages 0–5 and the three ring 6 gates green on their own binaries |
 | Repo | `/home/indy/Work/germos` (branch `main`) on Omarchy since 22 September 2026 (`/home/indy/Projects/ai-os` was the Ubuntu path) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, **Omarchy (Arch Linux, kernel 7.2.5-3-omarchy), dual boot on the Crucial P2** since 22 September 2026 (native Ubuntu 26.04 before), 32 logical CPUs |
 | Toolchain | NASM 3.02, QEMU 11.1.1, Python 3.14.7, OVMF at `/usr/share/ovmf/OVMF.fd`, mtools, OpenBSD netcat, xxd, the `claude` CLI **2.1.282** (the spec said 2.1.280; `claude --version` at ring 8a's planning read 2.1.282) — ring 8a needs no new package; every `stage0..8/out/` exists (the fresh-clone gotcha; the ring 8a gate makes its own) |
@@ -3800,19 +3800,154 @@ HP-8a.md step 10 reads the HP's own deadline from the chart (A2).
 
 No ring 8a test exists yet; no guest code changed.
 
+**Item 3** — D2, D4 and the hook's verdicts, measured on 25 September
+2026. The probe is one private include, `stage8/out/probe8a/d24/probe.inc`,
+in three modes, each built into a private copy of `stage8.asm` by stage8's
+own `mkstick` under `stage8/out/probe8a/d24/b-m<mode>/`:
+
+- **Mode 1, the bench (D2):** after `S7: keyboard ready`, interrupts off, on the BSP.
+- **Mode 2, the Esc window (D4):** just before `mouse_init`, where the handover will be.
+- **Mode 3, the rates (D4):** the boot as ever, with `kbd_push` counting every keyboard byte into the obs page's reserved word `0x340`.
+
+`d24.py` boots each on **`checkmetal.qemu_argv` unchanged**, with a fresh
+disk per run. The bench runs add `-icount`. It stamps every serial chunk
+with the host's monotonic clock (1–5 ms polls) and keeps the monitor on
+stdin. Twenty-two bench boots (a first `shift=0` trial run, then twenty-one kept), nine Esc boots, two rate boots. The summaries are
+`stage8/out/probe8a/d24/run-*/summary.txt`, the argv check
+`argv.result.json` and the hook's cases `hookcases.result.json`. Nothing
+is committed from there, and nothing outside `stage8/out/` changed. No
+port was listened on before or after.
+
+**D2 — `-icount` under QEMU 11.1.1.** The stream is 3,092 bytes, fixed by
+a seed:
+- the mixed text `The Quick brown fox, 42 jumps! …` as set 1 make and break, with its shift pairs;
+- E0 arrow pairs at random word ends;
+- two mouse packets after every word.
+
+That is 2,084 keyboard bytes (880 keys) and 1,008 mouse bytes (336 packets).
+Each byte is fed through the generic decoder's two halves:
+- `kbd_push`, then `kbd_next` until the ring is empty;
+- `mouse_byte`, then `mouse_next` until empty.
+
+The TSC is read around each byte, and the stream runs five passes. Before the passes come two
+straight-line loops of `dec rcx` / `jnz`, 2N instructions each, between two `rdtsc`s.
+
+| Fact | Measured how |
+|---|---|
+| **`-icount` forces round-robin TCG in silence**: no warning at `-smp` 2 or 4, and every boot reached `ready`. An explicit `-accel tcg,thread=multi` beside it is refused: "No MTTCG when icount is enabled" | stderr of every run; one `-S` start |
+| **`shift=0,sleep=off` and `shift=0,align=off,sleep=off` are the same mode**: every line of the six runs at one `-smp` matches across the two spellings (`align=off` is the default) | runs `s0-*`, `s0a-*` |
+| **Under `shift=0` the TSC counts virtual nanoseconds**: `tsc_per_ms` 1,000,017, i.e. one tick per instruction. **The 1M-turn loop gives exactly 2N + 5 = 2,000,005 at `-smp` 2 and 4**: the loop's 2N instructions plus the five between the two `rdtsc`s. The 10M-turn loop gives 28,896,293 at `-smp 2` and 29,107,959 at `-smp 4`, not 20,000,005. Once round-robin moves to another vCPU (the glass core), that vCPU's instructions are in the BSP's span too. **So `rdtsc` advances by exactly count × 2^shift only within one round-robin slice**; a per-byte delta (33–140 ticks) is inside one | runs `s0-*`, `s0a-*` |
+| **The decoder under `shift=0`, per byte:** min 33, median 69, worst 135–140 ticks (instructions, `rdtsc` included). Pass 1's sum is 222,413 and its total 259,521 in all twelve `shift=0` runs, at both `-smp`. Medians and minima are identical in every pass of every run | the pass lines |
+| **Which mode repeats exactly: `shift=0` at `-smp 4`**. All six runs are identical on every line: both loops, every pass's sum, min, median, worst and total. **At `-smp 2` it does not quite repeat**: passes 1, 3, 4 and 5 are identical in all six runs, but pass 2's sum is 222,423 or 222,430 and its total 259,538 or 259,545, and one worst is 140 against 136. That is 7 ticks in 259,000; the source is unidentified (a host-clock timer is the likely one) | the pass lines, run by run |
+| **`-smp` changes the numbers**: the 10M loop (+8.9M at 2, +9.1M at 4); passes 2–5 by tens to hundreds of ticks (pass 3's sum 222,475 at 2, 222,678 at 4). Pass 1, and the minimum and median of every pass, do not move | the same |
+| **`shift=auto` repeats nothing**: the 1M loop 49.55M / 49.62M / 49.61M at `-smp 2` and 27.4M at 4; the per-byte median 552, 276, then 138 as the shift adapts pass by pass (138 = 2 × 69: shift 1). Outliers of 635,304 to 2,120,768 ticks appear in some runs and not in others | runs `auto-*` |
+| **Without `-icount`** the TSC is the host's (`tsc_per_ms` 2,998,206–3,000,979). The per-byte median is 162–284, the worst up to 238,272, and no two runs agree | runs `base-*` |
+| **The wall-time cost**, QEMU start → `S7: keyboard ready`: **none 1.38–1.40 s; `shift=0` 7.2 s at `-smp 2`, 9.7 s at `-smp 4`** (5.2× and 6.9×; OVMF's first byte at 1.88 s against 0.66 s); `shift=auto` 3.4 s and 4.5 s. The bench itself, `ready` → `done`: 0.06 s without `-icount`, 0.15 s under `shift=0`. The batch ran six at a time on 32 CPUs, and the one `shift=0` `-smp 4` run done alone read `ready` at 9.66 s, the same | the stamps (`extra` line) |
+
+These are ring 8b's measures, recorded before any freeze as the spec
+requires. **Ring 8a's gate uses no `-icount`.**
+
+**D4 — the argv.** `argv.py` runs the frozen `check_argv_7c(argv, 9997,
+MAC)` as data:
+
+| Argv | Verdict |
+|---|---|
+| **`checkmetal.qemu_argv` unchanged, stage8 paths, `-smp` 2, 4 and 8 (D1's choice: the ICH9 TCO, no flag)** | **PASS**, with `checkmetal.OUT` rebound to `stage8/out` (D3). Without the rebinding both drives fail: "a drive is not a file under stage7/out/" |
+| + `-device i6300esb` (the fallback, not needed) | FAIL: "expected exactly five devices", six found |
+| + `-icount shift=0,sleep=off`; + `-global ICH9-LPC.noreboot=on`; + `-action watchdog=reset` | PASS, because **`check_argv_7c` inspects none of the three**. If the ring 8a argv must be free of them, test 4 (item 11) has to say so itself |
+
+**D4 — Esc at power-on through the monitor.** In mode 2, the loader's
+minimal setup (A3) runs first:
+- wait for the input buffer to empty, write `0xAE`, let the controller settle, and drain the output buffer, one line per byte drained;
+- read the command byte with `0x20`;
+- the marker `PROBE: window ms <t>`, then 14 s of polling `0x64`/`0x60`, one line per byte with its TSC ms.
+
+The checker sent `sendkey esc <hold>` on the monitor as soon as the marker
+reached the capture (1 ms polls).
+
+| Fact | Measured how |
+|---|---|
+| **The setup takes 3 ms** (setup line at 65 ms, window at 68 ms). **The command byte after `0xAE` reads `0x67`**, OVMF's value: translation on, port 1 enabled, aux disabled. The status byte on each key byte is `0x1D` (bit 5 clear: the keyboard's) | every run |
+| **The make arrives as translated set 1 `0x01` and the break as `0x81`**, at every hold and every `-smp` | runs `esc-w*` |
+| **The break lands at t0 + hold**: guest intervals of 99, 998, 2,997 and 9,991 ms for holds of 100, 1,000, 3,000 and 10,000 at `-smp 4`, and 2,997 and 2,996 at `-smp 2` and 8. By the host's stamps the break arrives 0.096, 0.997, 2.999, 9.998, 2.996 and 2.996 s after the make. The guest's ms runs about 0.07 % slow against the host, from the TSC's calibration on one 10 ms PIT wait | the byte lines and their stamps |
+| **No typematic repeats**: exactly two bytes (make, break) in the window for every hold, 10 s included. QEMU's PS/2 keyboard does not repeat; a real keyboard's repeats are makes, which the held rule accepts | `n 2` on every `window end` line |
+| **The drift, marker in the capture → make in the guest: 0–1 ms of guest time** (the make's ms minus the window's ms, sent the same poll the marker landed in), at `-smp` 2, 4 and 8 | runs `esc-w*` |
+| **An Esc sent before ExitBootServices** (on `S7: alive`) **loses its make to OVMF**, which still owns the keyboard then. With a 100 ms hold the break `0x81` was already waiting and the loader's drain took it (`drained st 1d b 81`); the window saw nothing. With a 3,000 ms hold the break arrived inside the window at 2,831 ms with no make before it. Either way the held rule (a make, then no break before the window ends) counts it as **not held**. A key held from power-on is therefore not a hold; the owner's instruction (hold only when `hold Esc for the seed` appears, A3) is the only way | runs `esc-alive100`, `esc-alive3000` |
+| **With no key sent, the window sees no byte** in 14 s | run `esc-none` |
+
+**The checker's hold (A3), the single choice:** `sendkey esc 5000`, sent
+when the line before the window lands, **W + 2,000 ms**. The make lands
+within 1 ms and the break within 10 ms of the hold, so the margin covers
+the setup's 3 ms, the capture's poll and the gap between the line and the
+window by about two orders of magnitude. A break after the window is only
+a break code in the seed's ring, and `kbd_next` ignores those. W stays
+PARTS.md's human 3 s, not measured.
+
+**D4 — the rates.** Mode 3, at `-smp 4`, idle after `ready` + 1 s, the
+obs page read through the monitor before and after:
+
+| Fact | Measured how |
+|---|---|
+| **Keys at `rehearse.KEY_GAP` (0.2 s):** the mixed text `The Quick brown fox, 42 jumps! Over? the lazy dog` and four arrows, 53 `sendkey`s. The rule predicts **124 keyboard bytes** (a plain key 2, a shifted one 4 — shift make, make, break, shift break — an E0 key 4). **124 were counted**, and `OBS_KEYS` rose by 49 (the 49 printables; shift and the arrows translate to nothing). **11.7 bytes/s**, 5 keys/s. The rule holds as PARTS.md will state it | `rates-smp4` |
+| **Faster gaps lose nothing:** the same 53 keys at 50 ms and at 20 ms: 124 bytes and 49 keys each time, the ring's high-water 2 | `rates2-smp4` |
+| **The mouse, 1,000 `mouse_move`s alternating ±1:** in a **tight loop (no pause) QEMU coalesces them: 31 packets**. The moves arrive faster than the guest drains the PS/2 queue, and QEMU sums the deltas, which here cancel. At a **1, 2, 3, 5 and 20 ms pace, packets = moves = 1,000** and mouse bytes 3,000, at 851, 457, 315, 193 and 49.5 packets/s. **`OBS_RESYNCS` 0 in every case**, the tight loop included, and the ring's high-water 1–2 at a paced rate (10 after the tight loop) | `rates-smp4`, `rates2-smp4` |
+
+**What this sizes (good's threshold, 1,000 keyboard bytes and 5,000
+packets over three boots):** typing at `KEY_GAP` gives 1,000 bytes in
+about 86 s of mixed text, about 29 s a boot. 5,000 packets take about
+101 s at checkmetal's 20 ms mouse pace, 26 s at 5 ms and 6 s at 1 ms.
+**`("wiggle", n)` must pace its moves** (any pace from 1 ms up gave
+packets = moves); a tight loop never makes one packet a move. Item 12
+chooses the paces from these.
+
+**D4 — the identity.** **CPUID leaf 1 EAX under `-cpu IvyBridge` is
+`0x000306A9`** (family 6, model 0x3A, stepping 9), the same at `-smp` 2
+and 4. EBX carries the logical count (`0x00020800` at 2, `0x00040800` at
+4), which is why the identity takes EAX alone. The LPC bridge is `8086:2918`
+rev `02` (D1). **So the twin's molt request body is `molt i8042 cpu
+000306a9 pci 8086:2918:02`** by decision 3's format.
+
+**The hook's verdicts** (`hookcases.py`, 87 cases through
+`protect-tests.py` as the harness feeds it):
+- **Every new ring 8a path is writable today** with Write and Edit, relative and absolute: PARTS.md, SEED.md, `parts.py`, `test-8a.sh`, `checkmolt.py`, `loader.asm`, `seed-record.md`, HP-8a.md, `broker/molt.py`, and the ten fixture files.
+- **Every command shape the ring will run is allowed:**
+  - `parts.py` in all four modes; the gate; the checker's four modes;
+  - `nasm -f bin` of a fixture to its `.bin` and to a check copy under `stage8/out/molt/`;
+  - `cp` of a disk and of the stick under `stage8/out/`; `truncate`; `mkdir -p` and `rm -rf` of the scratch;
+  - the builders; `molt.py --mock` with `--part` and `--hold-s`; the relay;
+  - the twin's QEMU line with drives under `stage8/out/molt/`;
+  - the payload table; a `git commit -F`; the 7d gate; `trials.py` on a stage8 disk.
+- **The controls stay denied:** a Write to `stage7/checkmetal.py` or `checktrials.py`, a `cp` over a frozen checker, and a drive outside `out/`.
+
+**One finding, for the owner (not ring 8a's, and not fixed here):**
+**the freeze does not catch a command that names only a directory
+holding frozen files.** All of these are ALLOWED:
+- `rm -rf stage7` and `rm -r stage7/`;
+- `mv stage7 old7`;
+- `git rm -r stage7`;
+- `rm -rf stage6`, `rm -rf broker`, `rm -rf stage8/fixtures`.
+
+The hook judges named frozen paths, as it has since Stage 0, so every frozen stage has had
+this gap. It is carried to item 13, which freezes `stage8/fixtures/`, as
+a question: whether the owner wants a directory rule in the hook first.
+The hook is the owner's guarantee, so CC does not edit it unasked.
+
+No ring 8a test exists yet; no guest code changed.
+
 ## Next action
 
-**Ring 8a, item 3:** D2, `-icount` under QEMU 11.1.1 (a bench copy of
-the decoder, three modes, `-smp` 2 and 4, a straight-line loop against
-`rdtsc`); D4 — the argv (the ICH9 TCO needs no flag, so `check_argv_7c`
-on `checkmetal.qemu_argv` unchanged, as data), Esc at power-on through
-the monitor with the loader's minimal setup (A3), the key and packet
-rates, the identity (CPUID leaf 1 under `-cpu IvyBridge`; the LPC
-bridge is `8086:2918` rev `02`, from D1); the hook's verdicts on the
-ring's command shapes. `/clear` first; one commit per item. Items 1 and
-2 are done: D3's seams, and D1 (`TCO_TMR` 25, the twin agreeing with
-the datasheet, `SECOND_TO_STS` surviving the reset, so the watchdog path
-and `S8: watchdog tco 30 s`).
+**Ring 8a, item 4:** `stage8/PARTS.md`, decisions 2–9 and 11 in one text
+(plan item 4), with D1's and D4's single choices in it:
+- `TCO_TMR` 25 by the datasheet's rule;
+- `S8: watchdog tco 30 s` and the watchdog recovery path;
+- W = 3 s and both scancode sets;
+- the key-byte rule (plain 2, shifted 4, E0 4), confirmed by D4;
+- the identity format (`cpu 000306a9 pci 8086:2918:02` in the twin).
+
+`/clear` first; one commit per item. Items 1–3 are done: D3's seams, D1
+the watchdog, and item 3's D2 and D4 with the hook's verdicts. Open for
+the owner: the directory-removal gap in the freeze (item 3's finding),
+before item 13.
 
 Earlier — **Ring 7d is CLOSED (25 September 2026), and with it every ring of Stage
 7's order. Next: Stage 8 — the molt**, by the owner's order of 22
