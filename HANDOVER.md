@@ -3934,6 +3934,22 @@ The hook is the owner's guarantee, so CC does not edit it unasked.
 
 No ring 8a test exists yet; no guest code changed.
 
+**The owner's decision on item 3's finding, 25 September 2026: yes, a
+directory rule in the freeze, added at item 13.** At item 13, alongside
+`PROTECTED`, the hook will deny `rm`, `rmdir`, `mv`, `git rm` and `git mv`
+when any argument is:
+- the repo root;
+- a directory that holds a frozen file;
+- a glob that covers one.
+
+Examples to deny: `rm -rf stage7`, `mv stage7 old7`, `git rm -r stage8/fixtures`.
+**These stay allowed:** moving or removing an ordinary file beside frozen
+files, and wiping `stage8/out`. Every shape, denials and allowances alike,
+goes into the payload table as data, with 0 wrong. The hook's comment
+says plainly that a rule which reads the command cannot catch every
+route: a script that removes a folder, for example, still gets past it.
+The item 13 record will list the shapes as the table holds them.
+
 ## Next action
 
 **Ring 8a, item 4:** `stage8/PARTS.md`, decisions 2–9 and 11 in one text
@@ -3945,9 +3961,11 @@ No ring 8a test exists yet; no guest code changed.
 - the identity format (`cpu 000306a9 pci 8086:2918:02` in the twin).
 
 `/clear` first; one commit per item. Items 1–3 are done: D3's seams, D1
-the watchdog, and item 3's D2 and D4 with the hook's verdicts. Open for
-the owner: the directory-removal gap in the freeze (item 3's finding),
-before item 13.
+the watchdog, and item 3's D2 and D4 with the hook's verdicts. Carried
+to item 13, by the owner's decision of 25 September 2026: the freeze's
+directory rule (`rm`, `rmdir`, `mv`, `git rm`, `git mv` on the repo root,
+on a directory holding a frozen file, or on a glob covering one) with its
+shapes in the payload table, 0 wrong.
 
 Earlier — **Ring 7d is CLOSED (25 September 2026), and with it every ring of Stage
 7's order. Next: Stage 8 — the molt**, by the owner's order of 22
