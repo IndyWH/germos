@@ -206,6 +206,9 @@ For a row of *n* items on a console *C* cells wide:
   for the last box.
 - **The label** — the item's text, exactly as layout A spells it — sits on
   row `R−2` from column `first + ⌊(filled − len) / 2⌋`, inverse.
+  If the label is wider than the box's filled width (a narrow screen),
+  only its first `filled` characters are drawn, from the box's first
+  column; the box's target is the filled span as ever.
 - **A press** on any filled cell of a box, either row, is that item, with
   the kind and the argument the item has in layout A (`? ask` types `?`,
   `! grow` types `!`, an installed app's item types its launch line on an
