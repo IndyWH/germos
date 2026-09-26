@@ -139,7 +139,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | | |
 |---|---|
 | Stage | **8 — The molt — ring 8a, the floor, OPENED 25 September 2026.** `stage8/spec.md` approved by the owner with all fourteen decisions settled (rings 8a–8g; the first slot `i8042`); `stage8/plan-8a.md` approved at the plan gate with Cowork's six amendments (A1–A6) and all seventeen deviations accepted. Stage 7 closed with ring 7d on 25 September 2026 (rings 7a–7d closed 9, 15, 18 and 25 September); Stages 0–6 closed |
-| Status | **Ring 8a: no test exists yet** (items 0 to 5: the plan's commit; Stage 8 opened on ring 7d's source, the build byte-identical to ring 7d's, and D3's seams proven by a run - every 7c and 7d entry point returns 0 on the stage8 build with nothing escaping to `stage7/out/`; item 2: D1 measured - the ICH9 TCO resets the twin at 2 × `TCO_TMR` × 0.6 s as the 7-series datasheet says, `TCO_TMR` 25 for 30 s, `SECOND_TO_STS` survives the reset, so the one twin path is the watchdog's; item 3: D2 - `-icount shift=0` repeats exactly at `-smp 4`, not quite at 2, `auto` never; D4 - `qemu_argv` passes `check_argv_7c` unchanged, Esc arrives as `0x01`/`0x81` with no repeats and the checker's hold is 5,000 ms, keys match the byte rule, packets equal moves at any pace from 1 ms, the identity `cpu 000306a9 pci 8086:2918:02`; the hook allows every ring 8a shape, and allows removing a whole directory of frozen files, a finding for the owner, whose decision of 25 September 2026 adds a directory rule at item 13; item 4: `stage8/PARTS.md` written, its worked examples reproduced from its own Python block, 0 wrong, then Cowork's amendment on what ABI 3's services refuse; item 5: the five fixtures, each header valid by PARTS.md, and their byte entries matching the generic event for event on the host). Every earlier gate green on its own binary, as ring 7d closed. **Eight freeze openings on the record** — the eighth the TRIALS.md label-width sentence, by the owner's hand, 25 September 2026 (`076d74b`), 7d's test 1 green once after it. Earlier — **Ring 7d: all four automated tests PASS** (`./stage7/test-7d.sh`, 21 min, the log's item 11 run; items 0–13 committed, one per item, item 13 the four fixes of Cowork's pre-oracle review, the section appended by the owner's hand at item 9) — **test 5: the rehearsal ran in the windowed twin on 24 September 2026 (not trial data, by the owner's pre-registration); the trial is three sittings on the HP's notebook, one a session, the verdict on the third closes the ring. HP sittings 1, 2 and 3 PASSED on 24 September 2026 (the owner's word on each; one, one and two misses); the verdict A — B's median lower in 8 of 12 pairs, ten needed; misses A 4, B 0 — the owner's word on it 25 September 2026; the verdict boot answered `trial concluded`. Ring 7d CLOSED 25 September 2026, by the owner's word.** Ring 7c: all five tests PASS (18 September). Rings 7b and 7a: all five PASS. Stages 0–5 and the three ring 6 gates green on their own binaries |
+| Status | **Ring 8a: no test exists yet** (items 0 to 6: the plan's commit; Stage 8 opened on ring 7d's source, the build byte-identical to ring 7d's, and D3's seams proven by a run - every 7c and 7d entry point returns 0 on the stage8 build with nothing escaping to `stage7/out/`; item 2: D1 measured - the ICH9 TCO resets the twin at 2 × `TCO_TMR` × 0.6 s as the 7-series datasheet says, `TCO_TMR` 25 for 30 s, `SECOND_TO_STS` survives the reset, so the one twin path is the watchdog's; item 3: D2 - `-icount shift=0` repeats exactly at `-smp 4`, not quite at 2, `auto` never; D4 - `qemu_argv` passes `check_argv_7c` unchanged, Esc arrives as `0x01`/`0x81` with no repeats and the checker's hold is 5,000 ms, keys match the byte rule, packets equal moves at any pace from 1 ms, the identity `cpu 000306a9 pci 8086:2918:02`; the hook allows every ring 8a shape, and allows removing a whole directory of frozen files, a finding for the owner, whose decision of 25 September 2026 adds a directory rule at item 13; item 4: `stage8/PARTS.md` written, its worked examples reproduced from its own Python block, 0 wrong, then Cowork's amendment on what ABI 3's services refuse; item 5: the five fixtures, each header valid by PARTS.md, and their byte entries matching the generic event for event on the host; item 6: `stage8/SEED.md` and `stage8/seed-record.md`, seed 0 `bbf80635…b28cd5` from a clean rebuild of `bd613b3`, the worked example reproduced from SEED.md's own block, 0 wrong). Every earlier gate green on its own binary, as ring 7d closed. **Eight freeze openings on the record** — the eighth the TRIALS.md label-width sentence, by the owner's hand, 25 September 2026 (`076d74b`), 7d's test 1 green once after it. Earlier — **Ring 7d: all four automated tests PASS** (`./stage7/test-7d.sh`, 21 min, the log's item 11 run; items 0–13 committed, one per item, item 13 the four fixes of Cowork's pre-oracle review, the section appended by the owner's hand at item 9) — **test 5: the rehearsal ran in the windowed twin on 24 September 2026 (not trial data, by the owner's pre-registration); the trial is three sittings on the HP's notebook, one a session, the verdict on the third closes the ring. HP sittings 1, 2 and 3 PASSED on 24 September 2026 (the owner's word on each; one, one and two misses); the verdict A — B's median lower in 8 of 12 pairs, ten needed; misses A 4, B 0 — the owner's word on it 25 September 2026; the verdict boot answered `trial concluded`. Ring 7d CLOSED 25 September 2026, by the owner's word.** Ring 7c: all five tests PASS (18 September). Rings 7b and 7a: all five PASS. Stages 0–5 and the three ring 6 gates green on their own binaries |
 | Repo | `/home/indy/Work/germos` (branch `main`) on Omarchy since 22 September 2026 (`/home/indy/Projects/ai-os` was the Ubuntu path) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, **Omarchy (Arch Linux, kernel 7.2.5-3-omarchy), dual boot on the Crucial P2** since 22 September 2026 (native Ubuntu 26.04 before), 32 logical CPUs |
 | Toolchain | NASM 3.02, QEMU 11.1.1, Python 3.14.7, OVMF at `/usr/share/ovmf/OVMF.fd`, mtools, OpenBSD netcat, xxd, the `claude` CLI **2.1.282** (the spec said 2.1.280; `claude --version` at ring 8a's planning read 2.1.282) — ring 8a needs no new package; every `stage0..8/out/` exists (the fresh-clone gotcha; the ring 8a gate makes its own) |
@@ -4056,16 +4056,49 @@ MMIO.
 
 No ring 8a test exists yet; no guest code changed.
 
+**Item 6** — `stage8/SEED.md` and `stage8/seed-record.md`, 26 September
+2026. SEED.md, written with the Write tool, holds:
+- **the seed:** `stage8/out/BOOTX64.EFI` as `stage8/mkimage.sh` builds it from one commit with a named NASM. The stick and `esp.img` carry it but are not it (FAT timestamps, `NvVars`);
+- **what may change:** the loader and SHA-256 frozen for good from item 16b, the rest ring by ring, each seed version one record line. A build no line names is not a seed;
+- **the rebuild:** an empty `stage8/out/seed/<n>/`, `git archive <commit> | tar -x` into it, that tree's own `mkimage.sh`, the NASM version checked first (another version is refused, never compared), and SHA-256 and length of the EFI;
+- **the record:** one bare ``` fence, seed lines only inside it, `seed <n> <sha256> <bytes> <commit> <yyyy-mm-dd> nasm <version>`. The date is the named commit's committer date (`%cs`), a fact of the commit. The commit must be an ancestor of the commit that adds the line. Rules: append-only (checked against the file's git history), numbered from 0 by one, no repeat of the previous hash, dates never backwards, the witness uses the last line, and a line only for a build its gate judged;
+- **three SHA-256 known answers** (FIPS 180-2's `abc` and two-block message, and the empty message). The `abc` answer must agree with PARTS.md's;
+- **the worked example:** seed 0's rebuild, its line and parse, five refused records with their messages, and one refused history;
+- **"Parsing it cold, in Python":** the block `parts.py` will exec, with `seed_kat`, `build_id`, `nasm_version`, `parse_seed_line`, `record_lines`, `parse_seed_record`, `current_seed`, `seed_named`, `append_only`, `seed_line` and `rebuild_script`. The git plumbing is `parts.py`'s (item 7).
+
+**Seed 0, from the build, never typed.** `rebuild_script("bd613b3",
+"stage8/out/seed/0")`, run at the repo root, gave 45,056 bytes,
+`bbf80635a83beeca2254ef35aa492306d30224950b4f405b434b900475b28cd5`: ring
+7d's binary's, and HEAD's build's. A scratch script exec'd SEED.md's own
+block, rebuilt, and wrote the record with `seed_line`:
+`seed 0 bbf80635…b28cd5 45056 bd613b3 2026-09-25 nasm 3.02`.
+
+**Proven on the host, no boot:** a second scratch script exec'd the block
+from SEED.md cold and checked 21 claims, 0 wrong:
+- the record parses; `current_seed` is 0; `seed_named` names both the rebuild and HEAD's build `0`, and the build with one byte appended `None`;
+- the line, its dict, the rebuild line and the `sha256sum` line appear in SEED.md as the functions give them;
+- each refusal message is in SEED.md's table, and the history message too;
+- `abc` agrees with PARTS.md's `KAT_ABC`; `bd613b3` resolves and is an ancestor of HEAD; `nasm -v` gives `3.02`.
+
+The first run found one wrong: the history's message wrapped across two
+lines of prose. The sentence was reworded; the block was not touched.
+
+No ring 8a test exists yet; no guest code changed.
+
 ## Next action
 
-**Ring 8a, item 6:** `stage8/SEED.md` and the seed record (plan item 6,
-decision 12). SEED.md defines:
-- the seed (`stage8/out/BOOTX64.EFI` from a commit, NASM's version named), the rebuild and the hash;
-- the record's line format, `seed <n> <sha256> <bytes> <commit> <yyyy-mm-dd> nasm <version>`;
-- the witness's rule, SHA-256's `abc` answer, and a worked example.
+**Ring 8a, item 7:** `stage8/parts.py`; PARTS.md's and SEED.md's worked
+examples completed (plan item 7, decision 13). It execs both documents'
+Python blocks at import. It adds the git plumbing SEED.md leaves to it:
+resolving `<commit>`, its ancestry and `%cs` date, the record's history
+for `append_only`, and running `rebuild_script`. Proven with no boot:
+- `--example` reproduces every example;
+- a PARTS.md with one frame byte altered is refused;
+- `--disk` on a formatted 7c disk prints `i8042 generic`;
+- `--serial` agrees with `--disk`;
+- `--seed` names seed 0.
 
-`stage8/seed-record.md`'s seed 0 is item 1's build (`bbf80635…b28cd5`,
-45,056 bytes). `/clear` first; one commit per item. Items 1–5 are done.
+`/clear` first; one commit per item. Items 1–6 are done.
 Carried to item 13, by the owner's decision of 25 September 2026: the
 freeze's directory rule, with its shapes in the payload table, 0 wrong.
 Carried to item 15: the pointer's centring, `OBS_MOUSE_ID` and
