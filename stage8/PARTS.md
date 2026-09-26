@@ -754,10 +754,151 @@ no longer matches the entry, so the door says `S8: part i8042 bad hash`.
 
 ### The fixtures' frames and the liar
 
-Completed at item 7, once the fixtures exist (item 5). This section will
-give, for each fixture: its build, its header, the first 40 bytes of its
-frame by the fixture table's threshold, `ud2`'s offset in `fault`, and the
-liar's stored byte with both hashes.
+Each fixture's `.bin` in `stage8/fixtures/` is its part, as committed.
+For each, this section gives:
+- its length and its three entries;
+- its build, its `<sha16>`, and its install note with the fixture table's threshold;
+- its 96-byte header;
+- the first 40 bytes of its frame, source 0.
+
+`fault` adds its `ud2`'s offset and its blame line. `liar` adds the torn
+write's byte and both hashes. `parts.py` renders each subsection from the
+`.bin` (`render_fixture`), and `--example` demands this text.
+
+#### `i8042-good`
+
+1,152 bytes: the header and a 1,056-byte body. `init` at 96, `byte` at 382
+and `health` at 611. Its build is
+`4fe6beefc4bc57d0e9ff23f4c605d85950eb99537371756f1b61ac441f8d2785`, so its
+`<sha16>` is `4fe6beefc4bc57d0`, and its install note is `molt i8042
+shadow 4fe6beefc4bc57d0 3 1000 5000`.
+
+```
+00000000: 5041 5254 0300 0000 6938 3034 3200 0000  PART....i8042...
+00000010: 2004 0000 6000 0000 7e01 0000 6302 0000   ...`...~...c...
+00000020: 676f 6f64 0000 0000 0000 0000 0000 0000  good............
+00000030: 7241 4bc7 239d da02 2c6e d99e 4409 4767  rAK.#...,n..D.Gg
+00000040: 33b2 aa28 df7a 8605 b250 acca 68f0 2d48  3..(.z...P..h.-H
+00000050: 0000 0000 0000 0000 0000 0000 0000 0000  ................
+```
+
+Its frame is 1,188 bytes (`N` = 1,184 = 32 + 1,152):
+
+```
+00000000: a004 0000 0303 0000 8004 0000 0300 0000  ................
+00000010: e803 0000 8813 0000 0000 0000 0000 0000  ................
+00000020: 0000 0000 5041 5254                      ....PART
+```
+
+#### `i8042-wrong`
+
+1,152 bytes: the header and a 1,056-byte body. `init` at 96, `byte` at 382
+and `health` at 611. Its build is
+`b41ddccde138ea239ecb6ee309d95b69578eecd49d2273aa1a1680343c41317d`, so its
+`<sha16>` is `b41ddccde138ea23`, and its install note is `molt i8042
+shadow b41ddccde138ea23 1 100 100`.
+
+```
+00000000: 5041 5254 0300 0000 6938 3034 3200 0000  PART....i8042...
+00000010: 2004 0000 6000 0000 7e01 0000 6302 0000   ...`...~...c...
+00000020: 7772 6f6e 6700 0000 0000 0000 0000 0000  wrong...........
+00000030: 03d8 09db 91e6 e611 e12e ad40 3767 137a  ...........@7g.z
+00000040: be76 152f ae5f 99bc 2259 78db 1033 f502  .v./._.."Yx..3..
+00000050: 0000 0000 0000 0000 0000 0000 0000 0000  ................
+```
+
+Its frame is 1,188 bytes (`N` = 1,184 = 32 + 1,152):
+
+```
+00000000: a004 0000 0303 0000 8004 0000 0100 0000  ................
+00000010: 6400 0000 6400 0000 0000 0000 0000 0000  d...d...........
+00000020: 0000 0000 5041 5254                      ....PART
+```
+
+#### `i8042-hang`
+
+1,176 bytes: the header and a 1,080-byte body. `init` at 96, `byte` at 382
+and `health` at 637. Its build is
+`f0668b687c68cab0bed99268bb539d6bfb5d9ab30b2ecbf1013e5b0d5defee77`, so its
+`<sha16>` is `f0668b687c68cab0`, and its install note is `molt i8042
+shadow f0668b687c68cab0 1 100 100`.
+
+```
+00000000: 5041 5254 0300 0000 6938 3034 3200 0000  PART....i8042...
+00000010: 3804 0000 6000 0000 7e01 0000 7d02 0000  8...`...~...}...
+00000020: 6861 6e67 0000 0000 0000 0000 0000 0000  hang............
+00000030: 5dd9 c1ed 0567 c1bd 4c37 889e 23bf de88  ]....g..L7..#...
+00000040: 4c32 a330 5307 cac6 ffc0 2d0d 94e9 2368  L2.0S.....-...#h
+00000050: 0000 0000 0000 0000 0000 0000 0000 0000  ................
+```
+
+Its frame is 1,212 bytes (`N` = 1,208 = 32 + 1,176):
+
+```
+00000000: b804 0000 0303 0000 9804 0000 0100 0000  ................
+00000010: 6400 0000 6400 0000 0000 0000 0000 0000  d...d...........
+00000020: 0000 0000 5041 5254                      ....PART
+```
+
+#### `i8042-fault`
+
+1,160 bytes: the header and a 1,064-byte body. `init` at 96, `byte` at 382
+and `health` at 622. Its build is
+`99e9f923a568309e9be3336bc978b92c8578081acb25f3352822fd70d2e0cb62`, so its
+`<sha16>` is `99e9f923a568309e`, and its install note is `molt i8042
+shadow 99e9f923a568309e 1 100 100`.
+
+```
+00000000: 5041 5254 0300 0000 6938 3034 3200 0000  PART....i8042...
+00000010: 2804 0000 6000 0000 7e01 0000 6e02 0000  (...`...~...n...
+00000020: 6661 756c 7400 0000 0000 0000 0000 0000  fault...........
+00000030: 0d7a 46d3 7083 2b24 4c50 f398 3c7d 7144  .zF.p.+$LP..<}qD
+00000040: 657a b6df 47de d21a b9dd d0d9 d691 e436  ez..G..........6
+00000050: 0000 0000 0000 0000 0000 0000 0000 0000  ................
+```
+
+Its frame is 1,196 bytes (`N` = 1,192 = 32 + 1,160):
+
+```
+00000000: a804 0000 0303 0000 8804 0000 0100 0000  ................
+00000010: 6400 0000 6400 0000 0000 0000 0000 0000  d...d...........
+00000020: 0000 0000 5041 5254                      ....PART
+```
+
+Its one `ud2` is at byte 507 of the part, so its blame line is `ERR:
+exception 6 in part i8042 +0x000001fb`.
+
+#### `i8042-liar`
+
+1,152 bytes: the header and a 1,056-byte body. `init` at 96, `byte` at 382
+and `health` at 611. Its build is
+`f15e77a8966e95e366fcb74130077a70665187bd151c96e9720043d44f38b68a`, so its
+`<sha16>` is `f15e77a8966e95e3`, and its install note is `molt i8042
+shadow f15e77a8966e95e3 1 100 100`.
+
+```
+00000000: 5041 5254 0300 0000 6938 3034 3200 0000  PART....i8042...
+00000010: 2004 0000 6000 0000 7e01 0000 6302 0000   ...`...~...c...
+00000020: 6c69 6172 0000 0000 0000 0000 0000 0000  liar............
+00000030: 7241 4bc7 239d da02 2c6e d99e 4409 4767  rAK.#...,n..D.Gg
+00000040: 33b2 aa28 df7a 8605 b250 acca 68f0 2d48  3..(.z...P..h.-H
+00000050: 0000 0000 0000 0000 0000 0000 0000 0000  ................
+```
+
+Its frame is 1,188 bytes (`N` = 1,184 = 32 + 1,152):
+
+```
+00000000: a004 0000 0303 0000 8004 0000 0100 0000  ................
+00000010: 6400 0000 6400 0000 0000 0000 0000 0000  d...d...........
+00000020: 0000 0000 5041 5254                      ....PART
+```
+
+Its body is `good`'s byte for byte, and only the name field differs. The
+torn write turns byte 96 from `48` to `49`. The home entry keeps the build
+`f15e77a8966e95e366fcb74130077a70665187bd151c96e9720043d44f38b68a`, the
+stored bytes now hash to
+`2ae3a89fa1d700b407e1cc754c87e14d86a18251e28af1b6393f3302d6baf684`, and
+the door says `S8: part i8042 bad hash`.
 
 ### A slot's history, and the table at each step
 
