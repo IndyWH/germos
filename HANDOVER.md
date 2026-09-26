@@ -139,7 +139,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | | |
 |---|---|
 | Stage | **8 — The molt — ring 8a, the floor, OPENED 25 September 2026.** `stage8/spec.md` approved by the owner with all fourteen decisions settled (rings 8a–8g; the first slot `i8042`); `stage8/plan-8a.md` approved at the plan gate with Cowork's six amendments (A1–A6) and all seventeen deviations accepted. Stage 7 closed with ring 7d on 25 September 2026 (rings 7a–7d closed 9, 15, 18 and 25 September); Stages 0–6 closed |
-| Status | **Ring 8a: no test exists yet** (items 0 to 4: the plan's commit; Stage 8 opened on ring 7d's source, the build byte-identical to ring 7d's, and D3's seams proven by a run - every 7c and 7d entry point returns 0 on the stage8 build with nothing escaping to `stage7/out/`; item 2: D1 measured - the ICH9 TCO resets the twin at 2 × `TCO_TMR` × 0.6 s as the 7-series datasheet says, `TCO_TMR` 25 for 30 s, `SECOND_TO_STS` survives the reset, so the one twin path is the watchdog's; item 3: D2 - `-icount shift=0` repeats exactly at `-smp 4`, not quite at 2, `auto` never; D4 - `qemu_argv` passes `check_argv_7c` unchanged, Esc arrives as `0x01`/`0x81` with no repeats and the checker's hold is 5,000 ms, keys match the byte rule, packets equal moves at any pace from 1 ms, the identity `cpu 000306a9 pci 8086:2918:02`; the hook allows every ring 8a shape, and allows removing a whole directory of frozen files, a finding for the owner, whose decision of 25 September 2026 adds a directory rule at item 13; item 4: `stage8/PARTS.md` written, its worked examples reproduced from its own Python block, 0 wrong). Every earlier gate green on its own binary, as ring 7d closed. **Eight freeze openings on the record** — the eighth the TRIALS.md label-width sentence, by the owner's hand, 25 September 2026 (`076d74b`), 7d's test 1 green once after it. Earlier — **Ring 7d: all four automated tests PASS** (`./stage7/test-7d.sh`, 21 min, the log's item 11 run; items 0–13 committed, one per item, item 13 the four fixes of Cowork's pre-oracle review, the section appended by the owner's hand at item 9) — **test 5: the rehearsal ran in the windowed twin on 24 September 2026 (not trial data, by the owner's pre-registration); the trial is three sittings on the HP's notebook, one a session, the verdict on the third closes the ring. HP sittings 1, 2 and 3 PASSED on 24 September 2026 (the owner's word on each; one, one and two misses); the verdict A — B's median lower in 8 of 12 pairs, ten needed; misses A 4, B 0 — the owner's word on it 25 September 2026; the verdict boot answered `trial concluded`. Ring 7d CLOSED 25 September 2026, by the owner's word.** Ring 7c: all five tests PASS (18 September). Rings 7b and 7a: all five PASS. Stages 0–5 and the three ring 6 gates green on their own binaries |
+| Status | **Ring 8a: no test exists yet** (items 0 to 5: the plan's commit; Stage 8 opened on ring 7d's source, the build byte-identical to ring 7d's, and D3's seams proven by a run - every 7c and 7d entry point returns 0 on the stage8 build with nothing escaping to `stage7/out/`; item 2: D1 measured - the ICH9 TCO resets the twin at 2 × `TCO_TMR` × 0.6 s as the 7-series datasheet says, `TCO_TMR` 25 for 30 s, `SECOND_TO_STS` survives the reset, so the one twin path is the watchdog's; item 3: D2 - `-icount shift=0` repeats exactly at `-smp 4`, not quite at 2, `auto` never; D4 - `qemu_argv` passes `check_argv_7c` unchanged, Esc arrives as `0x01`/`0x81` with no repeats and the checker's hold is 5,000 ms, keys match the byte rule, packets equal moves at any pace from 1 ms, the identity `cpu 000306a9 pci 8086:2918:02`; the hook allows every ring 8a shape, and allows removing a whole directory of frozen files, a finding for the owner, whose decision of 25 September 2026 adds a directory rule at item 13; item 4: `stage8/PARTS.md` written, its worked examples reproduced from its own Python block, 0 wrong, then Cowork's amendment on what ABI 3's services refuse; item 5: the five fixtures, each header valid by PARTS.md, and their byte entries matching the generic event for event on the host). Every earlier gate green on its own binary, as ring 7d closed. **Eight freeze openings on the record** — the eighth the TRIALS.md label-width sentence, by the owner's hand, 25 September 2026 (`076d74b`), 7d's test 1 green once after it. Earlier — **Ring 7d: all four automated tests PASS** (`./stage7/test-7d.sh`, 21 min, the log's item 11 run; items 0–13 committed, one per item, item 13 the four fixes of Cowork's pre-oracle review, the section appended by the owner's hand at item 9) — **test 5: the rehearsal ran in the windowed twin on 24 September 2026 (not trial data, by the owner's pre-registration); the trial is three sittings on the HP's notebook, one a session, the verdict on the third closes the ring. HP sittings 1, 2 and 3 PASSED on 24 September 2026 (the owner's word on each; one, one and two misses); the verdict A — B's median lower in 8 of 12 pairs, ten needed; misses A 4, B 0 — the owner's word on it 25 September 2026; the verdict boot answered `trial concluded`. Ring 7d CLOSED 25 September 2026, by the owner's word.** Ring 7c: all five tests PASS (18 September). Rings 7b and 7a: all five PASS. Stages 0–5 and the three ring 6 gates green on their own binaries |
 | Repo | `/home/indy/Work/germos` (branch `main`) on Omarchy since 22 September 2026 (`/home/indy/Projects/ai-os` was the Ubuntu path) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, **Omarchy (Arch Linux, kernel 7.2.5-3-omarchy), dual boot on the Crucial P2** since 22 September 2026 (native Ubuntu 26.04 before), 32 logical CPUs |
 | Toolchain | NASM 3.02, QEMU 11.1.1, Python 3.14.7, OVMF at `/usr/share/ovmf/OVMF.fd`, mtools, OpenBSD netcat, xxd, the `claude` CLI **2.1.282** (the spec said 2.1.280; `claude --version` at ring 8a's planning read 2.1.282) — ring 8a needs no new package; every `stage0..8/out/` exists (the fresh-clone gotcha; the ring 8a gate makes its own) |
@@ -4017,18 +4017,59 @@ page, `0xFEC00000`–`0xFEDFFFFF` in the twin, also holds the I/O APIC and
 the HPET, so no part can map those either. No `i8042` part needs any
 MMIO.
 
+**Item 5** — the five fixtures, 26 September 2026:
+`stage8/fixtures/i8042-{good,wrong,hang,fault,liar}.{asm,bin}`, and
+`.gitignore` gains the five `!stage8/fixtures/i8042-*.bin` lines.
+- **`good`** is transcribed from the seed's i8042 code:
+  - `init` is `mouse_init`'s work, including ring 7c item 15's second ports-off-and-drain, with its two lines through `serial_line` and its waits through `pit_wait`;
+  - `byte` is `kbd_next`'s decode and `mouse_byte`'s packet machine;
+  - `health` answers init's failure code, 0 when init succeeded;
+  - its state (24 bytes, zero as stored) and its own copies of `scan1_map` and `scan1_shift_map` live inside the body.
+- **Each of the other four** is generated from `good`'s source, with its one change marked `FIXTURE CHANGE` and a banner stating its fate:
+  - `wrong`: make code `0x10` decoded as `0x11`'s key in both maps;
+  - `hang`: once `init` has run, the 100th `byte` call spins;
+  - `fault`: once `init` has run, the first mouse byte executes `ud2`;
+  - `liar`: only the name field.
+- **NASM cannot compute SHA-256**, so each `.asm` carries its body's hash as a literal line. It was written from a first assembly and checked on the second.
+
+| Fixture | Bytes | Body | `init` / `byte` / `health` | Build (first 16) |
+|---|---|---|---|---|
+| `good` | 1,152 | 1,056 | +96 / +382 / +611 | `4fe6beefc4bc57d0` |
+| `wrong` | 1,152 | 1,056 | +96 / +382 / +611 | `b41ddccde138ea23` |
+| `hang` | 1,176 | 1,080 | +96 / +382 / +637 | `f0668b687c68cab0` |
+| `fault` | 1,160 | 1,064 | +96 / +382 / +622 | `99e9f923a568309e`, `ud2` at `+0x1fb` |
+| `liar` | 1,152 | 1,056 | +96 / +382 / +611 | `f15e77a8966e95e3` |
+
+**Proven on the host, no boot**, by the plan's two checks and one more:
+- **Each assembles byte for byte twice.**
+- **Each header passes PARTS.md's own `check_part`**, exec'd from the document. `fault` has exactly one `0F 0B` pair, and no other fixture has one.
+- **The extra check, beyond the plan's two:** a scratch C harness loaded each `.bin` into executable memory and called its `byte` entry (which uses no privileged instruction) through a register-saving trampoline, with C upcalls recording each event. A Python model of `kbd_next` and `mouse_byte`, with the maps read from `stage8.asm`, gave the reference. **`good`, `hang`, `fault` and `liar` matched the model event for event, stamps included**, on three streams:
+  - item 3's 3,092-byte bench stream (1,216 events);
+  - 20,000 random bytes (4,431 events);
+  - every make and break code plain, shifted and after `E0` (104 events).
+
+  **`wrong` differed only where `q` became `w` or `Q` became `W`** (8, 49 and 2 events). With `init`'s flag set by hand, **`hang` spun on exactly its 100th byte, and `fault` trapped at `+0x1fb` on the stream's first mouse byte**, while `good` ran on. The first run of the check was red everywhere, and the fault was the model's: its map parser cut `';'` at the quoted semicolon. Fixed in the model; the fixtures were not touched.
+
+**For item 15:** a live part cannot write the obs page. So the seed must:
+- centre the pointer before `init`, as `mouse_init` does;
+- keep `OBS_MOUSE_ID` and `OBS_I8042_CMD` truthful itself. `! trial` refuses with `no mouse` when `mouse_id` is 0, so a live part must not leave it at 0.
+
+No ring 8a test exists yet; no guest code changed.
+
 ## Next action
 
-**Ring 8a, item 5:** the five fixtures, `stage8/fixtures/i8042-{good,wrong,
-hang,fault,liar}.{asm,bin}`, by PARTS.md's header, entries and fixture
-table (plan item 5). `good` is the seed's own i8042 code as a part; the
-others follow the table's triggers. Each has a banner stating its fate,
-and each `.bin` is built with `nasm -f bin`. `/clear` first; one commit
-per item. Items 1–4 are done. Carried to item 13, by the owner's decision
-of 25 September 2026: the freeze's directory rule (`rm`, `rmdir`, `mv`,
-`git rm`, `git mv` on the repo root, on a directory holding a frozen
-file, or on a glob covering one), with its shapes in the payload table, 0
-wrong.
+**Ring 8a, item 6:** `stage8/SEED.md` and the seed record (plan item 6,
+decision 12). SEED.md defines:
+- the seed (`stage8/out/BOOTX64.EFI` from a commit, NASM's version named), the rebuild and the hash;
+- the record's line format, `seed <n> <sha256> <bytes> <commit> <yyyy-mm-dd> nasm <version>`;
+- the witness's rule, SHA-256's `abc` answer, and a worked example.
+
+`stage8/seed-record.md`'s seed 0 is item 1's build (`bbf80635…b28cd5`,
+45,056 bytes). `/clear` first; one commit per item. Items 1–5 are done.
+Carried to item 13, by the owner's decision of 25 September 2026: the
+freeze's directory rule, with its shapes in the payload table, 0 wrong.
+Carried to item 15: the pointer's centring, `OBS_MOUSE_ID` and
+`OBS_I8042_CMD` stay the seed's with a part live (item 5).
 
 Earlier — **Ring 7d is CLOSED (25 September 2026), and with it every ring of Stage
 7's order. Next: Stage 8 — the molt**, by the owner's order of 22

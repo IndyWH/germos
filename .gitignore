@@ -37,3 +37,10 @@ germline/
 
 # ...and the committed, frozen point app of ring 6c
 !stage6/pointer.bin
+
+# ...and the five committed fixture parts of ring 8a (stage8/PARTS.md), frozen at item 13
+!stage8/fixtures/i8042-good.bin
+!stage8/fixtures/i8042-wrong.bin
+!stage8/fixtures/i8042-hang.bin
+!stage8/fixtures/i8042-fault.bin
+!stage8/fixtures/i8042-liar.bin
