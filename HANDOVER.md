@@ -3997,6 +3997,26 @@ changes a decision):
 
 No ring 8a test exists yet; no guest code changed.
 
+**Cowork's review of PARTS.md at `30bb0bb`, 26 September 2026:** the five
+details above are accepted as written. **One amendment, applied while
+PARTS.md is still open, as its own commit before item 5.** ABI 3's
+services now refuse, each refusal answering 0, a refused `pci_write32`
+writing nothing:
+- **`map_mmio` refuses a range whose 2 MB pages overlap RAM** as the kept UEFI memory map records it: every descriptor but types 11 and 12. The test is on the 2 MB pages because those are what the service maps. So a part can never get the seed's image back as a writable page, nor undo the image page's read-only 4 KB split.
+- **`pci_write32` refuses every register of the LPC bridge at 00:1f.0.**
+- **`map_mmio` refuses the 2 MB pages that overlap the RCBA window** (RCBA to RCBA + 16 KB, where GCS and `NO_REBOOT` sit).
+- **The PMBASE range is I/O space**, which no ABI 3 service reaches. That is how the review's "PMBASE range" clause is met: with no service for it, rather than a check in one.
+
+`pci_write32` now answers 1 when it writes. **One sentence states the
+honest limit:** a part runs in ring 0, so the refusals guard the floor
+against a part's mistakes, not against a part that means harm. The check
+on grown code is ring 8b's pipeline. Neither the worked examples nor the
+Python block touch these services, so neither changed; the self-check
+still reads 0 wrong. **This is for item 15's implementation:** RCBA's 2 MB
+page, `0xFEC00000`–`0xFEDFFFFF` in the twin, also holds the I/O APIC and
+the HPET, so no part can map those either. No `i8042` part needs any
+MMIO.
+
 ## Next action
 
 **Ring 8a, item 5:** the five fixtures, `stage8/fixtures/i8042-{good,wrong,

@@ -135,14 +135,30 @@ A part touches nothing else the seed owns:
 `RDX` and `RCX`, the result in `RAX`. A service preserves `RBX`, `RBP`,
 `RSP` and `R12`–`R15`.
 
-- **`pci_read32(bdf, reg)`** and **`pci_write32(bdf, reg, value)`**: `bdf` = bus << 16 | device << 11 | function << 8; `reg` a multiple of 4 below 256. Mechanism #1, as the seed reads.
-- **`map_mmio(phys, bytes)`**: maps the 2 MB pages covering the range uncached and answers the address to use (the identity), or 0.
+- **`pci_read32(bdf, reg)`** and **`pci_write32(bdf, reg, value)`**: `bdf` = bus << 16 | device << 11 | function << 8; `reg` a multiple of 4 below 256. Mechanism #1, as the seed reads. `pci_write32` answers 1 when it wrote, and 0 when it refused (below).
+- **`map_mmio(phys, bytes)`**: maps the 2 MB pages covering the range uncached and answers the address to use (the identity), or 0 when it refused (below).
 - **`dma_pages(count)`**: `count` zeroed 4 KB pages below 4 GB, physically contiguous, from the slot's own pool of 16 pages for the boot. It answers the address, or 0 when the pool cannot give them. Pages are never freed.
 - **`ticks_ms()`**: milliseconds since boot, `u64`, monotonic (the seed's `ticks_ms`).
 - **`pit_wait(ms)`**: waits `ms` milliseconds, 1 to 1,000, on the PIT.
 - **`serial_line(ptr, len)`**: writes `part: ` followed by `len` bytes (at most 120, and a byte outside `0x20`–`0x7E` goes as `?`), then CR LF, to the UART **raw**, never through the tee.
 - **`key_event(key, stamp)`**: one decoded key. `key` is exactly what the generic's `kbd_next` returns: a printable with Shift applied, `13` Enter, `8` Backspace, `9` Tab or `0x1B` Esc. `stamp` is the TSC of the byte that completed it.
 - **`mouse_packet(dx, dy, buttons, stamp)`**: one completed packet. `dx` and `dy` are the packet's second and third bytes, sign-extended, with `dy` positive upwards as PS/2 sends it. `buttons` is the first byte's low three bits. `stamp` is the TSC of the packet's first byte.
+
+**What the services refuse** (Cowork's review, 26 September 2026). Each
+refusal answers 0, and a refused `pci_write32` writes nothing.
+
+- **`map_mmio` refuses any range whose 2 MB pages overlap RAM**, as the UEFI memory map the loader kept at ExitBootServices records it. RAM here is every descriptor whose type is neither `EfiMemoryMappedIO` (11) nor `EfiMemoryMappedIOPortSpace` (12). The test is on the 2 MB pages, not only the range asked for, because those pages are what `map_mmio` would map. So a part can never get the seed's image back as a writable page, and can never replace the read-only 4 KB split of the image's 2 MB page with a writable one.
+- **`pci_write32` and `map_mmio` refuse the watchdog's own hardware:**
+  - `pci_write32` refuses every register of the LPC bridge at 00:1f.0, the function whose config space holds PMBASE, RCBA and the ACPI enable;
+  - `map_mmio` refuses any range whose 2 MB pages overlap the RCBA window, RCBA to RCBA + 16 KB, which holds GCS and `NO_REBOOT`;
+  - the PMBASE range (PMBASE to PMBASE + 128, the TCO registers among them) is I/O space, and no ABI 3 service reaches an I/O port at all.
+
+**The honest limit:** a part runs in ring 0, so these refusals guard the
+floor against a part's mistakes, not against a part that means harm. A
+part's own `out` instruction, a write through the seed's identity map or
+a cleared CR0.WP is beyond any service's reach. The check on grown code is
+ring 8b's pipeline: the plan, the twin's rehearsal, the differential
+check and shadow.
 
 **In shadow the part gets a shadow table** at the same offsets:
 - `pci_read32` and `ticks_ms` work;
