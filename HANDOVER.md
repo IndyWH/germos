@@ -4520,6 +4520,56 @@ and puts its stick in place.
 
 No guest code changed in the repository.
 
+**Cowork's review of item 12, with the owner's approval, 27 September
+2026: one amendment to `stage8/PARTS.md` while it is still open**, as its
+own commit before the freeze, as `51fdbf6` was. The owner's decisions on
+the ten choices, in four points:
+1. **The pet and overflows (choice 8).** An overflow of any ring while the boot processor is inside a bounded wait (the wire's TCP poll, the disk's command wait) is counted in the obs page but never blocks the pet. Only an overflow between two main loop turns blocks it. In shadow, a raw-ring overflow ends that boot's comparison at the overflow: no later byte is fed or counted, no later disagreement is noted, and the boot's count notes carry the counts up to it. Live, an overflow loses input as the generic's drop-on-full does.
+2. **The discard after a request (choice 10).** When `finish_line` drops the generic's waiting keys, the seed first feeds the raw ring to the part, then drops both sides' uncompared key events up to that point with no disagreement counted, so the sides start level. The generic's `kbd_e0` reset there stays a stated limit.
+3. **Shadow as two channels (choice 3).** PARTS.md's shadow section states keys and packets, each compared in order, with the frontier rule and the meaning of `<k>` as the draft has them.
+4. **The Esc setup (choice 4).** PARTS.md's Esc section and its boot steps state that the controller setup runs just before `S8: sha256 ok` is printed.
+
+**What PARTS.md now says** (no worked example and no line of its Python
+changed; `parts.py --example` exit 0, every example reproduced):
+- **A new subsection, "Overflows"**, under "Never in interrupt context": the four rings (keyboard, mouse, raw, the live key queue), every overflow counted, and the three consequences above. **A wait runs from its first breath to the main loop's next turn**, so the input a wait held back, handed to a live part when the wait ends, is inside it too.
+- **Where the obs page counts them:** one word, **`molt_overflows` at `0x360`**, written by the boot processor on a boot that loaded a part. The obs page had no overflow counter, so point 1 needed one. That makes it **the sixth sentence PARTS.md supersedes**: TRIALS.md's "the rest of the page, from `0x360`, is zero". With no part loaded the word is never written, so no ring 7d check can see it; the 7c and 7d readers stop at `0x360`.
+- **The pet's condition 5** reads "no ring has overflowed between two main loop turns", and names the live key queue.
+- **Shadow:** sequence numbers and tags, the two channels, the frontiers (the part's last byte fed; the generic's last popped key byte; for packets, the last byte the stub read), in-flight events neither counted nor dropped, and `<k>`: the part's event's place in its own upcalls, keys and packets together, or the place its next upcall would take. W2's `3 k71 k77` is the example.
+- **The discard.** The point is the next raw sequence number, taken inside ring 7d's own `cli` with the drop. **One reading of point 2, for the owner:** every line's Enter reaches `finish_line` before the next turn compares it. Dropping every uncompared key literally would therefore never compare an Enter, and a part that decoded Enter wrongly would pass shadow. So the discard first compares the key pairs both sides already hold, as a turn does (the Enter is among them). It then drops what is left uncompared below the point, with no disagreement. **The stated limit, one clause wider than the decision:** the generic's shift state has the same limit as `kbd_e0`. A shift make or break among the dropped bytes reaches the part's decoder but never the generic's.
+- **The boot's step 1** is now "the controller's minimal setup, then SHA-256's known answer", on every boot with a molt note. Esc's step 1 says where it runs and why (the checker's hold lands with the `sha256 ok` line).
+
+**The checker (test 3, `checkmolt.py`, still open):** during G5's held
+request the synthetic human sends **`HOLD_WIGGLES` = 300 paced moves**. The
+raw ring's size is read from PARTS.md ("a **raw ring** of 256 entries").
+The Enter's break takes one entry, since sendkey holds a key 100 ms and the
+first move comes a key gap later. So the part is given (256 − 1) / 3 = **85
+packets**, and the other 215 are lost: nothing drains the ring during the
+wait. The model's packet count drops by 215, and the pointer model moves for
+the first 85 only. **There must be no reset:** the existing check (no OVMF
+byte during the hold, `S7: alive` once) now names the moves, and a run that
+did not send them fails.
+
+**The draft follows** (`stage8/out/probe8a/draft/`, gitignored scratch).
+It has `note_overflow` at all five overflow sites, and `in_wait` (set by
+`molt_breath` at a wait's breath, cleared by a new `molt_turn` at
+`part_loop`'s turn). It gains `cmp_ended`/`cmp_end` (the stub stops filling
+the raw ring, and the generic's events past the end are not queued) and
+`molt_discard_point` (a twentieth hook, a `call` inside `finish_line`'s
+`cli` that returns at once unless a part is in shadow). `molt_finish`
+gains a shadow branch. **The raw ring now holds all 256 entries**: its
+head and tail run free, where the old ring was full at 255. The draft
+assembled first time: 57,344 bytes, SHA-256 `4349269805b43808…`.
+
+| Run | Result |
+|---|---|
+| **Disk G alone, the new clause, on the unamended draft** (`1d5f495b…`; `stage8/out/probe8a/draft/run-G-before-amend.txt`) | **red, as it should be:** G1–G4 green; at G5 the 300 moves overflowed the raw ring during the hold, the pet stopped, and the watchdog reset the machine at +77.3 s. The next boot printed `molt: i8042 demoted 4fe6beefc4bc57d0 watchdog` and `S8: recovery i8042 watchdog`: `the held answer never landed in the conversation within 70 s` |
+| **`checkmolt.py --fates` on the amended draft** (`stage8/out/gate-8a.log` from line 2478, headed `commit 722216f+uncommitted`) | **`the fates: G ok, W ok, H ok, F ok, L ok in 851.8 s`**. G5: `'? hold' answered 60.4 s after its Enter (HOLD_S 60), 300 moves during it (85 packets kept), with no reset`, and the undo and the take after it are right, with their count notes by the model. W2 still gives `disagreements 1`; H3's reset 30.2 s and F3's 31.0 s after the trigger; the recovery 0.8 s after OVMF's first byte |
+
+**Cleanup:** `stage8/out/stick.img` and `BOOTX64.EFI` are rebuilt from the
+repository's source: 45,056 bytes, `bbf80635…`, seed 0's. The draft keeps
+its amended sources, and `build.sh --install` builds them. The unamended
+build is in `draft/b/` and the amended one in `draft/b2/`.
+
 ## Next action
 
 **Ring 8a, item 13:** freeze the acceptance machinery (plan item 13).
@@ -4530,12 +4580,18 @@ No guest code changed in the repository.
 
 Expected at commit: tests 1–2 green; test 3 red by design (the repository's binary has no molt words yet); **test 4 red on (c)'s loader clause alone**, with the payload table 0 wrong and the 7d gate green inside it.
 
-`/clear` first; one commit per item. Items 1–12 are done. **Open to
-Cowork's review until the freeze:** item 10's eight choices, item 11's one,
-and item 12's two checker fixes (the checker is frozen at item 13).
+`/clear` first; one commit per item. Items 1–12 are done, and so is
+Cowork's review of item 12 (the owner's amendment to PARTS.md, the G5
+wiggle clause, the draft following; the fates green on the draft).
+**Open to Cowork's review until the freeze:** item 10's eight choices,
+item 11's one, and item 12's two checker fixes (the checker is frozen at
+item 13). The amendment's one reading (the discard compares the pairs
+first, so the Enter is compared), the shift-state clause of the limit,
+and `molt_overflows` at `0x360` (the sixth superseded sentence) are open
+to the owner's word before the freeze.
 **Carried to items 14–16:** the draft in `stage8/out/probe8a/draft/`
-(never wipe `stage8/out/probe8a/`), and item 12's ten choices in it (open to
-Cowork's review before item 14 brings the first of it in). Carried to item
+(never wipe `stage8/out/probe8a/`), with item 12's ten choices settled by
+the owner's four points. Carried to item
 15 as well: the pointer's centring, `OBS_MOUSE_ID` and `OBS_I8042_CMD` with a
 part live (item 5; item 12's choice 7).
 

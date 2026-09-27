@@ -15,13 +15,14 @@ typed into a test.
 Everything NOTEBOOK.md, GERMLINE.md, GLASS.md (with its 6c and 7d
 sections), HOME.md, DISK.md, WIRE.md and TRIALS.md say still stands,
 except the sentences below that this document supersedes. **It supersedes
-five sentences:**
+six sentences:**
 
 1. **HOME.md, line twelve:** "**N**, the number of valid entries, is line twelve". From this ring on, N counts the valid entries whose names do **not** begin `part-`. A part is not an app.
 2. **HOME.md, the choices row:** "the **first three valid entries in table order**". It now reads the first three valid entries whose names do not begin `part-`.
 3. **HOME.md, what a `!` line does:** a body that begins `part-`, whether alone or after `undo install `, is answered by the machine before the home lookup and before the broker. The console says **`<name> is a part`**, where `<name>` is the word beginning `part-`. One is counted in `errors`, nothing is sent, nothing is launched and nothing is swapped. A part is never launched as an app, and its builds change only through the `! molt` words. Separately, a `!` body that is exactly `molt` or begins `molt ` goes to the molt words below, before the home lookup and before the broker, as `trial` does.
 4. **GLASS.md, the wire:** an app frame whose name begins `part-` is not run: `bad component frame`. So no app can ever be installed over a part's home entry.
 5. **NOTEBOOK.md, what becomes a note:** a typed line whose first five bytes are `molt ` is never a note. It is refused with **`molt is reserved`**, one is counted in `errors`, and nothing is journaled. The journal's `molt ` prefix belongs to the machine alone, as `trial ` does (GLASS.md's 7d section).
+6. **TRIALS.md, the obs page:** "the rest of the page, from `0x360`, is zero". On a boot that loaded a part, the word at `0x360` is **`molt_overflows`**, written by the boot processor: the ring overflows this boot (below, "Overflows"). On a boot that loaded none it is never written, so it stays zero.
 
 **With no `molt` note on the notebook, the machine is ring 7d's to the
 line and to the pixel.** The loader reads the notebook at every boot. When
@@ -181,7 +182,15 @@ loader's boot path, never from an interrupt handler:
 - **A part in shadow:** the stub does all it does today. It also appends `(status, byte, stamp)` to a **raw ring** of 256 entries. The main loop feeds every entry to the part's `byte`, **before it takes the generic's next key**.
 - **A part live:** the stub appends to the raw ring and does nothing else. The generic's decoder does not run, and the main loop feeds the part.
 
-A raw entry dropped because the ring was full counts as an **overflow**.
+### Overflows
+
+An **overflow** is an entry dropped because its ring was full: the
+keyboard ring, the mouse ring, the raw ring, or the queue a live part's
+keys wait in for the main loop. Every overflow is counted in the obs
+page's `molt_overflows`. Then:
+- **The pet.** An overflow while the boot processor is inside a bounded wait (the wire's TCP poll, the disk's command wait) never blocks the pet. Only an overflow between two main loop turns blocks it (the watchdog's condition 5, below). A wait is entered at its first breath and left at the main loop's next turn, so the input a wait held back, handed on when the wait ends, is inside it too.
+- **In shadow, a raw-ring overflow ends that boot's comparison at the overflow.** No later byte is fed to the part or counted, no later disagreement is noted, and the boot's count notes carry the counts up to it. The bytes before it are still fed and compared as below. The generic serves the rest of the boot as ring 7d's.
+- **Live**, an overflow loses input, as the generic's drop-on-full does. The ring's entries are kept, and what came after them while the ring was full is gone.
 
 **With a part loaded, the main loop polls instead of halting**, as it does
 while an app runs. There is no timer interrupt, and the spec rules one
@@ -381,17 +390,56 @@ again before a take.
 
 ## Shadow: the events and the comparison
 
-In shadow, both decoders see the same bytes in the same order:
+In shadow, both decoders see the same bytes in the same order. Every byte
+the stub reads has a **sequence number** this boot, in the order it was
+read.
 - **The generic's events** are observed where they leave it: each key `kbd_next` returns, and each packet `mouse_byte` completes.
 - **The part's events** are its upcalls.
-- The two sequences are **compared in order**: the generic's *k*-th event this boot against the part's *k*-th. Stamps are never compared.
+- Each event is **tagged** with the sequence number of the byte that completed it.
+
+**Two channels, keys and packets, each compared in order:** the generic's
+*k*-th key this boot against the part's *k*-th key, and the generic's
+*k*-th packet against the part's *k*-th packet. Stamps are never compared,
+and neither is the order of a key against a packet. The generic's keys
+leave it in the main loop and its packets in the interrupt handler, so a
+single merged sequence would make a correct part disagree whenever a
+packet completed while a key waited in the ring.
 
 **The comparison** runs at every main loop turn, over the positions both
-sides have reached. A position where the two events differ is **one
-disagreement**. At each **count point** (the health mark and each `! molt`
-word), the raw ring is first drained into the part. Then every event one
-side has beyond the other's last is one more disagreement, and those
-extra events are dropped, so the two sides start level again.
+sides have reached on each channel. A position where the two events
+differ is **one disagreement**. At each **count point** (the health mark
+and each `! molt` word), the raw ring is first drained into the part.
+Then, on each channel, an event one side has beyond the other's last is
+one more disagreement, and is dropped, **once both sides have taken its
+byte**: once its tag is below both sides' **frontiers**. So the two sides
+start level again.
+- **A side's frontier** is one past the sequence number of the last byte it has taken. The part's is its last raw entry fed. The generic's for keys is the last byte `kbd_next` popped; for packets, the last byte the stub read, since `mouse_byte` takes each byte as it arrives.
+- **An event whose byte one side has not yet taken** is input still in flight. It is neither counted nor dropped, and waits for the next count point.
+
+**`<k>` in a disagree note** is the position, from 1, of the part's event
+in the part's own sequence of upcalls this boot, keys and packets
+together in the order it made them. Where the part has no event (the
+generic's extra), `<k>` is the position the part's next upcall would
+take. So a boot whose third key is `q`, with no packet before it, gives
+`wrong`'s `molt i8042 disagree <n> 3 k71 k77`.
+
+**The discard after a request.** When `finish_line` drops the generic's
+waiting keys (ring 7d's discard after a line), the point is the sequence
+number of the next byte the stub will read, taken with the drop. The seed
+first feeds the raw ring to the part, and compares the key pairs both
+sides have reached, as a main loop turn does: the line's own Enter is
+among them. Then it drops both sides' key events left uncompared below
+that point, with no disagreement counted, and the generic's key frontier
+moves to the point, so the sides start level. Packets are not touched:
+the generic's packet events were made as their bytes arrived. **A stated limit:** the discard also resets
+the generic's `E0` state (`kbd_e0`), and a shift make or break among the
+dropped bytes never reaches the generic's shift state, while the part
+decoded every one of those bytes. Its decoder state after the discard can
+therefore differ from the generic's, and a key that follows can disagree.
+The gate never meets it.
+
+**An overflow of the raw ring ends the comparison** for the rest of the
+boot (above, "Overflows").
 
 **The counts per boot**, for a slot in shadow:
 - **keyboard bytes**: bytes with status bit 5 clear handed to the part;
@@ -446,7 +494,7 @@ init**: the `i8042:` pair or the part's `part:` pair. Until `S7: keyboard
 ready`, the `S8:` lines go through the tee as boot-log lines, and the
 `molt:` mirror lines go raw.
 
-1. **SHA-256's known answer**: the digest of `abc` must be `ba7816bf…f20015ad` (below). Pass: `S8: sha256 ok`. Fail: `ERR: sha256 known answer`, and the boot is the seed's alone. It loads no part, journals nothing, arms nothing, and prints no further `S8:` line.
+1. **The controller's minimal setup, then SHA-256's known answer.** The setup (Esc's step 1, below) runs first, just before `S8: sha256 ok` is printed, so a hold sent when that line lands is never drained. Then the digest of `abc` must be `ba7816bf…f20015ad` (below). Pass: `S8: sha256 ok`. Fail: `ERR: sha256 known answer`, and the boot is the seed's alone. It loads no part, journals nothing, arms nothing, and prints no further `S8:` line.
 2. **The evidence**: `TCO2_STS.SECOND_TO_STS` is read, then cleared (below).
 3. **The recovery decision** (the table below). A recovery journals its notes and prints its line, and no part loads.
 4. **Esc** (below), if a slot is in shadow or live. The console draws `hold Esc for the seed`, and the window runs. Esc held: `molt recovery owner`, `S8: recovery owner`, and no part loads.
@@ -507,7 +555,7 @@ of these have held since the last pet:
 2. `OBS_FRAMES` has moved;
 3. no exception has been taken (a flag `exc_common` sets);
 4. every live part's `health()` answered 0;
-5. the seed's outside check of each loaded slot agrees. For `i8042`: the status byte at `0x64` reads neither `0xFF` nor with bit 6 or bit 7 set, and no ring has overflowed (the keyboard ring, the mouse ring, the raw ring).
+5. the seed's outside check of each loaded slot agrees. For `i8042`: the status byte at `0x64` reads neither `0xFF` nor with bit 6 or bit 7 set, and no ring has overflowed between two main loop turns (the keyboard ring, the mouse ring, the raw ring, the live key queue). An overflow inside a bounded wait is counted in `molt_overflows` and does not count here ("Overflows", above).
 
 It rate-limits itself: **at most one reload per 1,000 ms by the TSC**.
 
@@ -516,7 +564,8 @@ every main loop turn and at every breath of a bounded wait: the wire's TCP
 poll and the disk's command wait. **The pet routine is called at every
 one of those points.** So a broker wait longer than the deadline keeps the
 machine alive, while a part hung in the main loop stops both the
-heartbeat and the pet.
+heartbeat and the pet. Input that fills a ring during such a wait keeps
+it alive too: that overflow is counted but never blocks the pet.
 
 **Two waits longer than the deadline pass with no reset:**
 - a broker request held for **`HOLD_S` = twice the deadline = 60 s**;
@@ -572,10 +621,11 @@ do there, and it is not a criterion.
 
 ## Esc at power-on
 
-The owner's way back needs no command. It runs only on a boot that has a
-part to load (step 4), after the console is up and before the handover:
+The owner's way back needs no command. Its window runs only on a boot that
+has a part to load (step 4), after the console is up and before the
+handover:
 
-1. **The loader's own minimal setup first (A3).** Wait for the input buffer to empty, write `0xAE` (enable port 1), and drain the output buffer. Nothing depends on the state the firmware left the controller in.
+1. **The loader's own minimal setup first (A3).** Wait for the input buffer to empty, write `0xAE` (enable port 1), and drain the output buffer. Nothing depends on the state the firmware left the controller in. **The setup runs at step 1 of the boot, just before `S8: sha256 ok` is printed**, on every boot with a molt note, not just before the window. The checker sends its hold when that line lands, and a drain after it could eat the make. The window (steps 2 to 6 here) still opens after the boot's steps 2 and 3.
 2. Draw **`hold Esc for the seed`** on the console, and on the console alone.
 3. Poll ports `0x64`/`0x60` for a window of **W = 3,000 ms by the TSC**. W is a human's window, pre-registered here; the owner may change it at approval.
 4. Discard bytes with status bit 5 set.

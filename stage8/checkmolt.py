@@ -27,7 +27,8 @@ Modes (all from the repo root, invoked by stage8/test-8a.sh):
                five disks, each booted blank and given a ring-7d-like
                notebook from the host: G (good: the install, three shadow
                boots, the take, live with a held request and the idle
-               wait, the undo, Esc, live again), W (wrong: the
+               wait - 300 paced moves during the hold, more than the raw
+               ring holds, and no reset - the undo, Esc, live again), W (wrong: the
                disagreement, the take refused), H (hang in good's place:
                the watchdog's reset and the recovery), F (fault: the blame
                line, the reset and the recovery) and L (liar: the torn
@@ -472,6 +473,8 @@ POLL_S = 0.01           # the serial file's poll
 ASK_POLL_S = 1.0        # the conversation's poll while a held answer is awaited
 MOVE_S = 0.02           # between the moves that take the hand to a target (7d's pace)
 DRAIN_EVERY = 64        # monitor commands between two drains of its output (a full pipe stalls the monitor)
+HOLD_WIGGLES = 300      # G5: the moves during the held request, more than PARTS.md's raw ring holds (the owner's
+                        # decision on Cowork's review of item 12: an overflow inside a bounded wait never blocks the pet)
 
 # Typed texts never carry a colon, so a line of ring 8a's own is never in
 # an echo, and none begins "molt " or "trial " or carries a q (W's note
@@ -562,7 +565,8 @@ class Human8a:
     "serial") plus ring 8a's: ("ready", label), ("keys", text[, label]),
     ("wiggle", n[, label]), ("click", kind, arg), ("mark", label),
     ("await", regex, s, label, since), ("banner", s, label, since),
-    ("hold_esc", ms), ("sleep_since", label, s), ("ask_held", label).
+    ("hold_esc", ms), ("sleep_since", label, s), ("ask_held", label[,
+    moves, kept]).
     ("flip", disk, offset) is the host's, between boots (flip())."""
 
     def __init__(self, parts_mod):
@@ -570,6 +574,7 @@ class Human8a:
         self.reads = {"at": {}, "marks": {}, "segments": [0]}
         self.events = []
         self.kb = 0
+        self.lost = 0            # packets the raw ring's overflow lost (G5's held request)
         self.offset = 0
         self.model = None
         self.geometry = None
@@ -616,7 +621,7 @@ class Human8a:
         return trials.parse_obs_7d(self.drv.xp(self.obs_addr, trials.OBS_PAGE_BYTES_7D // 8, "g"))
 
     def counts(self):
-        return {"kb": self.kb, "packets": expected_counts(self.events)["packets"],
+        return {"kb": self.kb, "packets": expected_counts(self.events)["packets"] - self.lost,
                 "pos": len(self.drv.serial_bytes()), "t": time.time()}
 
     # -- the steps
@@ -709,18 +714,33 @@ class Human8a:
         elif k == "serial":
             self.reads[s[1]] = self.drv.serial_bytes()
         elif k == "ask_held":
-            return self.ask_held(s[1])
+            return self.ask_held(*s[1:])
         else:
             return "unknown step %r" % (s,)
         return None
 
-    def ask_held(self, label):
+    def ask_held(self, label, moves=0, kept=0):
         """A1: "? hold" and Enter, the host time of the Enter, then the
         conversation polled until the answer lands and the prompt is back;
-        the elapsed wait and the serial positions go to the reads."""
+        the elapsed wait and the serial positions go to the reads. With
+        `moves`, that many paced wiggles are sent while the request is held:
+        nothing drains the raw ring during the wait, so the part is given
+        the first `kept` packets when the wait ends and the rest are lost,
+        as the generic's drop-on-full loses them (PARTS.md, "Overflows")."""
         pos0 = len(self.drv.serial_bytes())
         self.step(("keys", "? hold\n", label + "_enter"))
         t0 = self.reads["at"][label + "_enter"]
+        for i in range(moves):
+            dx = 1 if i % 2 == 0 else -1
+            self.tell(b"mouse_move %d 0\n" % dx)
+            if self.model and i < kept:
+                self.model.move(dx, 0)
+            self.events.append(("mouse", dx, 0))
+            time.sleep(WIGGLE_PACE_S)
+        if moves:
+            self.lost += moves - kept
+            self.drv._drain()
+            self.reads[label + "_moves"] = (moves, kept)
         limit = t0 + self.parts.HOLD_S + HOLD_SLACK_S
         while time.time() < limit:
             time.sleep(ASK_POLL_S)
@@ -889,6 +909,7 @@ class Fates:
         self.identity = re.search(r"The twin's identity is `(cpu [0-9a-f]{8} pci [0-9a-f]{4}:[0-9a-f]{4}:[0-9a-f]{2})`",
                                   text).group(1)                        # PARTS.md's worked example, D4's run
         self.esc_hold_ms = int(re.search(r"The checker's hold, `sendkey esc (\d+)`", text).group(1))   # D4's
+        self.raw_entries = int(re.search(r"a \*\*raw ring\*\* of (\d+) entries", text).group(1))
         self.part_pair = ["part: %s %s" % (SLOT, l.split(": ", 1)[1]) for l in checkmetal.I8042_LINES]
         self.timings = []
 
@@ -1231,7 +1252,11 @@ class Fates:
                  ("keys", note + "\n"), ("click", "key", ord("!")), ("mark", "w1"), ("keys", " molt\n"),
                  ("sleep", WORD_S), ("surfaces", "w1")]
         if held:
-            steps += [("ask_held", "held")]
+            # The wiggle during the hold: the raw ring holds raw_entries, and the
+            # Enter's break takes one of them (sendkey holds a key 100 ms, and the
+            # first move comes a key gap after the Enter), so the part is given
+            # (raw_entries - 1) // 3 whole packets and the rest are lost.
+            steps += [("ask_held", "held", HOLD_WIGGLES, (self.raw_entries - 1) // 3)]
         for i, w in enumerate(words, 2):
             steps += [("mark", "w%d" % i), ("keys", "! %s\n" % w), ("sleep", WORD_S), ("surfaces", "w%d" % i)]
         reads, problems = self.boot(disk, tag, steps, fate=fate if held else None,
@@ -1272,7 +1297,10 @@ class Fates:
                 if waited < self.p.HOLD_S:
                     problems.append("%s: the held answer landed %.1f s after the Enter, under HOLD_S %d" % (tag, waited, self.p.HOLD_S))
                 if OVMF_START in cap[h["pos0"]:h["pos1"]] or cap.count(b"S7: alive") != 1:
-                    problems.append("%s: the machine reset during the held request" % tag)
+                    problems.append("%s: the machine reset during the held request%s"
+                                    % (tag, " and its %d moves" % HOLD_WIGGLES if reads.get("held_moves") else ""))
+                if reads.get("held_moves") != (HOLD_WIGGLES, (self.raw_entries - 1) // 3):
+                    problems.append("%s: the held request's %d moves were not sent" % (tag, HOLD_WIGGLES))
                 try:
                     entries = [json.loads(l) for l in open(reads["record"]).read().splitlines() if l.strip()]
                 except (OSError, ValueError) as exc:
@@ -1287,7 +1315,9 @@ class Fates:
             say("%s: live %s, boot %d: the part's pair, idle to 'S8: healthy %d' with no reset; a note and a click "
                 "through the part; the table %r%s%s"
                 % (tag, build, n, n, table,
-                   "; '? hold' answered %.1f s after its Enter (HOLD_S %d) with no reset" % (reads["held"]["t1"] - reads["held"]["t0"], self.p.HOLD_S) if held else "",
+                   "; '? hold' answered %.1f s after its Enter (HOLD_S %d), %d moves during it (%d packets kept), "
+                   "with no reset" % (reads["held"]["t1"] - reads["held"]["t0"], self.p.HOLD_S, HOLD_WIGGLES,
+                                      (self.raw_entries - 1) // 3) if held else "",
                    "; %s" % "; ".join("%r -> %r" % (w, a) for w, a in zip(words, answers)) if words else ""))
         return ok
 
