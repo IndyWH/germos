@@ -7,7 +7,9 @@
 ; paging with the image's 2 MB page split so that the whole of .text is
 ; read-only (CR0.WP on every core), the IDT, the disk's read path, SHA-256,
 ; and their constants. The loader's file is frozen at item 16b; this one is
-; not. Built with:  nasm -f bin stage8/stage8.asm -o stage8/out/BOOTX64.EFI
+; not. Item 15 added the molt's seed half (stage8/PARTS.md): the slot's
+; services and upcalls, the raw ring, shadow's comparison, the polled loop
+; with a part loaded, and the four words. Built with:  nasm -f bin stage8/stage8.asm -o stage8/out/BOOTX64.EFI
 ; from the repo root (stage8/mkimage.sh), which the include path assumes.
 ; Stage 7's text follows.
 ;
@@ -632,6 +634,146 @@ org 0                           ; file offsets == RVAs
 %define FILE_ALIGN      0x1000
 
 ; ---------------------------------------------------------------------------
+; The molt (stage8/PARTS.md), ring 8a - its constants, above the loader's
+; include (NASM's %define is positional).
+; ---------------------------------------------------------------------------
+%macro SAVE_ALL 0
+        push    rax
+        push    rbx
+        push    rcx
+        push    rdx
+        push    rsi
+        push    rdi
+        push    rbp
+        push    r8
+        push    r9
+        push    r10
+        push    r11
+        push    r12
+        push    r13
+        push    r14
+        push    r15
+%endmacro
+%macro RESTORE_ALL 0
+        pop     r15
+        pop     r14
+        pop     r13
+        pop     r12
+        pop     r11
+        pop     r10
+        pop     r9
+        pop     r8
+        pop     rbp
+        pop     rdi
+        pop     rsi
+        pop     rdx
+        pop     rcx
+        pop     rbx
+        pop     rax
+%endmacro
+
+%define SLOT_N          1               ; the slot table: i8042 alone
+%define SLOT_I8042      0
+
+; A part ("A part")
+%define PART_MAX        65536
+%define PART_HDR        96
+%define PH_ABI          4
+%define PH_SLOT         8
+%define PH_BODY         16
+%define PH_INIT         20
+%define PH_BYTE         24
+%define PH_HEALTH       28
+%define PH_NAME         32
+%define PH_SHA          48
+%define PART_ABI        3
+
+; The part frame ("The request and the part frame"): at +28 of the
+; component region the length prefix, the 32-byte header at +32, the part
+; at +64.
+%define PF_KIND         0x03
+%define PF_HDR          32
+%define PF_PART_OFF     64
+%define PFH_ABI         1
+%define PFH_SOURCE      2
+%define PFH_LEN         4
+%define PFH_BOOTS       8
+%define PFH_KEYS        12
+%define PFH_PACKETS     16
+
+; A slot's state
+%define ST_GENERIC      0
+%define ST_SHADOW       1
+%define ST_LIVE         2
+%define ST_DEMOTED      3
+%define WHY_WATCHDOG    1
+%define WHY_UNHEALTHY   2
+
+; The scan's per-slot record
+%define ACC_MAX         4
+%define BLD_MAX         8
+%define AC_BUILD        0               ; 16 hex
+%define AC_BOOTS        16
+%define AC_KEYS         20
+%define AC_PK           24
+%define AC_D            28
+%define AC_PKEYS        32              ; the pending boot's last count note
+%define AC_PPK          36
+%define AC_PD           40
+%define AC_SBOOT        44              ; the last shadow boot's number
+%define AC_LBOOT        48              ; the last live boot's number
+%define AC_HBOOT        52              ; the live boot whose healthy note counted
+%define AC_PROB         56
+%define ACC_SIZE        64
+%define BD_BUILD        0
+%define BD_THR          16              ; boots, keys, packets
+%define BD_BKIND        28              ; the state before its last install
+%define BD_BWHY         29
+%define BD_BBUILD       32
+%define BLD_SIZE        48
+%define SS_KIND         0
+%define SS_WHY          1
+%define SS_START        2
+%define SS_NACC         3
+%define SS_NBLD         4               ; u32, round robin
+%define SS_BUILD        8
+%define SS_ACC          24
+%define SS_BLD          (SS_ACC + ACC_MAX * ACC_SIZE)
+%define SS_SIZE         (SS_BLD + BLD_MAX * BLD_SIZE)
+
+; The obs page's one ring 8a word (the sixth sentence PARTS.md supersedes)
+%define OBS_MOLT_OVF    0x360
+
+; The raw ring ("Never in interrupt context"): 256 entries, all usable -
+; its head and tail run free, and an index is their low byte
+%define RAW_N           256
+%define RAW_ENTRY       16
+%define RW_STATUS       0
+%define RW_DATA         1
+%define RW_FLAGS        2               ; bit 0: the byte completed a generic packet
+%define RW_SEQ          4
+%define RW_STAMP        8
+
+; The comparison's queues, 256 entries of 16 bytes: u8 key or dx, i8 dy,
+; u8 buttons, u8 kind, u32 tag (the raw sequence number that completed it),
+; u32 its position
+%define EQ_N            256
+%define EQ_KEY          0
+%define EQ_DY           1
+%define EQ_B            2
+%define EQ_KIND         3               ; 0 a key, 1 a packet
+%define EQ_TAG          4
+%define EQ_K            8               ; its position this boot
+%define EQ_ENTRY        16
+%define LKQ_N           64              ; the live key queue: u8 key, u64 stamp
+
+%define LPC_BDF         (31 << 11)      ; 00:1f.0, the i8042 slot's identity
+%define DISAGREE_NOTES  16
+%define PROBATION       3
+%define DMA_POOL_PAGES  16
+%define PIT_1MS         1193
+
+; ---------------------------------------------------------------------------
 ; DOS header. Only two fields matter to a UEFI loader: the 'MZ' magic, and
 ; e_lfanew at 0x3C pointing at the PE header.
 ; ---------------------------------------------------------------------------
@@ -761,11 +903,14 @@ seed_main:
 
         lea     rsi, [msg_kbd]          ; line thirteen; after this the channel
         call    serial_puts             ; carries only the raw echo
+        call    molt_ready              ; ring 8a: S8: lines raw from here
 
         ; The machine's memory, drawn on the console - and only the console -
         ; immediately above the first prompt (plan decisions 2 and 3).
         call    notebook_replay
         call    console_prompt
+        cmp     dword [part_loaded], 0  ; ring 8a: a part loaded, the loop polls
+        jne     part_loop
 
         ; -------------------------------------------------------------------
         ; The main loop - the screen's one owner. The interrupt handler only
@@ -915,7 +1060,16 @@ handle_key:
         je      .request
         call    line_is_reserved        ; A1: a line beginning "trial " is never a
         test    eax, eax                ; note - the journal's prefix is the machine's
+        jnz     .reserved
+        call    line_is_molt            ; ring 8a: nor "molt "
+        test    eax, eax
         jz      .journal
+        lea     rsi, [msg_molt_reserved]
+        call    console_puts
+        inc     qword [obs_page + OBS_ERRORS]
+        mov     dword [line_len], 0
+        jmp     finish_line
+.reserved:
         lea     rsi, [msg_reserved]
         call    console_puts
         inc     qword [obs_page + OBS_ERRORS]
@@ -2471,7 +2625,10 @@ home_recount:
         jz      .next
         lea     rax, [home_valid]
         mov     byte [rax + r12], 1
+        call    is_part_entry           ; ring 8a: a part is not an app
+        je      .counted
         inc     dword [home_count]
+.counted:
         lea     rdi, [rsi + HE_CUR]
         call    .extend
         lea     rdi, [rsi + HE_PREV]
@@ -2855,6 +3012,11 @@ body_is_install:
 bang_line:
         test    ecx, ecx
         jz      grow_request                    ; "nothing to grow"
+        call    body_ours                       ; ring 8a: the molt words, a part's name
+        cmp     eax, 1
+        je      molt_word
+        cmp     eax, 2
+        je      part_refused
         cmp     ecx, 5                          ; "trial" alone: the reserved word
         jne     .not_trial                      ; (TRIALS.md, "A sitting, step by step")
         push    rsi
@@ -5111,6 +5273,11 @@ grow_request:
         call    app_valid               ; RSI = the content, ECX = N
         test    eax, eax
         jz      .bad
+        cmp     dword [rsi + APPH_NAME], 'part'     ; ring 8a: never over a part
+        jne     .not_part
+        cmp     byte [rsi + APPH_NAME + 4], '-'
+        je      .bad
+.not_part:
         cmp     byte [rsi + APPH_INSTALLED], 1
         jne     .run
         call    home_install            ; kept on the home image first (HOME.md)
@@ -5461,6 +5628,14 @@ choices_update:
         lea     rax, [home_valid]
         cmp     byte [rax + r8], 0
         je      .prompt_next
+        push    rsi                     ; ring 8a: a part is not on the row
+        lea     rsi, [home_table]
+        mov     eax, r8d
+        shl     eax, 8
+        add     rsi, rax
+        call    is_part_entry
+        pop     rsi
+        je      .prompt_next
         mov     eax, '   '              ; three spaces between items
         stosw
         mov     al, ' '
@@ -5766,7 +5941,9 @@ finish_line:
         mov     dword [kbd_e0], 0
         mov     eax, [mse_head]         ; presses made while the machine was
         mov     [mse_tail], eax         ; busy are dropped like those keys
+        call    molt_discard_point      ; ring 8a: shadow's discard point
         sti
+        call    molt_finish             ; ring 8a: the part's side of the discard
         call    console_prompt
         ret
 
@@ -8189,6 +8366,1969 @@ find_madt:
 .found:
         ret
 
+; ============================================================================
+; The molt, the seed's half (ring 8a item 15; stage8/PARTS.md): the
+; notebook's machine writer, ABI 3's services and upcalls, the stubs that
+; feed the raw ring, the polling main loop with a part loaded, shadow's
+; comparison and its counts, and the four words. The loader's half - the
+; scan, the known answer, the door, check_part and part_call - is in
+; stage8/loader.asm. Everything a part is given, and everything its upcalls
+; write, is here in the seed's BSS, never in LOADER_STATE.
+; ============================================================================
+
+; nb_write - RSI = a note's text, ECX = its length (1..500): the next
+; record on the notebook, written through (NOTEBOOK.md's record; the line
+; buffer untouched, so a note the machine writes never takes a line being
+; typed). A full journal drops it. Preserves everything.
+nb_write:
+        SAVE_ALL
+        test    ecx, ecx
+        jz      .out
+        mov     ebx, [nb_next]
+        cmp     ebx, [disk_sectors]
+        jae     .out
+        push    rcx
+        push    rsi
+        lea     rdi, [rec_buf]
+        mov     ecx, 64
+        xor     eax, eax
+        rep     stosq
+        pop     rsi
+        pop     rcx
+        mov     dword [rec_buf], 'NOTE'
+        mov     eax, [nb_count]
+        inc     eax
+        mov     [rec_buf + 4], eax
+        mov     [rec_buf + 8], cx
+        lea     rdi, [rec_buf + NB_TEXT_OFF]
+        rep     movsb
+        mov     eax, VBLK_T_OUT
+        lea     rdi, [rec_buf]
+        call    disk_rw
+        inc     dword [nb_count]
+        inc     dword [nb_next]
+        mov     eax, [nb_count]
+        mov     [obs_page + OBS_NOTES], rax
+.out:
+        RESTORE_ALL
+        ret
+
+; molt_note - RSI = a NUL-terminated molt note: journaled, then its mirror
+; on the UART raw, "molt:" and the note from its fifth byte (PARTS.md, "The
+; notes"). Preserves everything.
+molt_note:
+        SAVE_ALL
+        mov     rdi, rsi
+        xor     ecx, ecx
+.len:   cmp     byte [rdi + rcx], 0
+        je      .have
+        inc     ecx
+        jmp     .len
+.have:
+        call    nb_write
+        lea     rdi, [mirror_buf]
+        mov     dword [rdi], 'molt'
+        mov     byte [rdi + 4], ':'
+        add     rdi, 5
+        add     rsi, 4
+        call    str_copy
+        mov     byte [rdi], 13
+        mov     byte [rdi + 1], 10
+        mov     byte [rdi + 2], 0
+        lea     rsi, [mirror_buf]
+        call    serial_raw_puts
+        RESTORE_ALL
+        ret
+
+; pointer_centre - mouse_init's first lines: the pointer at the screen's
+; centre. With a part live the seed centres it itself before the part's
+; init, since mouse_init does not run.
+pointer_centre:
+        mov     eax, [fb_width]
+        shr     eax, 1
+        mov     [obs_page + OBS_PTR_X], rax
+        mov     edx, [fb_height]
+        shr     edx, 1
+        mov     [obs_page + OBS_PTR_Y], rdx
+        shr     rdx, 4
+        shl     rdx, 16
+        shr     rax, 4
+        or      rdx, rax
+        mov     [obs_page + OBS_PTR_CELL], rdx
+        ret
+
+; ------------------------------------------------------ ABI 3's tables --
+
+; svc3_fill - the live and shadow tables, from RIP-relative leas.
+svc3_fill:
+        lea     rdi, [svc3_live]
+        mov     dword [rdi], PART_ABI
+        mov     dword [rdi + 4], 80
+        lea     rax, [svc_pci_read32]
+        mov     [rdi + 8], rax
+        lea     rax, [svc_pci_write32]
+        mov     [rdi + 16], rax
+        lea     rax, [svc_map_mmio]
+        mov     [rdi + 24], rax
+        lea     rax, [svc_dma_pages]
+        mov     [rdi + 32], rax
+        lea     rax, [svc_ticks_ms]
+        mov     [rdi + 40], rax
+        lea     rax, [svc_pit_wait]
+        mov     [rdi + 48], rax
+        lea     rax, [svc_serial_line]
+        mov     [rdi + 56], rax
+        lea     rax, [up_key_live]
+        mov     [rdi + 64], rax
+        lea     rax, [up_mouse_live]
+        mov     [rdi + 72], rax
+        lea     rdi, [svc3_shadow]
+        mov     dword [rdi], PART_ABI
+        mov     dword [rdi + 4], 80
+        lea     rax, [svc_pci_read32]
+        mov     [rdi + 8], rax
+        lea     rax, [svc_nop]
+        mov     [rdi + 16], rax
+        mov     [rdi + 24], rax
+        mov     [rdi + 32], rax
+        mov     [rdi + 48], rax
+        mov     [rdi + 56], rax
+        lea     rax, [svc_ticks_ms]
+        mov     [rdi + 40], rax
+        lea     rax, [up_key_shadow]
+        mov     [rdi + 64], rax
+        lea     rax, [up_mouse_shadow]
+        mov     [rdi + 72], rax
+        ret
+
+svc_nop:
+        xor     eax, eax
+        ret
+
+; pci_read32(bdf, reg)
+svc_pci_read32:
+        push    rbx
+        mov     ebx, edi
+        and     ebx, 0x00FFFF00
+        mov     ecx, esi
+        and     ecx, 0xFC
+        call    pci_cfg_read32
+        pop     rbx
+        ret
+
+; pci_write32(bdf, reg, value): 1 written, 0 refused (the LPC bridge)
+svc_pci_write32:
+        push    rbx
+        mov     ebx, edi
+        and     ebx, 0x00FFFF00
+        cmp     ebx, LPC_BDF
+        je      .refuse
+        mov     ecx, esi
+        and     ecx, 0xFC
+        mov     eax, edx
+        call    pci_cfg_write32
+        mov     eax, 1
+        pop     rbx
+        ret
+.refuse:
+        xor     eax, eax
+        pop     rbx
+        ret
+
+; map_mmio(phys, bytes): the 2 MB pages mapped uncached, the address; 0
+; for a range whose pages overlap RAM (the kept UEFI map, every type but
+; 11 and 12) or the RCBA window.
+svc_map_mmio:
+        push    rbx
+        push    r12
+        push    r13
+        mov     r12, rdi                ; the first page
+        and     r12, -0x200000
+        test    rsi, rsi
+        jnz     .len
+        mov     esi, 1
+.len:   lea     r13, [rdi + rsi - 1]
+        cmp     r13, rdi
+        jb      .refuse                 ; wrapped
+        or      r13, 0x1FFFFF           ; the last page's last byte
+        lea     rsi, [map_buf]
+        mov     rcx, rsi
+        add     rcx, [map_size]
+.desc:  cmp     rsi, rcx
+        jae     .rcba
+        mov     eax, [rsi]
+        cmp     eax, 11
+        je      .next
+        cmp     eax, 12
+        je      .next
+        mov     rax, [rsi + 8]          ; PhysicalStart
+        mov     rdx, [rsi + 24]         ; NumberOfPages
+        shl     rdx, 12
+        add     rdx, rax                ; its end
+        cmp     rax, r13
+        ja      .next
+        cmp     rdx, r12
+        ja      .refuse
+.next:  add     rsi, [desc_size]
+        jmp     .desc
+.rcba:  call    lpc_rcba
+        test    eax, eax
+        jz      .map
+        lea     rdx, [rax + 0x4000]
+        cmp     rax, r13
+        ja      .map
+        cmp     rdx, r12
+        ja      .refuse
+.map:   mov     rax, r12
+.page:  call    map_mmio_2m
+        add     rax, 0x200000
+        cmp     rax, r13
+        jb      .page
+        mov     rax, rdi
+        pop     r13
+        pop     r12
+        pop     rbx
+        ret
+.refuse:
+        xor     eax, eax
+        pop     r13
+        pop     r12
+        pop     rbx
+        ret
+
+; lpc_rcba - EAX = the RCBA window's base (16 KB, GCS and NO_REBOOT in it)
+; from an Intel LPC bridge at 00:1f.0 with RCBA enabled, or 0. Read at each
+; call, so the refusal needs no state of the watchdog's. Preserves the rest.
+lpc_rcba:
+        push    rbx
+        push    rcx
+        mov     ebx, LPC_BDF
+        xor     ecx, ecx
+        call    pci_cfg_read32
+        cmp     ax, PCI_VENDOR_INTEL
+        jne     .none
+        mov     ecx, 0xF0
+        call    pci_cfg_read32
+        test    eax, 1
+        jz      .none
+        and     eax, 0xFFFFC000
+        jmp     .out
+.none:  xor     eax, eax
+.out:   pop     rcx
+        pop     rbx
+        ret
+
+; dma_pages(count): zeroed, contiguous, below 4 GB, from the slot's pool
+svc_dma_pages:
+        test    edi, edi
+        jz      .none
+        mov     eax, [dma_used]
+        add     eax, edi
+        cmp     eax, DMA_POOL_PAGES
+        ja      .none
+        push    rdi
+        mov     eax, [dma_used]
+        shl     eax, 12
+        lea     rdx, [dma_pool]
+        add     rdx, rax
+        push    rdx
+        mov     ecx, edi
+        shl     ecx, 9
+        mov     rdi, rdx
+        xor     eax, eax
+        rep     stosq
+        pop     rax
+        pop     rdi
+        add     [dma_used], edi
+        ret
+.none:  xor     eax, eax
+        ret
+
+svc_ticks_ms:
+        call    ticks_ms
+        ret
+
+; pit_wait(ms): 1..1000 ms on the PIT
+svc_pit_wait:
+        mov     ecx, edi
+        cmp     ecx, 1
+        jae     .lo
+        mov     ecx, 1
+.lo:    cmp     ecx, 1000
+        jbe     .w
+        mov     ecx, 1000
+.w:     mov     ax, PIT_1MS
+        call    pit_wait
+        dec     ecx
+        jnz     .w
+        xor     eax, eax
+        ret
+
+; serial_line(ptr, len): "part: " and up to 120 bytes, raw
+svc_serial_line:
+        push    rbx
+        lea     rdx, [l_buf]
+        mov     dword [rdx], 'part'
+        mov     word [rdx + 4], ': '
+        add     rdx, 6
+        mov     ecx, esi
+        cmp     ecx, 120
+        jbe     .c
+        mov     ecx, 120
+.c:     test    ecx, ecx
+        jz      .end
+        mov     al, [rdi]
+        cmp     al, 0x20
+        jb      .q
+        cmp     al, 0x7E
+        jbe     .put
+.q:     mov     al, '?'
+.put:   mov     [rdx], al
+        inc     rdx
+        inc     rdi
+        dec     ecx
+        jmp     .c
+.end:   mov     byte [rdx], 13
+        mov     byte [rdx + 1], 10
+        mov     byte [rdx + 2], 0
+        lea     rsi, [l_buf]
+        call    serial_raw_puts
+        pop     rbx
+        xor     eax, eax
+        ret
+
+; -------------------------------------------------------- the upcalls ---
+; Each preserves every register but RAX (more than the ABI asks).
+
+; the queues: RDI = the queue, ESI = its head index address's offset... kept
+; simple: one macro per push.
+%macro EQ_PUSH 3                        ; queue, head, tail; R8B a, R9B dy, R10B b, AH kind, R11D tag, EDX k
+        mov     eax, [%2]
+        lea     ecx, [rax + 1]
+        and     ecx, EQ_N - 1
+        cmp     ecx, [%3]
+        je      %%full
+        shl     eax, 4
+        lea     rdi, [%1]
+        add     rdi, rax
+        mov     [rdi + EQ_KEY], r8b
+        mov     [rdi + EQ_DY], r9b
+        mov     [rdi + EQ_B], r10b
+        mov     [rdi + EQ_KIND], bl
+        mov     [rdi + EQ_TAG], r11d
+        mov     [rdi + EQ_K], edx
+        mov     [%2], ecx
+        jmp     %%done
+%%full:
+        inc     dword [cnt_d]           ; an event lost to a full queue is a disagreement
+%%done:
+%endmacro
+
+up_key_shadow:
+        SAVE_ALL
+        mov     r8d, edi
+        xor     r9d, r9d
+        xor     r10d, r10d
+        xor     ebx, ebx
+        mov     r11d, [feed_tag]
+        inc     dword [part_events]
+        mov     edx, [part_events]
+        EQ_PUSH pkq, pkq_head, pkq_tail
+        RESTORE_ALL
+        ret
+
+up_mouse_shadow:
+        SAVE_ALL
+        mov     r8d, edi
+        mov     r9d, esi
+        mov     r10d, edx
+        mov     ebx, 1
+        mov     r11d, [feed_tag]
+        inc     dword [part_events]
+        mov     edx, [part_events]
+        EQ_PUSH pmq, pmq_head, pmq_tail
+        RESTORE_ALL
+        ret
+
+up_key_live:
+        SAVE_ALL
+        inc     dword [part_events]
+        mov     eax, [lkq_head]
+        lea     ecx, [rax + 1]
+        and     ecx, LKQ_N - 1
+        cmp     ecx, [lkq_tail]
+        jne     .room
+        call    note_overflow
+        jmp     .out
+.room:  shl     eax, 4
+        lea     rdx, [lkq]
+        add     rdx, rax
+        mov     [rdx], dil
+        mov     [rdx + 8], rsi
+        mov     [lkq_head], ecx
+.out:   RESTORE_ALL
+        ret
+
+up_mouse_live:
+        SAVE_ALL
+        inc     dword [part_events]
+        inc     dword [cnt_pk]
+        cmp     qword [obs_page + OBS_MOUSE_ID], 0
+        jne     .id
+        mov     qword [obs_page + OBS_MOUSE_ID], 1      ; a mouse spoke (the part owns the port)
+.id:    call    mouse_sink
+        RESTORE_ALL
+        ret
+
+; mouse_sink - RDI = dx, RSI = dy (positive upwards), RDX = buttons, RCX =
+; the stamp: where mouse_byte's completed packet goes (PARTS.md: the clamp,
+; the cell word, the buttons, the presses, OBS_PACKETS, the mouse ring).
+; Main loop context only.
+mouse_sink:
+        mov     r9, rcx                 ; the stamp
+        mov     r10d, edx               ; the buttons
+        movsx   rax, dil
+        mov     rcx, [obs_page + OBS_PTR_X]
+        add     rcx, rax
+        test    rcx, rcx
+        jns     .x_low_ok
+        xor     ecx, ecx
+.x_low_ok:
+        mov     eax, [scr_cols]
+        shl     eax, 4
+        dec     eax
+        cmp     rcx, rax
+        jbe     .x_ok
+        mov     rcx, rax
+.x_ok:
+        mov     [obs_page + OBS_PTR_X], rcx
+        movsx   rax, sil
+        mov     rdx, [obs_page + OBS_PTR_Y]
+        sub     rdx, rax
+        test    rdx, rdx
+        jns     .y_low_ok
+        xor     edx, edx
+.y_low_ok:
+        mov     eax, [scr_rows]
+        shl     eax, 4
+        dec     eax
+        cmp     rdx, rax
+        jbe     .y_ok
+        mov     rdx, rax
+.y_ok:
+        mov     [obs_page + OBS_PTR_Y], rdx
+        shr     rdx, 4
+        shl     rdx, 16
+        shr     rcx, 4
+        or      rdx, rcx
+        mov     [obs_page + OBS_PTR_CELL], rdx
+        mov     r8d, edx
+        mov     eax, r10d
+        and     eax, 7
+        mov     ecx, [mse_prev]
+        mov     [mse_prev], eax
+        mov     [obs_page + OBS_BUTTONS], rax
+        not     ecx
+        and     ecx, eax
+        inc     qword [obs_page + OBS_PACKETS]
+        cmp     qword [obs_page + OBS_PTR_PENDING], 0
+        jne     .pending
+        mov     [obs_page + OBS_PTR_STAMP], r9
+        mov     qword [obs_page + OBS_PTR_PENDING], 1
+.pending:
+        mov     ebx, [mse_head]
+        mov     edx, ebx
+        inc     edx
+        and     edx, MSE_RING_SIZE - 1
+        cmp     edx, [mse_tail]
+        jne     .room
+        call    note_overflow
+        ret
+.room:
+        shl     ebx, 4
+        lea     rsi, [mse_ring]
+        add     rsi, rbx
+        mov     [rsi + ME_STAMP], r9
+        mov     [rsi + ME_CELL], r8d
+        mov     [rsi + ME_BUTTONS], al
+        mov     [rsi + ME_PRESSED], cl
+        mov     word [rsi + ME_PRESSED + 1], 0
+        mov     [mse_head], edx
+        ret
+
+; ------------------------------------------------ the raw ring's stubs ---
+; With a part loaded these are IRQ1's and IRQ12's gates (molt_boot sets
+; them); with none, ring 7d's stay.
+
+irq1_part:
+        SAVE_ALL
+        call    part_service
+        mov     al, 0x20
+        out     0x20, al
+        RESTORE_ALL
+        iretq
+
+irq12_part:
+        SAVE_ALL
+        call    part_service
+        mov     al, 0x20
+        out     0xA0, al
+        out     0x20, al
+        RESTORE_ALL
+        iretq
+
+; part_service - the status byte first, then the byte, while the buffer is
+; full: each into the raw ring with its stamp and sequence number; in
+; shadow, also where ring 7d puts it (kbd_push, mouse_byte), the generic's
+; completed packet noted beside.
+part_service:
+.next:
+        in      al, 0x64
+        test    al, 1
+        jz      .done
+        movzx   r12d, al                ; the status
+        in      al, 0x60
+        movzx   r13d, al                ; the byte
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        mov     r14, rax                ; the stamp
+        mov     r15d, [raw_seq]         ; the sequence number
+        mov     ebp, -1                 ; the entry, or none when full
+        cmp     dword [cmp_ended], 0    ; shadow's comparison over: the part is given nothing more
+        jne     .route
+        mov     eax, [raw_head]
+        mov     edx, eax
+        sub     edx, [raw_tail]
+        cmp     edx, RAW_N
+        jb      .room
+        call    note_overflow
+        cmp     dword [part_state], ST_SHADOW
+        jne     .route
+        mov     dword [cmp_ended], 1    ; PARTS.md, "Overflows": the comparison ends here
+        mov     [cmp_end], r15d
+        jmp     .route
+.room:
+        and     eax, RAW_N - 1
+        mov     ebp, eax
+        shl     eax, 4
+        lea     rdi, [raw_ring]
+        add     rdi, rax
+        mov     [rdi + RW_STATUS], r12b
+        mov     [rdi + RW_DATA], r13b
+        mov     byte [rdi + RW_FLAGS], 0
+        mov     [rdi + RW_SEQ], r15d
+        mov     [rdi + RW_STAMP], r14
+.route:
+        cmp     dword [part_state], ST_SHADOW
+        jne     .publish
+        test    r12b, 0x20
+        jnz     .mouse
+        mov     eax, [kbd_head]
+        lea     rdi, [kbd_seq]
+        mov     [rdi + rax*4], r15d
+        lea     edx, [rax + 1]
+        and     edx, KBD_RING_SIZE - 1
+        cmp     edx, [kbd_tail]
+        jne     .kpush
+        call    note_overflow
+.kpush:
+        mov     eax, r13d
+        call    kbd_push
+        jmp     .publish
+.mouse:
+        mov     rax, [obs_page + OBS_PACKETS]
+        push    rax
+        mov     eax, [mse_head]
+        push    rax
+        mov     eax, r13d
+        call    mouse_byte
+        pop     rcx                     ; the ring's head before
+        pop     rdx                     ; the packets before
+        cmp     rdx, [obs_page + OBS_PACKETS]
+        je      .publish
+        cmp     ecx, [mse_head]
+        jne     .ring_ok
+        call    note_overflow
+.ring_ok:
+        test    ebp, ebp
+        js      .no_flag
+        mov     eax, ebp
+        shl     eax, 4
+        lea     rdi, [raw_ring]
+        or      byte [rdi + rax + RW_FLAGS], 1
+.no_flag:
+        cmp     dword [cmp_ended], 0    ; the comparison over: the generic's packet is not queued
+        jne     .publish
+        movzx   r8d, byte [mse_pkt + 1]
+        movzx   r9d, byte [mse_pkt + 2]
+        movzx   r10d, byte [mse_pkt]
+        and     r10d, 7
+        mov     ebx, 1
+        mov     r11d, r15d
+        mov     edx, 1
+        lock xadd [gen_events], edx
+        inc     edx
+        EQ_PUSH gmq, gmq_head, gmq_tail
+.publish:
+        inc     dword [raw_seq]
+        test    ebp, ebp
+        js      .next
+        inc     dword [raw_head]
+        jmp     .next
+.done:
+        ret
+
+; note_overflow - an entry dropped because its ring was full (PARTS.md,
+; "Overflows"): counted in the obs page. Preserves every register.
+note_overflow:
+        inc     qword [obs_page + OBS_MOLT_OVF]
+        ret
+
+; ------------------------------------------------ the main loop, polled --
+
+; part_loop - the main loop on a boot that loaded a part (PARTS.md: it
+; polls instead of halting): the raw ring fed to the part, shadow's
+; comparison, then ring 7d's turn - keys (the generic's, or the part's in
+; live), packets, the trial, the app.
+part_loop:
+        cmp     dword [mouse_announced], 0
+        jne     .announced
+        cmp     qword [obs_page + OBS_PACKETS], 0
+        je      .announced
+        mov     dword [mouse_announced], 1
+        lea     rsi, [msg_mouse]
+        call    serial_raw_puts
+.announced:
+        call    feed_raw
+        cmp     dword [part_state], ST_SHADOW
+        jne     .turn
+        xor     edi, edi
+        call    shadow_compare
+.turn:
+        cli
+        cmp     dword [part_state], ST_LIVE
+        je      .live_keys
+        mov     eax, [kbd_tail]
+        cmp     eax, [kbd_head]
+        jne     .have
+        jmp     .mouse_q
+.live_keys:
+        mov     eax, [lkq_tail]
+        cmp     eax, [lkq_head]
+        jne     .have_live
+.mouse_q:
+        mov     eax, [mse_tail]
+        cmp     eax, [mse_head]
+        jne     .have_mouse
+        cmp     dword [trial_active], 0
+        jne     .trial_turn
+        cmp     dword [app_running], 0
+        jne     .app_turn
+        sti
+        pause
+        jmp     part_loop
+.have_mouse:
+        sti
+        call    mouse_next
+        test    al, al
+        jz      part_loop
+        call    click_dispatch
+        jmp     part_loop
+.app_turn:
+        sti
+        call    app_step_maybe
+        pause
+        jmp     part_loop
+.trial_turn:
+        sti
+        call    trial_step
+        pause
+        jmp     part_loop
+.have:
+        sti
+        call    kbd_next_shadow
+        test    al, al
+        jz      part_loop
+        movzx   ebx, al
+        call    handle_key
+        jmp     part_loop
+.have_live:
+        mov     ecx, eax
+        inc     eax
+        and     eax, LKQ_N - 1
+        mov     [lkq_tail], eax
+        sti
+        shl     ecx, 4
+        lea     rdx, [lkq]
+        add     rdx, rcx
+        mov     rax, [rdx + 8]
+        mov     [key_stamp], rax
+        movzx   ebx, byte [rdx]
+        inc     qword [obs_page + OBS_KEYS]
+        call    handle_key
+        jmp     part_loop
+
+; kbd_next_shadow - kbd_next, and the generic's key noted for the
+; comparison: its frontier (the sequence after the last byte it popped)
+; and, for a key, the event tagged with that byte's sequence number.
+kbd_next_shadow:
+        push    r12
+        mov     r12d, [kbd_tail]
+        call    kbd_next
+        mov     ecx, [kbd_tail]
+        cmp     ecx, r12d
+        je      .out
+        dec     ecx
+        and     ecx, KBD_RING_SIZE - 1
+        lea     rdx, [kbd_seq]
+        mov     r11d, [rdx + rcx*4]
+        lea     edx, [r11 + 1]
+        mov     [gen_kfront], edx
+        test    al, al
+        jz      .out
+        cmp     dword [cmp_ended], 0    ; the comparison over at cmp_end
+        je      .queue
+        cmp     r11d, [cmp_end]
+        jae     .out
+.queue:
+        push    rax
+        push    rbx
+        push    rdi
+        movzx   r8d, al
+        xor     r9d, r9d
+        xor     r10d, r10d
+        xor     ebx, ebx
+        mov     edx, 1
+        lock xadd [gen_events], edx
+        inc     edx
+        EQ_PUSH gkq, gkq_head, gkq_tail
+        pop     rdi
+        pop     rbx
+        pop     rax
+.out:
+        pop     r12
+        ret
+
+; feed_raw - every raw entry, in order, to the part's byte(status, data,
+; stamp, svc) - the shadow table or the live one. The counts: a keyboard
+; byte fed; in shadow a byte that completed the generic's packet.
+; Clobbers registers freely but RBX, RBP, R12-R15.
+feed_raw:
+        push    rbx
+        push    r12
+        push    r13
+        push    r14
+        push    r15
+.next:
+        mov     eax, [raw_tail]
+        cmp     eax, [raw_head]
+        je      .done
+        and     eax, RAW_N - 1
+        shl     eax, 4
+        lea     rsi, [raw_ring]
+        add     rsi, rax
+        movzx   r12d, byte [rsi + RW_STATUS]
+        movzx   r13d, byte [rsi + RW_DATA]
+        movzx   r14d, byte [rsi + RW_FLAGS]
+        mov     r15d, [rsi + RW_SEQ]
+        mov     rbx, [rsi + RW_STAMP]
+        mov     [feed_tag], r15d
+        test    r12b, 0x20
+        jnz     .m
+        inc     dword [cnt_kb]
+        jmp     .call
+.m:     cmp     dword [part_state], ST_SHADOW
+        jne     .call
+        test    r14b, 1
+        jz      .call
+        inc     dword [cnt_pk]
+.call:
+        mov     edi, r12d
+        mov     esi, r13d
+        mov     rdx, rbx
+        lea     rcx, [svc3_shadow]
+        cmp     dword [part_state], ST_LIVE
+        jne     .table
+        lea     rcx, [svc3_live]
+.table:
+        mov     eax, PH_BYTE
+        call    part_call
+        lea     eax, [r15 + 1]
+        mov     [fed_seq], eax
+        inc     dword [raw_tail]
+        jmp     .next
+.done:
+        pop     r15
+        pop     r14
+        pop     r13
+        pop     r12
+        pop     rbx
+        ret
+
+; ------------------------------------------------ shadow's comparison ----
+
+; shadow_compare - EDI = 1 at a count point. The generic's k-th key against
+; the part's, and its k-th packet against the part's, over the positions
+; both have reached: a difference is one disagreement. At a count point the
+; events one side has beyond the other are disagreements too - those whose
+; bytes both sides have taken (tagged below both frontiers), so input still
+; in flight is never counted.
+shadow_compare:
+        push    rbx
+        push    r12
+        push    r13
+        push    r14
+        push    r15
+        mov     r15d, edi
+.keys:
+        mov     eax, [gkq_tail]
+        cmp     eax, [gkq_head]
+        je      .mouse
+        mov     ecx, [pkq_tail]
+        cmp     ecx, [pkq_head]
+        je      .mouse
+        shl     eax, 4
+        lea     r12, [gkq]
+        add     r12, rax
+        shl     ecx, 4
+        lea     r13, [pkq]
+        add     r13, rcx
+        call    eq_pop_both_k
+        mov     al, [r12 + EQ_KEY]
+        cmp     al, [r13 + EQ_KEY]
+        je      .keys
+        mov     r14d, [r13 + EQ_K]
+        call    disagree
+        jmp     .keys
+.mouse:
+        mov     eax, [gmq_tail]
+        cmp     eax, [gmq_head]
+        je      .pairs_done
+        mov     ecx, [pmq_tail]
+        cmp     ecx, [pmq_head]
+        je      .pairs_done
+        shl     eax, 4
+        lea     r12, [gmq]
+        add     r12, rax
+        shl     ecx, 4
+        lea     r13, [pmq]
+        add     r13, rcx
+        call    eq_pop_both_m
+        mov     eax, [r12]
+        and     eax, 0x00FFFFFF
+        mov     ecx, [r13]
+        and     ecx, 0x00FFFFFF
+        cmp     eax, ecx
+        je      .mouse
+        mov     r14d, [r13 + EQ_K]
+        call    disagree
+        jmp     .mouse
+.pairs_done:
+        test    r15d, r15d
+        jz      .out
+        ; the extras: keys below both keyboard frontiers
+        mov     ebx, [fed_seq]
+        cmp     ebx, [gen_kfront]
+        jbe     .kf
+        mov     ebx, [gen_kfront]
+.kf:
+.gk_extra:
+        mov     eax, [gkq_tail]
+        cmp     eax, [gkq_head]
+        je      .pk_extra
+        shl     eax, 4
+        lea     r12, [gkq]
+        add     r12, rax
+        cmp     [r12 + EQ_TAG], ebx
+        jae     .pk_extra
+        inc     dword [gkq_tail]
+        and     dword [gkq_tail], EQ_N - 1
+        xor     r13d, r13d
+        mov     r14d, [part_events]
+        inc     r14d
+        call    disagree
+        jmp     .gk_extra
+.pk_extra:
+        mov     eax, [pkq_tail]
+        cmp     eax, [pkq_head]
+        je      .mouse_extras
+        shl     eax, 4
+        lea     r13, [pkq]
+        add     r13, rax
+        cmp     [r13 + EQ_TAG], ebx
+        jae     .mouse_extras
+        inc     dword [pkq_tail]
+        and     dword [pkq_tail], EQ_N - 1
+        xor     r12d, r12d
+        mov     r14d, [r13 + EQ_K]
+        call    disagree
+        jmp     .pk_extra
+.mouse_extras:                          ; packets below the part's frontier and the raw ring's
+        mov     ebx, [fed_seq]
+        cmp     ebx, [raw_seq]
+        jbe     .mf
+        mov     ebx, [raw_seq]
+.mf:
+.gm_extra:
+        mov     eax, [gmq_tail]
+        cmp     eax, [gmq_head]
+        je      .pm_extra
+        shl     eax, 4
+        lea     r12, [gmq]
+        add     r12, rax
+        cmp     [r12 + EQ_TAG], ebx
+        jae     .pm_extra
+        inc     dword [gmq_tail]
+        and     dword [gmq_tail], EQ_N - 1
+        xor     r13d, r13d
+        mov     r14d, [part_events]
+        inc     r14d
+        call    disagree
+        jmp     .gm_extra
+.pm_extra:
+        mov     eax, [pmq_tail]
+        cmp     eax, [pmq_head]
+        je      .out
+        shl     eax, 4
+        lea     r13, [pmq]
+        add     r13, rax
+        cmp     [r13 + EQ_TAG], ebx
+        jae     .out
+        inc     dword [pmq_tail]
+        and     dword [pmq_tail], EQ_N - 1
+        xor     r12d, r12d
+        mov     r14d, [r13 + EQ_K]
+        call    disagree
+        jmp     .pm_extra
+.out:
+        pop     r15
+        pop     r14
+        pop     r13
+        pop     r12
+        pop     rbx
+        ret
+
+eq_pop_both_k:
+        mov     eax, [gkq_tail]
+        inc     eax
+        and     eax, EQ_N - 1
+        mov     [gkq_tail], eax
+        mov     eax, [pkq_tail]
+        inc     eax
+        and     eax, EQ_N - 1
+        mov     [pkq_tail], eax
+        ret
+eq_pop_both_m:
+        mov     eax, [gmq_tail]
+        inc     eax
+        and     eax, EQ_N - 1
+        mov     [gmq_tail], eax
+        mov     eax, [pmq_tail]
+        inc     eax
+        and     eax, EQ_N - 1
+        mov     [pmq_tail], eax
+        ret
+
+; disagree - R12 = the generic's event or 0, R13 = the part's or 0, R14D =
+; the position: one disagreement; the first sixteen a boot a note, "molt
+; i8042 disagree <n> <k> <generic> <part>". Preserves RBX, R12-R15.
+disagree:
+        inc     dword [cnt_d]
+        cmp     dword [cnt_dnotes], DISAGREE_NOTES
+        jae     .ret
+        inc     dword [cnt_dnotes]
+        push    rbx
+        lea     rdi, [note_text]
+        lea     rsi, [w_molt_sp]
+        call    str_copy
+        xor     eax, eax
+        call    put_slot
+        lea     rsi, [w_sp_disagree_sp]
+        call    str_copy
+        mov     eax, [boot_n]
+        call    put_dec
+        mov     al, ' '
+        stosb
+        mov     eax, r14d
+        call    put_dec
+        mov     al, ' '
+        stosb
+        mov     rsi, r12
+        call    put_event
+        mov     al, ' '
+        stosb
+        mov     rsi, r13
+        call    put_event
+        mov     byte [rdi], 0
+        lea     rsi, [note_text]
+        call    molt_note
+        pop     rbx
+.ret:   ret
+
+; put_event - RSI = a queue entry or 0: "k<hex>", "m<dx>,<dy>,<b>" or "-".
+put_event:
+        test    rsi, rsi
+        jnz     .some
+        mov     al, '-'
+        stosb
+        ret
+.some:
+        push    rsi
+        cmp     byte [rsi + EQ_KIND], 0
+        jne     .m
+        mov     al, 'k'
+        stosb
+        movzx   eax, byte [rsi + EQ_KEY]
+        mov     ecx, 2
+        call    put_hex_n
+        pop     rsi
+        ret
+.m:
+        mov     al, 'm'
+        stosb
+        movsx   eax, byte [rsi + EQ_KEY]
+        call    put_sdec
+        mov     al, ','
+        stosb
+        mov     rsi, [rsp]
+        movsx   eax, byte [rsi + EQ_DY]
+        call    put_sdec
+        mov     al, ','
+        stosb
+        mov     rsi, [rsp]
+        movzx   eax, byte [rsi + EQ_B]
+        call    put_dec
+        pop     rsi
+        ret
+
+; put_sdec - EAX = a signed value: decimal with its sign. Clobbers RAX, RCX, RDX, R8.
+put_sdec:
+        test    eax, eax
+        jns     .pos
+        push    rax
+        mov     al, '-'
+        stosb
+        pop     rax
+        neg     eax
+.pos:   mov     eax, eax
+        call    put_dec
+        ret
+
+; ------------------------------------------------ count points ----------
+
+; count_note - "molt i8042 count <n> <keys> <packets> <d>".
+count_note:
+        lea     rdi, [note_text]
+        lea     rsi, [w_molt_sp]
+        call    str_copy
+        xor     eax, eax
+        call    put_slot
+        lea     rsi, [w_sp_count_sp]
+        call    str_copy
+        mov     eax, [boot_n]
+        call    put_dec
+        mov     al, ' '
+        stosb
+        mov     eax, [cnt_kb]
+        call    put_dec
+        mov     al, ' '
+        stosb
+        mov     eax, [cnt_pk]
+        call    put_dec
+        mov     al, ' '
+        stosb
+        mov     eax, [cnt_d]
+        call    put_dec
+        mov     byte [rdi], 0
+        lea     rsi, [note_text]
+        call    molt_note
+        ret
+
+; count_point - PARTS.md: the raw ring drained into the part, the
+; comparison's extras counted, then the slot's count note.
+count_point:
+        call    feed_raw
+        cmp     dword [part_state], ST_SHADOW
+        jne     .note
+        mov     edi, 1
+        call    shadow_compare
+.note:
+        call    count_note
+        ret
+
+
+; molt_discard_point - inside finish_line's cli, just after ring 7d's drop:
+; in shadow, the discard's point is the next raw sequence number (PARTS.md,
+; "The discard after a request"). Preserves every register.
+molt_discard_point:
+        cmp     dword [part_state], ST_SHADOW
+        jne     .ret
+        push    rax
+        mov     eax, [raw_seq]
+        mov     [disc_seq], eax
+        pop     rax
+.ret:   ret
+
+; molt_finish - finish_line's discard. In shadow: the raw ring fed to the
+; part, the key pairs both sides have reached compared as a turn does, then
+; both sides' key events left below the point dropped with no disagreement
+; and the generic's key frontier moved to it. Live: the raw ring fed first
+; (the part's decoder keeps its state), then the keys it gave are dropped
+; as ring 7d drops the generic's.
+molt_finish:
+        cmp     dword [part_state], ST_SHADOW
+        je      .shadow
+        cmp     dword [part_state], ST_LIVE
+        jne     .ret
+        call    feed_raw
+        cli
+        mov     eax, [lkq_head]
+        mov     [lkq_tail], eax
+        mov     eax, [mse_head]
+        mov     [mse_tail], eax
+        sti
+.ret:   ret
+.shadow:
+        call    feed_raw
+        xor     edi, edi
+        call    shadow_compare
+        mov     edx, [disc_seq]
+        lea     rsi, [pkq]
+.pk:    mov     eax, [pkq_tail]
+        cmp     eax, [pkq_head]
+        je      .gk
+        mov     ecx, eax
+        shl     ecx, 4
+        cmp     [rsi + rcx + EQ_TAG], edx
+        jae     .gk
+        inc     eax
+        and     eax, EQ_N - 1
+        mov     [pkq_tail], eax
+        jmp     .pk
+.gk:    lea     rsi, [gkq]
+.gk_next:
+        mov     eax, [gkq_tail]
+        cmp     eax, [gkq_head]
+        je      .front
+        mov     ecx, eax
+        shl     ecx, 4
+        cmp     [rsi + rcx + EQ_TAG], edx
+        jae     .front
+        inc     eax
+        and     eax, EQ_N - 1
+        mov     [gkq_tail], eax
+        jmp     .gk_next
+.front: cmp     [gen_kfront], edx
+        jae     .ret
+        mov     [gen_kfront], edx
+        ret
+
+; ------------------------------------------------------ the words -------
+
+; body_ours - RSI = a "!" body, ECX = its length (bang_line). ZF set and
+; EAX = 1 for a molt word ("molt", or "molt " and more), EAX = 2 for a
+; part- word (alone, or after "undo install "), with RDX/R8D the word;
+; else EAX = 0 (ZF clear unless...). Preserves RSI, RCX.
+body_ours:
+        cmp     ecx, 4
+        jb      .part
+        cmp     dword [rsi], 'molt'
+        jne     .part
+        cmp     ecx, 4
+        je      .molt
+        cmp     byte [rsi + 4], ' '
+        jne     .part
+.molt:  mov     eax, 1
+        ret
+.part:
+        mov     rdx, rsi
+        mov     r8d, ecx
+        cmp     ecx, 13
+        jb      .p5
+        push    rsi
+        push    rcx
+        push    rdi
+        lea     rdi, [msg_undo_word]
+        mov     ecx, 13
+        repe    cmpsb
+        pop     rdi
+        pop     rcx
+        pop     rsi
+        jne     .p5
+        lea     rdx, [rsi + 13]
+        lea     r8d, [rcx - 13]
+.p5:    cmp     r8d, 5
+        jb      .no
+        cmp     dword [rdx], 'part'
+        jne     .no
+        cmp     byte [rdx + 4], '-'
+        jne     .no
+        xor     eax, eax                ; the word: up to a space or the end
+.w:     cmp     eax, r8d
+        jae     .wend
+        cmp     byte [rdx + rax], ' '
+        je      .wend
+        inc     eax
+        jmp     .w
+.wend:  mov     r8d, eax
+        mov     eax, 2
+        ret
+.no:    xor     eax, eax
+        ret
+
+; part_refused - RDX/R8D = the word: "<name> is a part", an error, the prompt.
+part_refused:
+        call    app_close_if_running
+        lea     rdi, [l_buf]
+        mov     rsi, rdx
+        mov     ecx, r8d
+        cmp     ecx, 100
+        jbe     .c
+        mov     ecx, 100
+.c:     rep     movsb
+        lea     rsi, [w_is_a_part]
+        call    str_copy
+        mov     byte [rdi], 0
+        lea     rsi, [l_buf]
+        jmp     molt_refuse
+
+; molt_refuse - RSI = the refusal: on the console, one error, the prompt.
+molt_refuse:
+        call    console_puts
+        inc     qword [obs_page + OBS_ERRORS]
+        jmp     finish_line
+
+; molt_says - note_text is a note: journaled, the same on the console.
+molt_says:
+        lea     rsi, [note_text]
+        call    molt_note
+        call    console_puts
+        jmp     finish_line
+
+; molt_word - RSI = the body ("molt" ...), ECX = its length (PARTS.md,
+; "The four words"): a running app closed; on a boot that loaded a part
+; the count note first; then the notes scanned and the word acted on.
+molt_word:
+        push    rsi
+        push    rcx
+        call    app_close_if_running
+        cmp     dword [part_loaded], 0
+        je      .scan
+        call    count_point
+.scan:
+        call    molt_scan
+        pop     rcx
+        pop     rsi
+        cmp     ecx, 4
+        je      molt_table
+        add     rsi, 5
+        sub     ecx, 5
+        cmp     ecx, 5
+        jbe     .not_take
+        cmp     dword [rsi], 'take'
+        jne     .not_take
+        cmp     byte [rsi + 4], ' '
+        jne     .not_take
+        add     rsi, 5
+        sub     ecx, 5
+        call    slot_named
+        cmp     eax, -1
+        je      .unknown
+        jmp     molt_take
+.not_take:
+        cmp     ecx, 4
+        jne     .not_undo
+        cmp     dword [rsi], 'undo'
+        je      molt_undo
+.not_undo:
+        call    slot_named
+        cmp     eax, -1
+        je      .unknown
+        jmp     molt_fetch
+.unknown:
+        lea     rsi, [msg_unknown_slot]
+        jmp     molt_refuse
+
+; slot_named - RSI/ECX = a word: EAX = its slot index in this ring's
+; table, or -1. Preserves RSI, RCX.
+slot_named:
+        cmp     ecx, 8
+        ja      .none
+        test    ecx, ecx
+        jz      .none
+        push    rdi
+        push    rbx
+        xor     ebx, ebx
+.s:     cmp     ebx, SLOT_N
+        jae     .miss
+        lea     rdi, [slot_words]
+        mov     eax, ebx
+        shl     eax, 3
+        add     rdi, rax
+        push    rsi
+        push    rcx
+        push    rdi
+        repe    cmpsb
+        pop     rdi
+        pop     rcx
+        pop     rsi
+        jne     .next
+        cmp     ecx, 8
+        je      .hit
+        cmp     byte [rdi + rcx], 0
+        je      .hit
+.next:  inc     ebx
+        jmp     .s
+.hit:   mov     eax, ebx
+        pop     rbx
+        pop     rdi
+        ret
+.miss:  pop     rbx
+        pop     rdi
+.none:  mov     eax, -1
+        ret
+
+; molt_table - "! molt": the app panel cleared and the table drawn from
+; row 0 (PARTS.md, "The table"); nothing to the conversation.
+molt_table:
+        call    app_clear
+        xor     r12d, r12d              ; the slot
+        xor     r13d, r13d              ; the row
+.slot:
+        cmp     r12d, SLOT_N
+        jae     .done
+        mov     eax, r12d
+        call    slot_rec
+        mov     r14, rbx
+        lea     rdi, [l_buf]
+        mov     eax, r12d
+        call    put_slot
+        mov     al, ' '
+        stosb
+        mov     rbx, r14
+        call    put_state
+        mov     byte [rdi], 0
+        call    .row
+        movzx   eax, byte [r14 + SS_KIND]
+        cmp     eax, ST_SHADOW
+        je      .counts
+        cmp     eax, ST_LIVE
+        jne     .next
+.counts:
+        mov     rbx, r14
+        call    slot_counts
+        mov     r15d, eax               ; probation
+        call    thr_of                  ; ms_before+0..11 = B, K, M
+        lea     rdi, [l_buf]
+        lea     rsi, [w_boots_sp]
+        call    str_copy
+        mov     eax, [ms_vals]
+        mov     edx, [thr_tmp]
+        call    put_frac
+        lea     rsi, [w_sp_keys_sp]
+        call    str_copy
+        mov     eax, [ms_vals + 4]
+        mov     edx, [thr_tmp + 4]
+        call    put_frac
+        lea     rsi, [w_sp_mouse_sp]
+        call    str_copy
+        mov     eax, [ms_vals + 8]
+        mov     edx, [thr_tmp + 8]
+        call    put_frac
+        mov     byte [rdi], 0
+        call    .row
+        lea     rdi, [l_buf]
+        lea     rsi, [w_disagreements_sp]
+        call    str_copy
+        mov     eax, [ms_vals + 12]
+        call    put_dec
+        lea     rsi, [w_sp_probation_sp]
+        call    str_copy
+        mov     eax, r15d
+        mov     edx, PROBATION
+        call    put_frac
+        mov     byte [rdi], 0
+        call    .row
+.next:
+        inc     r12d
+        jmp     .slot
+.done:
+        jmp     finish_line
+.row:
+        mov     ebx, r13d
+        lea     rsi, [l_buf]
+        call    panel_line
+        inc     r13d
+        ret
+
+; put_frac - EAX/EDX: "a/b" at RDI. Clobbers RAX, RCX, RDX, R8.
+put_frac:
+        push    rdx
+        call    put_dec
+        mov     al, '/'
+        stosb
+        pop     rax
+        call    put_dec
+        ret
+
+; thr_of - R14 = a slot's record: thr_tmp = its current build's threshold,
+; or zeros.
+thr_of:
+        xor     eax, eax
+        mov     [thr_tmp], eax
+        mov     [thr_tmp + 4], eax
+        mov     [thr_tmp + 8], eax
+        mov     rbx, r14
+        lea     rsi, [rbx + SS_BUILD]
+        call    ms_bld_lookup
+        test    rdi, rdi
+        jz      .out
+        mov     eax, [rdi + BD_THR]
+        mov     [thr_tmp], eax
+        mov     eax, [rdi + BD_THR + 4]
+        mov     [thr_tmp + 4], eax
+        mov     eax, [rdi + BD_THR + 8]
+        mov     [thr_tmp + 8], eax
+.out:   ret
+
+; other_on_probation - R12D = a slot: ZF clear when a part of another slot
+; is on probation.
+other_on_probation:
+        xor     ecx, ecx
+.s:     cmp     ecx, SLOT_N
+        jae     .no
+        cmp     ecx, r12d
+        je      .next
+        push    rcx
+        mov     eax, ecx
+        call    slot_on_probation
+        pop     rcx
+        jnz     .yes
+.next:  inc     ecx
+        jmp     .s
+.no:    xor     eax, eax
+        test    eax, eax
+        ret
+.yes:   mov     eax, 1
+        test    eax, eax
+        ret
+
+; molt_take - EAX = the slot (PARTS.md, "The take").
+molt_take:
+        mov     r12d, eax
+        call    slot_rec
+        mov     r14, rbx
+        lea     rsi, [msg_already_live]
+        cmp     byte [rbx + SS_KIND], ST_LIVE
+        je      molt_refuse
+        lea     rsi, [msg_no_part_take]
+        cmp     byte [rbx + SS_KIND], ST_SHADOW
+        jne     molt_refuse
+        call    other_on_probation
+        lea     rsi, [msg_another_probation]
+        jnz     molt_refuse
+        mov     rbx, r14
+        call    slot_counts
+        cmp     dword [ms_vals + 12], 0
+        je      .threshold
+        lea     rdi, [l_buf]
+        lea     rsi, [w_disagreements_sp]
+        call    str_copy
+        mov     eax, [ms_vals + 12]
+        call    put_dec
+        mov     byte [rdi], 0
+        lea     rsi, [l_buf]
+        jmp     molt_refuse
+.threshold:
+        call    thr_of
+        mov     eax, [ms_vals]
+        cmp     eax, [thr_tmp]
+        jb      .below
+        mov     eax, [ms_vals + 4]
+        cmp     eax, [thr_tmp + 4]
+        jb      .below
+        mov     eax, [ms_vals + 8]
+        cmp     eax, [thr_tmp + 8]
+        jb      .below
+        lea     rdi, [note_text]        ; "molt <slot> live <b>"
+        lea     rsi, [w_molt_sp]
+        call    str_copy
+        mov     eax, r12d
+        call    put_slot
+        lea     rsi, [w_sp_live_sp]
+        call    str_copy
+        lea     rsi, [r14 + SS_BUILD]
+        mov     ecx, 16
+        rep     movsb
+        mov     byte [rdi], 0
+        jmp     molt_says
+.below:
+        lea     rdi, [l_buf]
+        lea     rsi, [w_below_sp]
+        call    str_copy
+        mov     eax, [ms_vals]
+        mov     edx, [thr_tmp]
+        call    put_frac
+        lea     rsi, [w_sp_keys_sp]
+        call    str_copy
+        mov     eax, [ms_vals + 4]
+        mov     edx, [thr_tmp + 4]
+        call    put_frac
+        lea     rsi, [w_sp_mouse_sp]
+        call    str_copy
+        mov     eax, [ms_vals + 8]
+        mov     edx, [thr_tmp + 8]
+        call    put_frac
+        mov     byte [rdi], 0
+        lea     rsi, [l_buf]
+        jmp     molt_refuse
+
+; molt_undo - "! molt undo" (PARTS.md, "The states and the undo"): the
+; slot whose state changed last, one state back.
+molt_undo:
+        mov     r12d, [ms_last]
+        lea     rsi, [msg_nothing_undo]
+        cmp     r12d, 0
+        jl      molt_refuse
+        mov     eax, r12d
+        call    slot_rec
+        mov     r14, rbx
+        lea     rdi, [ms_before]        ; the landing state, built here
+        movzx   eax, byte [rbx + SS_KIND]
+        cmp     eax, ST_GENERIC
+        je      molt_refuse
+        mov     byte [ms_before], ST_SHADOW
+        mov     byte [ms_before + 1], 0
+        xor     r15d, r15d              ; swap
+        cmp     eax, ST_SHADOW
+        jne     .same_build             ; live or demoted: shadow of the same build
+        ; shadow: the state before this build's last install, if its build is
+        ; the home entry's previous build; else generic
+        lea     rsi, [rbx + SS_BUILD]
+        call    ms_bld_lookup
+        test    rdi, rdi
+        jz      .generic
+        cmp     byte [rdi + BD_BKIND], ST_GENERIC
+        je      .generic
+        push    rdi
+        mov     eax, r12d
+        call    previous16              ; hex_buf, CF when none
+        pop     rdi
+        jc      .generic
+        lea     rsi, [rdi + BD_BBUILD]
+        push    rdi
+        lea     rdi, [hex_buf]
+        mov     ecx, 16
+        repe    cmpsb
+        pop     rdi
+        jne     .generic
+        mov     al, [rdi + BD_BKIND]
+        mov     [ms_before], al
+        mov     al, [rdi + BD_BWHY]
+        mov     [ms_before + 1], al
+        lea     rsi, [rdi + BD_BBUILD]
+        lea     rdi, [ms_before + 8]
+        mov     ecx, 16
+        rep     movsb
+        mov     r15d, 1
+        jmp     .land
+.generic:
+        mov     byte [ms_before], ST_GENERIC
+        jmp     .land
+.same_build:
+        lea     rsi, [rbx + SS_BUILD]
+        lea     rdi, [ms_before + 8]
+        mov     ecx, 16
+        rep     movsb
+.land:
+        test    r15d, r15d
+        jz      .note
+        mov     eax, r12d
+        call    home_swap_part
+.note:
+        lea     rdi, [note_text]
+        lea     rsi, [w_molt_sp]
+        call    str_copy
+        mov     eax, r12d
+        call    put_slot
+        lea     rsi, [w_sp_undo_sp]
+        call    str_copy
+        lea     rbx, [ms_before]
+        call    put_state
+        mov     byte [rdi], 0
+        jmp     molt_says
+
+; previous16 - EAX = a slot: hex_buf = the first 16 hex of part-<slot>'s
+; previous build; CF when there is no entry or no previous build.
+previous16:
+        call    part_name
+        lea     r14, [name_buf]
+        call    home_find_entry
+        cmp     eax, -1
+        je      .none
+        push    r15
+        mov     r15d, eax
+        call    home_entry_addr
+        pop     r15
+        cmp     dword [rdi + HE_PREV + HB_SIZE], 0
+        je      .none
+        lea     rsi, [rdi + HE_PREV + HB_SHA]
+        lea     rdi, [hex_buf]
+        mov     ecx, 8
+        call    put_hex_bytes
+        clc
+        ret
+.none:  stc
+        ret
+
+; home_swap_part - EAX = a slot: part-<slot>'s two builds swapped, its
+; table sector written (HOME.md's undo).
+home_swap_part:
+        call    part_name
+        lea     r14, [name_buf]
+        call    home_find_entry
+        cmp     eax, -1
+        je      .out
+        push    r15
+        mov     r15d, eax
+        call    home_entry_addr
+        push    rdi
+        lea     rsi, [rdi + HE_CUR]
+        lea     rdi, [undo_build]
+        mov     ecx, HB_BYTES / 8
+        rep     movsq
+        pop     rdi
+        push    rdi
+        lea     rsi, [rdi + HE_PREV]
+        add     rdi, HE_CUR
+        mov     ecx, HB_BYTES / 8
+        rep     movsq
+        pop     rdi
+        lea     rsi, [undo_build]
+        add     rdi, HE_PREV
+        mov     ecx, HB_BYTES / 8
+        rep     movsq
+        call    home_write_entry_sector
+        call    home_recount
+        pop     r15
+.out:   ret
+
+; molt_fetch - EAX = the slot: "! molt <slot>" (PARTS.md, "The request and
+; the part frame"): the request with the machine's identity, the frame's
+; checks in order, the part stored under part-<slot>, the install note.
+molt_fetch:
+        mov     r12d, eax
+        call    other_on_probation
+        lea     rsi, [msg_another_probation]
+        jnz     molt_refuse
+        ; the body: "molt <slot> cpu <8 hex> pci <vvvv>:<dddd>:<rr>"
+        lea     rdi, [grow_buf]
+        mov     byte [rdi], 0x01
+        inc     rdi
+        lea     rsi, [w_molt_sp]
+        call    str_copy
+        mov     eax, r12d
+        call    put_slot
+        lea     rsi, [w_sp_cpu_sp]
+        call    str_copy
+        push    rdi
+        mov     eax, 1
+        cpuid
+        pop     rdi
+        mov     ecx, 8
+        call    put_hex_n
+        lea     rsi, [w_sp_pci_sp]
+        call    str_copy
+        push    rbx
+        mov     ebx, LPC_BDF
+        xor     ecx, ecx
+        call    pci_cfg_read32
+        mov     r13d, eax
+        mov     ecx, 8
+        call    pci_cfg_read32
+        mov     r14d, eax
+        pop     rbx
+        movzx   eax, r13w
+        mov     ecx, 4
+        call    put_hex_n
+        mov     al, ':'
+        stosb
+        mov     eax, r13d
+        shr     eax, 16
+        mov     ecx, 4
+        call    put_hex_n
+        mov     al, ':'
+        stosb
+        movzx   eax, r14b
+        mov     ecx, 2
+        call    put_hex_n
+        lea     rsi, [grow_buf]
+        mov     rcx, rdi
+        sub     rcx, rsi                ; the marker and the body
+        inc     qword [obs_page + OBS_REQUESTS]
+        mov     qword [obs_page + OBS_MODE], MODE_GROWING
+        lea     rax, [comp_region + COMP_RX_OFF]
+        mov     [rx_dst], rax
+        mov     dword [rx_max], COMP_RX_MAX
+        mov     dword [rx_deadline], GROW_TICKS
+        push    rcx
+        push    rsi
+        call    spinner_start
+        pop     rsi
+        pop     rcx
+        call    umbilical_ask
+        push    rax
+        call    spinner_stop
+        pop     rax
+        test    eax, eax
+        jnz     .answered
+        lea     rsi, [msg_no_answer]
+        jmp     molt_refuse
+.answered:
+        lea     rsi, [comp_region + COMP_RX_OFF]
+        mov     ecx, [rsi]              ; N
+        add     rsi, 4                  ; the kind byte
+        test    ecx, ecx
+        jz      .not_frame
+        cmp     byte [rsi], 0
+        jne     .not_refusal
+        inc     rsi
+        dec     ecx
+        call    draw_answer
+        inc     qword [obs_page + OBS_ERRORS]
+        jmp     finish_line
+.not_refusal:
+        cmp     byte [rsi], PF_KIND
+        jne     .not_frame
+        cmp     ecx, PF_HDR
+        jb      .not_frame
+        cmp     byte [rsi + PFH_ABI], PART_ABI
+        jne     .not_frame
+        cmp     byte [rsi + PFH_SOURCE], 1
+        ja      .not_frame
+        cmp     byte [rsi + 3], 0
+        jne     .not_frame
+        mov     edx, 20
+.zero:  cmp     byte [rsi + rdx], 0
+        jne     .not_frame
+        inc     edx
+        cmp     edx, PF_HDR
+        jb      .zero
+        mov     r13d, [rsi + PFH_LEN]   ; L
+        lea     eax, [r13 + PF_HDR]
+        cmp     eax, ecx
+        jne     .not_frame
+        lea     rdx, [msg_too_large]
+        cmp     r13d, PART_MAX
+        ja      .refused
+        lea     rdx, [msg_below_floor]
+        cmp     dword [rsi + PFH_BOOTS], 1
+        jb      .refused
+        lea     rsi, [comp_region + PF_PART_OFF]
+        mov     ecx, r13d
+        mov     edx, r12d
+        call    check_part
+        jnc     .store
+        lea     rdx, [w_bad_header]
+        cmp     eax, 1
+        je      .refused
+        lea     rdx, [w_bad_hash]
+        cmp     eax, 2
+        je      .refused
+        lea     rdx, [msg_wrong_slot]
+        jmp     .refused
+.not_frame:
+        lea     rdx, [msg_not_frame]
+.refused:
+        lea     rdi, [l_buf]
+        lea     rsi, [msg_part_refused]
+        call    str_copy
+        mov     rsi, rdx
+        call    str_copy
+        mov     byte [rdi], 0
+        lea     rsi, [l_buf]
+        jmp     molt_refuse
+.store:
+        call    home_install_part       ; CF: not kept (said)
+        jc      finish_line
+        ; the install note, with the frame's threshold
+        lea     rdi, [note_text]
+        lea     rsi, [w_molt_sp]
+        call    str_copy
+        mov     eax, r12d
+        call    put_slot
+        lea     rsi, [w_sp_shadow_sp]
+        call    str_copy
+        push    rdi
+        lea     rsi, [sha_digest]
+        mov     ecx, 8
+        call    put_hex_bytes
+        pop     rsi
+        push    rsi
+        lea     rdi, [hex_buf]          ; the sha16, for the console line
+        mov     ecx, 16
+        rep     movsb
+        pop     rdi
+        add     rdi, 16
+        lea     rsi, [comp_region + COMP_RX_OFF + 4]
+        mov     r13, rsi
+        mov     al, ' '
+        stosb
+        mov     eax, [r13 + PFH_BOOTS]
+        call    put_dec
+        mov     al, ' '
+        stosb
+        mov     eax, [r13 + PFH_KEYS]
+        call    put_dec
+        mov     al, ' '
+        stosb
+        mov     eax, [r13 + PFH_PACKETS]
+        call    put_dec
+        mov     byte [rdi], 0
+        lea     rsi, [note_text]
+        call    molt_note
+        lea     rdi, [l_buf]            ; "part <slot> shadow <sha16>"
+        lea     rsi, [w_part_sp]
+        call    str_copy
+        mov     eax, r12d
+        call    put_slot
+        lea     rsi, [w_sp_shadow_sp]
+        call    str_copy
+        lea     rsi, [hex_buf]
+        mov     ecx, 16
+        rep     movsb
+        mov     byte [rdi], 0
+        lea     rsi, [l_buf]
+        call    console_puts
+        jmp     finish_line
+
+; home_install_part - R12D = the slot, R13D = L; the part at comp_region +
+; 64: stored under part-<slot> by HOME.md's install unchanged (the blob's
+; sectors first, the table sector last, a present entry's build becoming
+; its previous; the four choice slots zero); sha_digest its build. CF set
+; when not kept, the console told and an error counted.
+home_install_part:
+        mov     eax, r12d
+        call    part_name
+        lea     r14, [name_buf]
+        cmp     dword [home_present], 0
+        je      .full
+        lea     rdi, [comp_region + PF_PART_OFF]    ; the tail zeroed to the boundary
+        add     rdi, r13
+        mov     ecx, r13d
+        neg     ecx
+        and     ecx, 511
+        xor     eax, eax
+        rep     stosb
+        mov     r15d, r13d
+        add     r15d, 511
+        shr     r15d, 9                 ; the sectors
+        mov     eax, [home_next]
+        add     eax, r15d
+        jc      .full
+        cmp     eax, [part_home + PART_SECTORS]
+        ja      .full
+        push    r15
+        call    home_find_entry
+        pop     r15
+        cmp     eax, -1
+        jne     .replace
+        push    r15
+        call    home_free_slot
+        pop     r15
+        cmp     eax, -1
+        je      .full
+        push    r15
+        mov     r15d, eax
+        mov     [hip_entry], eax
+        call    home_entry_addr
+        pop     r15
+        push    rdi
+        mov     ecx, HOME_ENTRY / 8
+        xor     eax, eax
+        rep     stosq
+        pop     rdi
+        lea     rsi, [name_buf]
+        mov     ecx, APP_NAME_MAX
+        rep     movsb
+        jmp     .write
+.replace:
+        mov     [hip_entry], eax
+        push    r15
+        mov     r15d, eax
+        call    home_entry_addr
+        pop     r15
+        lea     rsi, [rdi + HE_CUR]
+        add     rdi, HE_PREV
+        mov     ecx, HB_BYTES / 8
+        rep     movsq
+.write:
+        mov     ebx, [home_next]
+        lea     rdi, [comp_region + PF_PART_OFF]
+        mov     ecx, r15d
+.sector:
+        mov     eax, VBLK_T_OUT
+        call    home_rw
+        add     rdi, 512
+        inc     ebx
+        dec     ecx
+        jnz     .sector
+        lea     rsi, [comp_region + PF_PART_OFF]
+        mov     ecx, r13d
+        lea     rdi, [sha_digest]
+        call    sha256
+        push    r15
+        mov     r15d, [hip_entry]
+        call    home_entry_addr
+        pop     r15
+        mov     [rdi + HE_CUR + HB_SIZE], r13d
+        mov     eax, [home_next]
+        mov     [rdi + HE_CUR + HB_FIRST], eax
+        mov     [rdi + HE_CUR + HB_SECTORS], r15d
+        mov     dword [rdi + HE_CUR + HB_ZERO], 0
+        push    rdi
+        lea     rsi, [sha_digest]
+        add     rdi, HE_CUR + HB_SHA
+        mov     ecx, 4
+        rep     movsq
+        pop     rdi
+        push    r15
+        mov     r15d, [hip_entry]
+        call    home_write_entry_sector
+        call    home_recount
+        pop     r15
+        clc
+        ret
+.full:
+        lea     rsi, [msg_home_full]
+        lea     rdx, [name_buf]
+        lea     rcx, [msg_not_kept]
+        call    home_say
+        inc     qword [obs_page + OBS_ERRORS]
+        stc
+        ret
+
+; line_is_molt - EAX = 1 if the line buffer begins "molt " (PARTS.md's
+; supersession of NOTEBOOK.md). Preserves everything else.
+line_is_molt:
+        xor     eax, eax
+        cmp     dword [line_len], 5
+        jb      .no
+        cmp     dword [line_buf], 'molt'
+        jne     .no
+        cmp     byte [line_buf + 4], ' '
+        jne     .no
+        mov     eax, 1
+.no:    ret
+
+; is_part_entry - RSI = a home entry: ZF set when its name begins "part-".
+is_part_entry:
+        cmp     dword [rsi], 'part'
+        jne     .out
+        cmp     byte [rsi + 4], '-'
+.out:   ret
+
 ; ---------------------------------------------------------------------------
 ; The AP trampoline.
 ;
@@ -8356,7 +10496,6 @@ msg_mouse_none: db      'i8042: mouse none', 13, 10, 0
 err_i8042_self: db      'i8042 self-test failed', 0
 err_i8042_cmd:  db      'i8042 command byte not answered', 0
 err_i8042_ibf:  db      'i8042 input buffer never emptied', 0
-hex_digits:     db      '0123456789abcdef'
 
 
 err_ap_high:    db      'ap_entry sits above 4GB - the trampoline cannot reach it', 0
@@ -8552,6 +10691,35 @@ fb_pps:         dd      0               ; PixelsPerScanLine - the stride, in pix
 fb_format:      dd      0               ; 0 = RGB reserved, 1 = BGR reserved
 best_area:      dd      0
 best_w:         dd      0
+
+; The molt's words and refusals, the seed's (PARTS.md, "The four words");
+; the strings the loader reads are inside its .text.
+w_sp_disagree_sp: db    ' disagree ', 0
+w_sp_count_sp:  db      ' count ', 0
+w_is_a_part:    db      ' is a part', 0
+msg_unknown_slot: db    'unknown slot', 0
+msg_already_live: db    'already live', 0
+msg_no_part_take: db    'no part to take', 0
+msg_another_probation: db 'another part is on probation', 0
+msg_nothing_undo: db    'nothing to undo', 0
+w_disagreements_sp: db  'disagreements ', 0
+w_below_sp:     db      'below threshold: boots ', 0
+w_boots_sp:     db      'boots ', 0
+w_sp_keys_sp:   db      ' keys ', 0
+w_sp_mouse_sp:  db      ' mouse ', 0
+w_sp_probation_sp: db   ' probation ', 0
+w_sp_live_sp:   db      ' live ', 0
+w_sp_undo_sp:   db      ' undo ', 0
+w_sp_cpu_sp:    db      ' cpu ', 0
+w_sp_pci_sp:    db      ' pci ', 0
+w_sp_shadow_sp: db      ' shadow ', 0
+w_part_sp:      db      'part ', 0
+msg_too_large:  db      'too large', 0
+msg_below_floor: db     'below the floor', 0
+msg_wrong_slot: db      'wrong slot', 0
+msg_not_frame:  db      'not a part frame', 0
+msg_part_refused: db    'part refused: ', 0
+msg_molt_reserved: db   'molt is reserved', 0
 
         align   FILE_ALIGN, db 0
 data_raw_end:
@@ -8896,6 +11064,62 @@ saved_rsp:      resq    1               ; the loader's stack pointer across a co
 enter_stamp:    resq    1               ; the last Enter's key stamp, until its prompt
 t_disk:         resq    1               ; the TSC when a disk request was posted
 t_wire:         resq    1               ; the TSC when an exchange began
+
+; The molt, the seed's half (PARTS.md): everything a part is given and
+; everything its upcalls write - the service tables, the raw ring, the
+; comparison's queues, the live key queue, the part region and its DMA pool
+; - with this boot's counts and the seed's own line buffers. Never in
+; LOADER_STATE.
+        alignb  16
+cnt_kb:         resd    1               ; keyboard bytes fed to the part
+cnt_pk:         resd    1               ; packets (shadow: the generic's from bytes fed; live: the part's)
+cnt_d:          resd    1               ; disagreements
+cnt_dnotes:     resd    1
+part_events:    resd    1               ; the part's events this boot, keys and packets
+gen_events:     resd    1               ; the generic's events this boot
+cmp_ended:      resd    1               ; shadow: the raw ring overflowed, the comparison is over
+cmp_end:        resd    1               ; ... at this sequence number, the first byte not given to the part
+disc_seq:       resd    1               ; finish_line's discard point (shadow)
+raw_head:       resd    1               ; free-running: the ring holds RAW_N entries
+raw_tail:       resd    1
+raw_seq:        resd    1               ; the next raw sequence number
+fed_seq:        resd    1               ; the last fed to the part, +1
+gen_kfront:     resd    1               ; the generic's keyboard frontier: seq+1 of the last popped byte
+gkq_head:       resd    1
+gkq_tail:       resd    1
+gmq_head:       resd    1
+gmq_tail:       resd    1
+pkq_head:       resd    1
+pkq_tail:       resd    1
+pmq_head:       resd    1
+pmq_tail:       resd    1
+lkq_head:       resd    1
+lkq_tail:       resd    1
+feed_tag:       resd    1               ; the raw entry being fed
+dma_used:       resd    1               ; pages the part's pool has given
+hip_entry:      resd    1               ; home_install_part's entry
+thr_tmp:        resd    3               ; a build's threshold: boots, keys, packets
+        alignb  16
+l_buf:          resb    160             ; a console line, a refusal, a part's serial line
+note_text:      resb    160             ; a machine note being built
+mirror_buf:     resb    176             ; a note's molt: mirror
+hex_buf:        resb    32              ; a build's first 16 hex
+        alignb  16
+svc3_live:      resb    80              ; ABI 3's tables
+svc3_shadow:    resb    80
+raw_ring:       resb    RAW_N * RAW_ENTRY
+kbd_seq:        resd    KBD_RING_SIZE   ; the raw sequence of each keyboard ring byte
+gkq:            resb    EQ_N * EQ_ENTRY ; the generic's keys
+gmq:            resb    EQ_N * EQ_ENTRY ; the generic's packets
+pkq:            resb    EQ_N * EQ_ENTRY ; the part's keys
+pmq:            resb    EQ_N * EQ_ENTRY ; the part's packets
+lkq:            resb    LKQ_N * 16      ; live: the part's keys for the main loop
+
+; The part region ("Where a part runs"): writable, executable
+        alignb  4096
+part_region:    resb    PART_MAX
+        alignb  4096
+dma_pool:       resb    DMA_POOL_PAGES * 4096
 
 ; The obs page (GLASS.md, "The obs page"): one page, page-aligned, its
 ; address on line fourteen.
