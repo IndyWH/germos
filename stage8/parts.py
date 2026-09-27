@@ -550,7 +550,8 @@ def check_examples(docs, n):
     want(fences[1] == line0 and m and sd["commit"] == m.group(1), "seed: the record's first line is not the document's")
     want(fences[2] == repr(n.parse_seed_line(line0)), "seed: parse_seed_line's dict")
     want("prints `%s`" % sd["date"] in _norm(s), "seed: the commit's date")
-    want(n.current_seed(seeds) == sd, "seed: current_seed")
+    want(n.current_seed(n.parse_seed_record("```\n%s\n```\n" % line0)) == sd,
+         "seed: current_seed")  # the example's claim is of its one-line record
     wrapped = "```\n%s\n```\n"
     upper = line0.replace("seed 0 " + sd["sha256"][:4], "seed 0 " + sd["sha256"][:4].upper(), 1)
     variants = [wrapped % upper, wrapped % line0.replace("seed 0", "seed 1", 1),
