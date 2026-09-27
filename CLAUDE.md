@@ -138,6 +138,10 @@ python3 stage7/trials.py --disk stage7/out/disk.img   # the sitting tables and t
                        # HP's chart; --example the document's worked examples
 
 # Stage 8 ring 8a - the floor
+./stage8/mkimage.sh    # assemble stage8.asm (it includes the frozen loader.asm),
+                       # pack esp.img (not frozen); the build is seed 1 while
+                       # stage8/seed-record.md's last line names it
+python3 stage8/mkstick.py   # after mkimage.sh: stage8/out/stick.img, 7c's shape
 ./stage8/test-8a.sh    # acceptance tests 1-4 on the 7c twin, every run
                        # appended to stage8/out/gate-8a.log: the artefact,
                        # PARTS.md and SEED.md read cold, the fixtures, the
@@ -149,7 +153,14 @@ python3 stage7/trials.py --disk stage7/out/disk.img   # the sitting tables and t
                        # sixteen frozen paths with loader.asm, the payload
                        # table, then ring 7d's gate with 7c, 7b and 7a inside
                        # it. Needs 9999, 9998 and 9997 free. About 43 min
-                       # (42.9 at item 16b), test 3 alone about 14.
+                       # (42.9 at item 16b), test 3 alone about 14: 32
+                       # QEMU runs and two rehearsals of its own (21 in test
+                       # 3, two of them carried through a watchdog reset),
+                       # then ring 7d's gate with its own.
+python3 stage8/parts.py --disk stage8/out/molt/disk.G.img   # the molt table and
+                       # the door's verdict from a disk image; --serial LOG from
+                       # the HP's chart; --seed the record rebuilt; --example
+                       # PARTS.md's and SEED.md's worked examples
 
 # The mock brokers (what the gates talk to; never spend a token)
 python3 broker/broker.py --mock --port 9999     # Stage 4
@@ -157,6 +168,8 @@ python3 broker/plans.py --mock                  # Stage 6 (answers, apps, instal
 python3 broker/pointer.py --mock                # Stage 6 ring 6c (the point app too)
 python3 broker/metal.py --mock                  # Stage 7 (the same table; the twin on SATA)
 python3 broker/wire.py --mock                   # Stage 7 ring 7b (the twin with an e1000e on a second cage)
+python3 broker/molt.py --mock --part good       # Stage 8 ring 8a: "! molt i8042" answered with a fixture
+                                                # (good, wrong, hang, fault or liar); unfrozen
 python3 broker/relay.py --bind 127.0.0.1 --port 9997   # the relay in the twin, in front of the broker
                                                 # (unfrozen; refuses every bind but 10.0.2.4 and 127.0.0.1)
 
@@ -181,7 +194,9 @@ the stick's two devices; ring 7a's is that with `virtio-net-pci` and the
 guestfwd on 9999 with `python3 broker/metal.py`; Stage 6 keeps its virtio
 disks and `broker/pointer.py`, earlier stages drop the drives, the display
 and the cage they did not have and point at their own `esp.img` — see
-README.md; the HP's own day is `stage7/METAL.md`):
+README.md; the HP's own day is `stage7/METAL.md`, ring 8a's `stage8/HP-8a.md`;
+ring 8a's twin is this line with `stage8/` for `stage7/` and
+`python3 broker/molt.py --mock --part good` as the broker):
 
 ```bash
 ./stage7/mkimage.sh && python3 stage7/mkstick.py
