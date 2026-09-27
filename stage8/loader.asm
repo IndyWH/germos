@@ -1,0 +1,2706 @@
+; ============================================================================
+; Stage 8 ring 8a - the loader (stage8/spec.md decision 4; stage8/PARTS.md).
+;
+; The floor under the molt: the part of the seed that no grown part replaces
+; and no part can write. stage8/stage8.asm includes this file at the start
+; of .text, below its constants (NASM's %define is positional), so it
+; assembles into the one image as ever; it is its own file so that it can be
+; frozen apart from the seed - at ring 8a item 16b, after Cowork's review,
+; and from then opened by the owner's hand alone.
+;
+; What it holds, moved here from the seed at item 14 without a changed
+; instruction (plan decision 10):
+;   - efi_main from the firmware to the handover: serial first, the GOP,
+;     the memory map and ExitBootServices, the GDT, the page tables, the
+;     IDT, the MADT and the cores, the regions, the disk, the notebook, the
+;     home table, the NIC, the glass core, the PIC and the i8042 gates, and
+;     the i8042's init - then a jump to the seed's seed_main;
+;   - serial and the firmware's GetMemoryMap;
+;   - paging: build_paging, and text_split, which maps the whole of .text
+;     read-only on 4 KB pages; CR0.WP is set straight after the CR3 load
+;     here and in the seed's AP trampoline, so the protection holds on every
+;     core from before the first byte of any part runs;
+;   - the IDT, the exception stubs and exc_common;
+;   - PCI configuration access and the PIT wait;
+;   - the disk's read path: the AHCI driver with its one command routine
+;     (ahci_rw, which the seed's writers call through disk_rw and home_rw),
+;     DISK.md's port choice and GPT validation, the notebook's scan and the
+;     home table's read;
+;   - SHA-256, and every constant the above reads, inside .text.
+; Its mutable state is BSS: LOADER_STATE at the end of this file is one
+; page-aligned block the seed places in its BSS.
+;
+; What it calls in the seed, which stays the seed's to change: the display's
+; EDID, the ACPI walk and the wake of the cores, the TSC's calibration, the
+; glass and the console, the PCI scan, gpt_write when DISK.md's rule formats
+; a blank disk, home_recount and the choices row, the NIC, the PIC and the
+; interrupt entries, and the i8042's init.
+; ============================================================================
+; ---------------------------------------------------------------------------
+; efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
+;
+; Microsoft x64 calling convention: RCX = ImageHandle, RDX = SystemTable.
+;
+; Interrupts are deliberately left ENABLED here. Boot services are still live
+; and the firmware's timer is still theirs; we take interrupts down at
+; ExitBootServices, not before.
+;
+; RSP is aligned to 16 once, here. Every firmware call afterwards reserves 0x40
+; below it - 32 bytes of shadow space the callee owns, plus room for a fifth and
+; sixth stack argument - which keeps RSP 16-aligned at the call, as the ABI
+; requires.
+; ---------------------------------------------------------------------------
+efi_main:
+        cld                             ; lodsb/stosb below depend on it
+        mov     [image_handle], rcx
+        mov     [system_table], rdx
+        mov     rax, [rdx + 0x60]       ; SystemTable->BootServices
+        mov     [boot_services], rax
+
+        and     rsp, -16                ; we never return, so the frame is ours
+        sub     rsp, 0x40
+
+        ; Step 1 of the spec: serial first, before anything else. A black screen
+        ; with no serial means we died before this point; a black screen WITH
+        ; serial means the fault is later. That distinction is the whole
+        ; debugging strategy.
+        call    serial_init
+        lea     rsi, [msg_alive]
+        call    serial_puts
+
+        ; -------------------------------------------------------------------
+        ; Step 2 of the spec: the Graphics Output Protocol, at the highest
+        ; resolution it offers with a 32-bit linear framebuffer.
+        ;
+        ; Nothing here hard-codes a resolution. Whatever the firmware offers is
+        ; measured, chosen, and then reported on serial - and the pixel test
+        ; reads the answer back out of that same log rather than being told.
+        ; -------------------------------------------------------------------
+        mov     rax, [boot_services]
+        lea     rcx, [gop_guid]
+        xor     edx, edx                ; Registration = NULL
+        lea     r8, [gop_ptr]
+        call    [rax + 0x140]           ; BootServices->LocateProtocol
+        test    rax, rax
+        jz      .gop_found
+        lea     rsi, [err_no_gop]
+        call    serial_err
+.gop_found:
+
+        ; The display's own word first (GLASS.md, "The screen"; line two):
+        ; the EDID from the VGA device's BAR2, the preferred mode out of its
+        ; first detailed timing descriptor - or none. The mode loop below
+        ; remembers the mode that matches it, and takes it.
+        call    edid_read
+
+        mov     rbx, [gop_ptr]          ; RBX, R12-R15 are callee-saved, so the
+        mov     rax, [rbx + 0x18]       ; firmware gives them back untouched
+        mov     r13d, [rax]             ; Mode->MaxMode
+        xor     r12d, r12d              ; mode number under consideration
+        mov     r14d, -1                ; best mode so far: none
+        mov     dword [best_area], 0
+        mov     dword [best_w], 0
+
+.mode_loop:
+        cmp     r12d, r13d
+        jae     .mode_done
+
+        mov     rax, [rbx]              ; gop->QueryMode
+        mov     rcx, rbx
+        mov     edx, r12d
+        lea     r8, [info_size]
+        lea     r9, [info_ptr]
+        call    rax
+        test    rax, rax
+        jnz     .next_mode              ; a mode that will not describe itself
+
+        mov     rdi, [info_ptr]
+        mov     eax, [rdi + 0x0C]       ; PixelFormat
+        cmp     eax, 1                  ; 0 = RGB reserved, 1 = BGR reserved.
+        ja      .free_and_next          ; 2 is a bitmask, 3 is Blt-only: neither
+                                        ; is a 32-bit framebuffer we can write
+        mov     eax, [rdi + 4]          ; HorizontalResolution
+        mov     ecx, [rdi + 8]          ; VerticalResolution
+        test    eax, eax
+        jz      .free_and_next
+        test    ecx, ecx
+        jz      .free_and_next
+
+        ; Ring 7c (plan decision 2, A5): the console's fixed limits, judged
+        ; here before a mode is a candidate - the same limits surf_describe
+        ; and console_init enforce later with a halt, mirrored so that a
+        ; GOP listing a mode the console cannot hold (Intel's on the HP
+        ; lists the monitor's own) skips it and takes the next, instead of
+        ; dying on it: at least 8 cells each way, at most STRIP_CELLS/2
+        ; columns, the panels' rows (rows - 4) at most SURF_ROWS_MAX, the
+        ; cells in all at most SHADOW_SIZE. PANEL_CELLS depends on the
+        ; split and is judged as before.
+        mov     edx, eax
+        shr     edx, 4                  ; cells across
+        cmp     edx, 8
+        jb      .free_and_next
+        cmp     edx, STRIP_CELLS / 2
+        ja      .free_and_next
+        mov     r8d, ecx
+        shr     r8d, 4                  ; cells down
+        cmp     r8d, 8
+        jb      .free_and_next
+        lea     r9d, [r8d - 4]          ; the panels' rows
+        cmp     r9d, SURF_ROWS_MAX
+        ja      .free_and_next
+        imul    edx, r8d                ; cells in all
+        cmp     edx, SHADOW_SIZE
+        ja      .free_and_next
+
+        cmp     eax, [edid_w]           ; the display's preferred mode, if this
+        jne     .not_preferred          ; is it (edid_w is 0 when none was stated)
+        cmp     ecx, [edid_h]
+        jne     .not_preferred
+        cmp     dword [edid_mode], -1
+        jne     .not_preferred          ; the first match wins
+        mov     [edid_mode], r12d
+.not_preferred:
+        mov     edx, eax
+        imul    edx, ecx                ; area, the thing we maximise
+        cmp     edx, [best_area]
+        ja      .take
+        jb      .free_and_next
+        cmp     eax, [best_w]           ; equal area: prefer the wider mode
+        jbe     .free_and_next
+.take:
+        mov     [best_area], edx
+        mov     [best_w], eax
+        mov     r14d, r12d
+
+.free_and_next:
+        mov     rax, [boot_services]
+        mov     rcx, [info_ptr]
+        call    [rax + 0x48]            ; BootServices->FreePool
+.next_mode:
+        inc     r12d
+        jmp     .mode_loop
+
+.mode_done:
+        ; The display's preferred mode wins when it is in the list; else
+        ; Stage 1's highest stands (spec decision 8).
+        cmp     dword [edid_mode], -1
+        je      .keep_highest
+        mov     r14d, [edid_mode]
+.keep_highest:
+        cmp     r14d, -1
+        jne     .have_mode
+        lea     rsi, [err_no_mode]
+        call    serial_err
+.have_mode:
+
+        mov     rax, [rbx + 0x08]       ; gop->SetMode
+        mov     rcx, rbx
+        mov     edx, r14d
+        call    rax
+        test    rax, rax
+        jz      .mode_set
+        lea     rsi, [err_setmode]
+        call    serial_err
+.mode_set:
+
+        ; Read the numbers back from the protocol rather than from our own
+        ; candidate copy: after SetMode, gop->Mode is the authority.
+        mov     rax, [rbx + 0x18]       ; gop->Mode
+        mov     rdx, [rax + 0x18]       ; FrameBufferBase
+        mov     [fb_base], rdx
+        mov     rdx, [rax + 0x20]       ; FrameBufferSize
+        mov     [fb_size], rdx
+        mov     rax, [rax + 0x08]       ; Mode->Info
+        mov     ecx, [rax + 4]
+        mov     [fb_width], ecx
+        mov     ecx, [rax + 8]
+        mov     [fb_height], ecx
+        mov     ecx, [rax + 0x0C]
+        mov     [fb_format], ecx
+
+        ; Stride is PixelsPerScanLine, NOT width. They are allowed to differ,
+        ; and assuming otherwise skews every row down the screen.
+        mov     ecx, [rax + 0x20]
+        test    ecx, ecx
+        jnz     .have_stride
+        mov     ecx, [fb_width]         ; firmware that leaves it zero means "= width"
+.have_stride:
+        mov     [fb_pps], ecx
+
+        ; Item 10 identity-maps the first 4 GB. A framebuffer beyond that would
+        ; be unmapped the moment we load our own CR3, and the symptom would be a
+        ; black screen with no clue. Say so now instead.
+        mov     rax, [fb_base]
+        add     rax, [fb_size]
+        mov     rdx, 0x100000000
+        cmp     rax, rdx
+        jbe     .fb_reachable
+        lea     rsi, [err_fb_high]
+        call    serial_err
+.fb_reachable:
+
+        lea     rsi, [msg_gop]
+        call    serial_puts
+        mov     eax, [fb_width]
+        call    serial_putdec
+        mov     al, 'x'
+        call    serial_putc
+        mov     eax, [fb_height]
+        call    serial_putdec
+        lea     rsi, [msg_fb]
+        call    serial_puts
+        mov     rax, [fb_base]
+        call    serial_puthex64
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+
+        ; -------------------------------------------------------------------
+        ; Step 3 of the spec: the memory map, and then throw the ladder away.
+        ;
+        ; The trampoline page is claimed FIRST, while boot services still
+        ; exist. Afterwards there is no allocator left to ask.
+        ; -------------------------------------------------------------------
+        call    get_memory_map          ; for the fallback scan below
+        test    rax, rax
+        jz      .map_ok
+        mov     rdx, EFI_BUFFER_TOO_SMALL
+        cmp     rax, rdx
+        je      .map_too_small
+        lea     rsi, [err_map]
+        call    serial_err
+.map_too_small:
+        ; Name the number, so that fixing this is changing one constant.
+        lea     rsi, [msg_err]
+        call    serial_puts
+        lea     rsi, [err_map_needs]
+        call    serial_puts
+        mov     eax, [map_size]
+        call    serial_putdec
+        lea     rsi, [err_map_have]
+        call    serial_puts
+        mov     eax, MAP_BUF_SIZE
+        call    serial_putdec
+        lea     rsi, [err_map_bytes]
+        call    serial_puts
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+        jmp     halt_forever
+.map_ok:
+
+        mov     qword [tramp_addr], TRAMP_BASE
+        call    alloc_tramp_page
+        test    rax, rax
+        jz      .tramp_ok
+
+        ; The preferred address was refused. Walk the map for any free
+        ; conventional page below 1 MB and take the first that will have us.
+        lea     r12, [map_buf]
+        mov     r13, r12
+        add     r13, [map_size]
+.scan:
+        cmp     r12, r13
+        jae     .no_tramp
+        cmp     dword [r12], 7          ; EfiConventionalMemory
+        jne     .scan_step
+        mov     rdx, [r12 + 8]          ; PhysicalStart
+        cmp     rdx, 0x1000             ; never the first page
+        jb      .scan_step
+        cmp     rdx, 0x100000           ; must be reachable in real mode
+        jae     .scan_step
+        mov     [tramp_addr], rdx
+        call    alloc_tramp_page
+        test    rax, rax
+        jz      .tramp_ok
+.scan_step:
+        add     r12, [desc_size]        ; stride is desc_size, never sizeof
+        jmp     .scan
+.no_tramp:
+        lea     rsi, [err_no_tramp]
+        call    serial_err
+.tramp_ok:
+
+        ; ExitBootServices, with the retry the spec names. The map key goes
+        ; stale if anything has allocated since the map was fetched - and the
+        ; AllocatePages just above did exactly that - so the map is fetched
+        ; fresh on every attempt.
+        mov     r12d, 5
+.ebs_try:
+        call    get_memory_map
+        test    rax, rax
+        jnz     .ebs_map_failed
+        mov     rax, [boot_services]
+        mov     rcx, [image_handle]
+        mov     rdx, [map_key]
+        call    [rax + 0xE8]            ; BootServices->ExitBootServices
+        test    rax, rax
+        jz      .ebs_done
+        mov     rdx, EFI_INVALID_PARAMETER
+        cmp     rax, rdx
+        jne     .ebs_hard
+        dec     r12d
+        jnz     .ebs_try
+        lea     rsi, [err_ebs_stale]
+        call    serial_err
+.ebs_map_failed:
+        lea     rsi, [err_map]
+        call    serial_err
+.ebs_hard:
+        lea     rsi, [err_ebs]
+        call    serial_err
+.ebs_done:
+        ; The firmware's timer would otherwise keep firing into code that no
+        ; longer exists. From here there is no IDT either, so any CPU exception
+        ; is a triple fault and a reboot - which shows up in a serial capture as
+        ; the whole sequence repeating, not as a missing line.
+        cli
+
+        ; Stand on our own stack rather than the firmware's.
+        lea     rsp, [bsp_stack_top]
+
+        lea     rsi, [msg_exited]
+        call    serial_puts
+
+        ; -------------------------------------------------------------------
+        ; Step 4 of the spec: our own GDT and our own page tables. The
+        ; firmware's are gone; from here the machine stands on structures we
+        ; built.
+        ; -------------------------------------------------------------------
+        lea     rax, [gdt]
+        mov     [gdtr + 2], rax         ; base is only known at runtime
+        lgdt    [gdtr]
+
+        ; Reload CS through a far return - there is no far jump to a label in
+        ; long mode. The data selectors follow.
+        push    qword 0x08
+        lea     rax, [.cs_reloaded]
+        push    rax
+        o64 retf
+.cs_reloaded:
+        mov     ax, 0x10
+        mov     ds, ax
+        mov     es, ax
+        mov     ss, ax
+        mov     fs, ax
+        mov     gs, ax
+
+        call    build_paging
+        lea     rax, [pml4]
+        mov     cr3, rax                ; and the firmware's tables are gone
+        mov     rax, cr0                ; CR0.WP (ring 8a): from here a write
+        or      rax, 1 << 16            ; into .text faults, in ring 0 too -
+        mov     cr0, rax                ; PARTS.md, "The read-only floor"
+
+        lea     rsi, [msg_paging]
+        call    serial_puts
+
+        ; -------------------------------------------------------------------
+        ; The IDT - the stage's first new organ. From here a CPU exception is
+        ; a readable serial line and a halt, not a silent triple-fault reboot.
+        ; Installed before the MADT walk and the wake, so both run covered.
+        ; -------------------------------------------------------------------
+        call    setup_idt
+        lea     rsi, [msg_idt]
+        call    serial_puts
+
+        ; -------------------------------------------------------------------
+        ; Step 5 of the spec: ask ACPI how many processors this machine has.
+        ;
+        ; Still valid after ExitBootServices: the EFI system table is
+        ; EfiRuntimeServicesData and the ACPI tables are EfiACPIReclaimMemory,
+        ; both preserved by definition, and both inside our identity map.
+        ; -------------------------------------------------------------------
+        call    apic_probe
+        mov     [bsp_apic_id], eax
+
+        call    find_rsdp
+        test    rax, rax
+        jnz     .have_rsdp
+        lea     rsi, [err_no_rsdp]
+        call    serial_err
+.have_rsdp:
+        call    find_madt
+        test    rax, rax
+        jnz     .have_madt
+        lea     rsi, [err_no_madt]
+        call    serial_err
+.have_madt:
+
+        ; Walk the MADT, counting processors and recording their APIC IDs.
+        mov     rbx, rax
+        mov     ecx, [rbx + 4]          ; Length of the whole table
+        mov     r13, rbx
+        add     r13, rcx                ; one past the last entry
+        lea     rdx, [rbx + 44]         ; entries start after the fixed part
+        xor     r14d, r14d              ; how many we have found
+        lea     r15, [apic_ids]
+.entry:
+        cmp     rdx, r13
+        jae     .madt_done
+        movzx   eax, byte [rdx + 1]     ; entry Length
+        test    eax, eax
+        jz      .bad_entry              ; a zero length would loop for ever
+        movzx   ecx, byte [rdx]         ; entry Type
+        cmp     ecx, 0
+        je      .local_apic
+        cmp     ecx, 9
+        je      .local_x2apic
+        jmp     .entry_step
+.local_apic:                            ; Processor Local APIC
+        mov     ecx, [rdx + 4]          ; Flags
+        test    ecx, 3                  ; Enabled | Online Capable
+        jz      .entry_step
+        movzx   ecx, byte [rdx + 3]     ; APIC ID
+        jmp     .record
+.local_x2apic:                          ; Processor Local x2APIC
+        mov     ecx, [rdx + 8]          ; Flags
+        test    ecx, 3
+        jz      .entry_step
+        mov     ecx, [rdx + 4]          ; X2APIC ID
+.record:
+        cmp     r14d, MAX_CORES
+        jae     .too_many
+        mov     [r15 + r14*4], ecx
+        inc     r14d
+.entry_step:
+        add     rdx, rax                ; stride is the entry's own length
+        jmp     .entry
+.bad_entry:
+        lea     rsi, [err_madt_len]
+        call    serial_err
+.too_many:
+        lea     rsi, [err_too_many]
+        call    serial_err
+.madt_done:
+        test    r14d, r14d
+        jnz     .have_cores
+        lea     rsi, [err_no_cores]
+        call    serial_err
+.have_cores:
+        mov     [core_count], r14d
+
+        lea     rsi, [msg_found]
+        call    serial_puts
+        mov     eax, [core_count]
+        call    serial_putdec
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+
+        ; -------------------------------------------------------------------
+        ; Wake every application processor, as Stage 1 proved we can. The
+        ; bands retire this stage: each AP takes its index and a stack of its
+        ; own, checks in, and parks - the console is the picture now. Only the
+        ; BSP ever touches COM1 or the screen; the APs have no path to either,
+        ; which is the concurrency doctrine's one-owner-per-device rule
+        ; enforced by construction rather than by care.
+        ;
+        ; The BSP is index 0 by fiat, so the others hand themselves out
+        ; indices from 1 upwards.
+        ; -------------------------------------------------------------------
+        mov     dword [next_index], 1
+        mov     dword [checkin], 0
+
+        call    setup_trampoline
+        call    wake_cores
+
+        lock inc dword [checkin]        ; the BSP checks itself in
+
+        ; Bounded wait, about a second. A core that never arrives then shows up
+        ; as woken disagreeing with found, in one second, with a readable
+        ; number - rather than as a hang until the test's 60s timeout with
+        ; nothing to read.
+        mov     r12d, 40
+.wait_cores:
+        mov     eax, [checkin]
+        cmp     eax, [core_count]
+        jae     .all_in
+        mov     ax, PIT_25MS
+        call    pit_wait
+        dec     r12d
+        jnz     .wait_cores
+.all_in:
+        lea     rsi, [msg_woken]
+        call    serial_puts
+        mov     eax, [checkin]          ; what actually happened, not what we hoped
+        call    serial_putdec
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+
+        ; -------------------------------------------------------------------
+        ; The clock - the time-stamp counter calibrated once against the PIT
+        ; (Stage 5 plan decision 6), so ticks_ms can answer a component
+        ; without a new interrupt. Interrupts are still off; nothing is
+        ; racing the PIT.
+        ; -------------------------------------------------------------------
+        call    tsc_calibrate
+
+        ; The obs page begins: the magic, the clock it is read with.
+        mov     rax, 'OBSPAGE2'
+        mov     [obs_page + OBS_MAGIC], rax
+        mov     rax, [tsc_per_ms]
+        mov     [obs_page + OBS_TSC_PER_MS], rax
+        mov     rax, [tsc_boot]
+        mov     [obs_page + OBS_TSC_BOOT], rax
+        mov     rax, [tsc_per_ms]
+        imul    rax, rax, 1000
+        xor     edx, edx
+        mov     ecx, FRAME_HZ
+        div     rcx
+        mov     [frame_ticks], rax      ; one sixtieth of a second, in ticks
+
+        ; The service table a component is born into (GERMLINE.md, "The
+        ; service table"): four addresses, filled here with RIP-relative
+        ; leas - no absolute address anywhere, as the stripped relocations
+        ; demand.
+        lea     rax, [svc_draw_text]
+        mov     [svc_table + 8], rax
+        lea     rax, [svc_panel_size]
+        mov     [svc_table + 16], rax
+        lea     rax, [ticks_ms]
+        mov     [svc_table + 24], rax
+        lea     rax, [svc_fill]
+        mov     [svc_table + 32], rax
+        mov     rax, [tsc_per_ms]       ; consecutive steps begin this far apart
+        imul    rax, rax, STEP_GAP_MS
+        mov     [step_gap], rax
+
+        ; -------------------------------------------------------------------
+        ; The console - the second new organ. Clears the screen, replays the
+        ; mirrored boot log, and from here every serial byte is drawn live by
+        ; the tee - this very line included.
+        ; -------------------------------------------------------------------
+        call    glass_init              ; the four regions from the mode
+        call    console_init            ; the conversation panel, a surface now
+        mov     eax, [scr_cols]
+        mov     [obs_page + OBS_COLS], rax
+        mov     eax, [scr_rows]
+        mov     [obs_page + OBS_ROWS], rax
+        lea     rsi, [msg_console]
+        call    serial_puts
+        mov     eax, [scr_cols]
+        call    serial_putdec
+        mov     al, 'x'
+        call    serial_putc
+        mov     eax, [scr_rows]
+        call    serial_putdec
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+
+        ; -------------------------------------------------------------------
+        ; The disk (stage7/DISK.md, ring 7a): the AHCI controller found by
+        ; class and owned, every port with a SATA disk identified and
+        ; classified, one port chosen by the selection rule - a GermOS
+        ; table, else a blank disk formatted ("S7: gpt written"), else a
+        ; named refusal - and the two partition descriptors read from its
+        ; table. Then the disk line. All of it with interrupts off and
+        ; polled, so that S7: keyboard ready stays the last line before sti.
+        ; -------------------------------------------------------------------
+        call    ahci_find
+        call    disk_select
+
+        lea     rsi, [msg_disk]         ; the disk line
+        call    serial_puts
+        mov     eax, [ahci_port]
+        call    serial_putdec
+        mov     al, ' '
+        call    serial_putc
+        mov     eax, [ahci_sectors]
+        call    serial_putdec
+        lea     rsi, [msg_notes_at]
+        call    serial_puts
+        mov     eax, [part_notes + PART_BASE]
+        call    serial_putdec
+        lea     rsi, [msg_home_at]
+        call    serial_puts
+        mov     eax, [part_home + PART_BASE]
+        call    serial_putdec
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+        mov     eax, [part_notes + PART_SECTORS]
+        mov     [disk_sectors], eax     ; the notebook's capacity: its partition's
+
+        ; -------------------------------------------------------------------
+        ; The notebook, on the notes partition (NOTEBOOK.md unchanged): a
+        ; recognised partition is scanned and counted; a blank one is
+        ; formatted.
+        ; -------------------------------------------------------------------
+        call    notebook_init
+
+        ; -------------------------------------------------------------------
+        ; The home image (ring 6b, HOME.md), on the home partition: always
+        ; present on a GermOS disk - formatted or scanned, then its line.
+        ; -------------------------------------------------------------------
+        mov     dword [home_present], 1
+        call    home_init
+
+        ; -------------------------------------------------------------------
+        ; The NIC (stage7/WIRE.md, ring 7b): the e1000e when the scan found
+        ; one - owned, reset, its MAC read from RAL0/RAH0, its link awaited,
+        ; its rings given - else the virtio-net, negotiated as before. The
+        ; nic line, and on the e1000e path the link line. Nothing is sent on
+        ; the network at boot. Still with interrupts off and polled.
+        ; -------------------------------------------------------------------
+        call    nic_find
+
+        ; -------------------------------------------------------------------
+        ; The component region - where a grown component will live. Line
+        ; twelve says where, because the address moves with every build and
+        ; a component must never assume it (GERMLINE.md).
+        ; -------------------------------------------------------------------
+        lea     rsi, [msg_region]       ; line thirteen
+        call    serial_puts
+        lea     rax, [comp_region + APP_BLOB_OFF]
+        call    serial_puthex64
+        lea     rsi, [msg_region_cap]
+        call    serial_puts
+
+        ; The obs page - line fourteen says where, so the twin and the
+        ; harness can read the machine's own numbers through the monitor.
+        lea     rsi, [msg_obs]
+        call    serial_puts
+        lea     rax, [obs_page]
+        call    serial_puthex64
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+
+        ; -------------------------------------------------------------------
+        ; The glass core (GLASS.md, "Surfaces and the glass core"): the
+        ; first application processor has been waiting since it checked in.
+        ; Start it, and from this instruction the boot processor never
+        ; writes a pixel again. No second core is a named error - shown on
+        ; the screen too, by the one render the boot processor is allowed
+        ; on that path, and then a halt.
+        ; -------------------------------------------------------------------
+        mov     r12d, 40
+.wait_glass:
+        cmp     dword [glass_ready], 0
+        jne     .glass_there
+        mov     ax, PIT_25MS
+        call    pit_wait
+        dec     r12d
+        jnz     .wait_glass
+        lea     rsi, [err_one_core]
+        call    glass_err
+.glass_there:
+        mov     dword [glass_go], 1
+        lea     rsi, [msg_glass]        ; line fifteen
+        call    serial_puts
+        mov     rax, [obs_page + OBS_GLASS_APIC]
+        call    serial_putdec
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+
+        ; -------------------------------------------------------------------
+        ; The keyboard - the third organ, and the machine's first sense.
+        ; PIC remapped with only IRQ1 unmasked, the two gates installed, the
+        ; i8042 drained, and only then the ready line, the prompt, and sti.
+        ; -------------------------------------------------------------------
+        call    pic_init
+
+        lea     rdi, [idt + 0x21*16]    ; IRQ1, remapped
+        lea     rax, [irq1_entry]
+        call    idt_set_gate
+        lea     rdi, [idt + 0x2C*16]    ; IRQ12, on the slave (ring 6c)
+        lea     rax, [irq12_entry]
+        call    idt_set_gate
+        lea     rdi, [idt + 0x27*16]    ; the master's spurious vector
+        lea     rax, [irq7_spurious]
+        call    idt_set_gate
+        lea     rdi, [idt + 0x2F*16]    ; the slave's spurious vector
+        lea     rax, [irq15_spurious]
+        call    idt_set_gate
+
+        ; The i8042 configured for the first time, and the mouse reset,
+        ; identified and told to report (ring 6c, GLASS.md "The device").
+        ; Still interrupts off, polled; a missing mouse costs a moment.
+        call    mouse_init
+
+        ; The handover: from here the machine is the seed's (stage8.asm,
+        ; seed_main). The loader's code stays below it, read-only.
+        jmp     seed_main
+
+; ---------------------------------------------------------------------------
+; Serial. Only the BSP ever calls any of this - one owner per device, the
+; concurrency doctrine's first appearance. The application processors have no
+; path to these routines at all.
+; ---------------------------------------------------------------------------
+
+; serial_init - COM1 at 115200 8N1, FIFO on. Preserves everything.
+serial_init:
+        push    rax
+        push    rdx
+        mov     dx, COM1_IER
+        xor     al, al
+        out     dx, al                  ; no interrupts from the UART
+        mov     dx, COM1_LCR
+        mov     al, 0x80
+        out     dx, al                  ; DLAB on, so the next two are the divisor
+        mov     dx, COM1
+        mov     al, 0x01
+        out     dx, al                  ; divisor low  = 1 -> 115200 baud
+        mov     dx, COM1_IER
+        xor     al, al
+        out     dx, al                  ; divisor high = 0
+        mov     dx, COM1_LCR
+        mov     al, 0x03
+        out     dx, al                  ; 8 bits, no parity, 1 stop; DLAB off
+        mov     dx, COM1_FCR
+        mov     al, 0xC7
+        out     dx, al                  ; FIFO on and cleared
+        mov     dx, COM1_MCR
+        mov     al, 0x03
+        out     dx, al                  ; DTR | RTS
+        pop     rdx
+        pop     rax
+        ret
+
+; serial_putc - AL = the byte. Preserves everything.
+;
+; Also the tee of the boot-log mirror: every byte that goes to the wire lands
+; in log_buf too, so the console can later replay the boot log byte for byte
+; (plan decision 10). Only the BSP calls this, so the append needs no lock.
+serial_putc:
+        push    rax
+        push    rbx
+        push    rdx
+        mov     ebx, [log_len]
+        cmp     ebx, LOG_BUF_SIZE
+        jae     .mirrored               ; full: the mirror stops, serial goes on
+        lea     rdx, [log_buf]
+        mov     [rdx + rbx], al
+        inc     dword [log_len]
+.mirrored:
+        cmp     dword [con_ready], 0    ; once the console is up, the tee
+        je      .wire                   ; draws every serial byte live
+        call    console_putc
+.wire:
+        mov     ah, al
+.wait:  mov     dx, COM1_LSR
+        in      al, dx
+        test    al, 0x20                ; transmit holding register empty?
+        jz      .wait
+        mov     al, ah
+        mov     dx, COM1
+        out     dx, al
+        pop     rdx
+        pop     rbx
+        pop     rax
+        ret
+
+; serial_puts - RSI = NUL-terminated string. Preserves everything.
+serial_puts:
+        push    rax
+        push    rsi
+.next:  lodsb
+        test    al, al
+        jz      .done
+        call    serial_putc
+        jmp     .next
+.done:  pop     rsi
+        pop     rax
+        ret
+
+; serial_putdec - EAX = unsigned value, in decimal, no padding.
+serial_putdec:
+        push    rax
+        push    rbx
+        push    rcx
+        push    rdx
+        xor     ecx, ecx                ; how many digits we pushed
+        mov     ebx, 10
+        test    eax, eax
+        jnz     .split
+        mov     al, '0'                 ; zero still has one digit
+        call    serial_putc
+        jmp     .done
+.split: test    eax, eax
+        jz      .emit
+        xor     edx, edx
+        div     ebx                     ; EAX = quotient, EDX = remainder
+        add     dl, '0'
+        push    rdx
+        inc     ecx
+        jmp     .split
+.emit:  test    ecx, ecx
+        jz      .done
+        pop     rax                     ; digits come back most significant first
+        call    serial_putc
+        dec     ecx
+        jmp     .emit
+.done:  pop     rdx
+        pop     rcx
+        pop     rbx
+        pop     rax
+        ret
+
+; serial_puthex64 - RAX = value, as exactly 16 lowercase hex digits.
+; Fixed width on purpose: the acceptance test matches [0-9a-f]{16}, and a fixed
+; width means no leading-zero suppression logic to get wrong.
+serial_puthex64:
+        push    rax
+        push    rbx
+        push    rcx
+        mov     rbx, rax
+        mov     ecx, 16
+.next:  rol     rbx, 4                  ; top nibble down into bl
+        mov     al, bl
+        and     al, 0x0F
+        cmp     al, 10
+        jb      .dec
+        add     al, 'a' - 10
+        jmp     .out
+.dec:   add     al, '0'
+.out:   call    serial_putc
+        dec     ecx
+        jnz     .next
+        pop     rcx
+        pop     rbx
+        pop     rax
+        ret
+
+; serial_puthex32 - EAX = value, as exactly 8 lowercase hex digits (a device
+; register). The 64-bit routine's loop over the value's top half.
+serial_puthex32:
+        push    rax
+        push    rbx
+        push    rcx
+        mov     rbx, rax
+        shl     rbx, 32                 ; the eight digits now sit at the top
+        mov     ecx, 8
+.next:  rol     rbx, 4
+        mov     al, bl
+        and     al, 0x0F
+        cmp     al, 10
+        jb      .dec
+        add     al, 'a' - 10
+        jmp     .out
+.dec:   add     al, '0'
+.out:   call    serial_putc
+        dec     ecx
+        jnz     .next
+        pop     rcx
+        pop     rbx
+        pop     rax
+        ret
+
+; serial_err - RSI = message. Prints "ERR: <msg>" and stops the machine.
+;
+; The ERR: prefix is deliberate. It can never be mistaken for one of the seven
+; S7: lines the acceptance tests count, so a failure path can say what went
+; wrong without changing the shape of the log the tests match - and the tests
+; print the whole capture on failure, so it is seen.
+serial_err:
+        call    serial_err_line
+        jmp     halt_forever
+
+; serial_err_line - the line of serial_err without the halt, for the one
+; path that goes on into the monitor (ring 7c item 20). Preserves everything.
+serial_err_line:
+        push    rsi
+        lea     rsi, [msg_err]
+        call    serial_puts
+        pop     rsi
+        call    serial_puts
+        push    rsi
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+        pop     rsi
+        ret
+
+; serial_raw_puts - RSI = a NUL-terminated string, to the UART only: no
+; mirror, no tee. The one line that goes out after the ready line without
+; landing in the conversation (GLASS.md, "The eighteenth line").
+serial_raw_puts:
+        push    rax
+        push    rdx
+        push    rsi
+.next:  lodsb
+        test    al, al
+        jz      .done
+        mov     ah, al
+.wait:  mov     dx, COM1_LSR
+        in      al, dx
+        test    al, 0x20
+        jz      .wait
+        mov     al, ah
+        mov     dx, COM1
+        out     dx, al
+        jmp     .next
+.done:  pop     rsi
+        pop     rdx
+        pop     rax
+        ret
+
+; ---------------------------------------------------------------------------
+; Firmware call helpers.
+;
+; Each one re-establishes a 16-byte-aligned frame with 0x40 of scratch below
+; it: 32 bytes of shadow space the callee owns, plus room for a fifth and sixth
+; stack argument. Returns EFI_STATUS in RAX.
+; ---------------------------------------------------------------------------
+
+; get_memory_map - fill map_buf and the four values that describe it.
+get_memory_map:
+        push    rbp
+        mov     rbp, rsp
+        and     rsp, -16
+        sub     rsp, 0x40
+        mov     qword [map_size], MAP_BUF_SIZE
+        mov     rax, [boot_services]
+        lea     rcx, [map_size]
+        lea     rdx, [map_buf]
+        lea     r8, [map_key]
+        lea     r9, [desc_size]
+        lea     r10, [desc_ver]
+        mov     [rsp + 0x20], r10       ; DescriptorVersion, the fifth argument
+        call    [rax + 0x38]            ; BootServices->GetMemoryMap
+        mov     rsp, rbp
+        pop     rbp
+        ret
+
+; alloc_tramp_page - claim the single page at [tramp_addr], exactly there.
+alloc_tramp_page:
+        push    rbp
+        mov     rbp, rsp
+        and     rsp, -16
+        sub     rsp, 0x40
+        mov     rax, [boot_services]
+        mov     ecx, 2                  ; AllocateAddress
+        mov     edx, 2                  ; EfiLoaderData
+        mov     r8d, 1                  ; one 4 KB page
+        lea     r9, [tramp_addr]
+        call    [rax + 0x28]            ; BootServices->AllocatePages
+        mov     rsp, rbp
+        pop     rbp
+        ret
+
+; ---------------------------------------------------------------------------
+; Paging - the identity map, the read-only split of the image's 2 MB page,
+; and the uncached mappings of a device's BAR. The tables themselves
+; (pml4, pdpt, pd_tables, image_pt, spare_pages) are BSS, writable.
+; ---------------------------------------------------------------------------
+
+; build_paging - identity-map the first 4 GB with 2 MB pages.
+;
+; One PML4, one PDPT, four page directories: 24 KB of tables for 4 GB of
+; address space. That covers low memory, the trampoline page, our own image and
+; stack, and the framebuffer. 1 GB pages would halve it again but need a CPUID
+; check that QEMU's default CPU may not pass, so 2 MB is the safe unit.
+;
+; Everything not written here is left as the loader zero-filled it, which is
+; exactly the "not present" we want.
+build_paging:
+        lea     rax, [pdpt]
+        or      rax, 3                  ; present | writable
+        lea     rdi, [pml4]
+        mov     [rdi], rax              ; PML4[0] -> PDPT, the first 512 GB
+
+        lea     rdi, [pdpt]
+        lea     rsi, [pd_tables]
+        mov     ecx, 4                  ; four directories, 1 GB each
+.pdpt:
+        mov     rax, rsi
+        or      rax, 3
+        mov     [rdi], rax
+        add     rdi, 8
+        add     rsi, 0x1000
+        dec     ecx
+        jnz     .pdpt
+
+        lea     rdi, [pd_tables]
+        xor     rax, rax                ; physical address of the current page
+        mov     r8, [fb_base]
+        mov     r9, r8
+        add     r9, [fb_size]
+        mov     ecx, 2048               ; 2048 * 2 MB = 4 GB
+.pd:
+        mov     rdx, rax
+        or      rdx, 0x83               ; present | writable | 2 MB page
+
+        ; A page overlapping the framebuffer is marked uncached. Left
+        ; writeback, our pixels could sit in a cache line and never reach the
+        ; screen - a black screen with a serial log claiming success.
+        mov     r10, rax
+        add     r10, 0x200000
+        cmp     rax, r9
+        jae     .store
+        cmp     r10, r8
+        jbe     .store
+        or      rdx, 0x18               ; PWT | PCD
+.store:
+        mov     [rdi], rdx
+        add     rdi, 8
+        add     rax, 0x200000
+        dec     ecx
+        jnz     .pd
+        jmp     text_split              ; ring 8a: .text read-only, then return
+
+; text_split - the 2 MB page that holds .text, split into 512 pages of 4 KB
+; in image_pt (PARTS.md, "The read-only floor"): each page of .text present
+; and read-only, every other page present and writable, all with the 2 MB
+; entry's cache bits. Reached from build_paging's end, still on the
+; firmware's identity map, so a label's address is its physical address;
+; the image is at ImageBase (relocations stripped), which is 2 MB aligned.
+; A .text across two 2 MB pages is a named error, never a writable page.
+text_split:
+        lea     r8, [text_start]
+        lea     r11, [text_end]
+        mov     rdx, r8
+        shr     rdx, 21                 ; the 2 MB page's index in pd_tables
+        lea     rax, [r11 - 1]
+        shr     rax, 21
+        cmp     rax, rdx
+        jne     .straddles
+        lea     rdi, [pd_tables]
+        mov     r10, [rdi + rdx*8]
+        and     r10d, 0x18              ; PWT | PCD, as the 2 MB entry had them
+        or      r10d, 1                 ; present
+        mov     r9, rdx
+        shl     r9, 21                  ; the page's base
+        lea     rsi, [image_pt]
+        xor     ecx, ecx
+.pte:
+        mov     rax, rcx
+        shl     rax, 12
+        add     rax, r9                 ; this 4 KB page's address
+        cmp     rax, r8
+        jb      .writable
+        cmp     rax, r11
+        jb      .entry                  ; inside .text: read-only
+.writable:
+        or      rax, 2
+.entry:
+        or      rax, r10
+        mov     [rsi + rcx*8], rax
+        inc     ecx
+        cmp     ecx, 512
+        jb      .pte
+        lea     rax, [image_pt]
+        or      rax, 3                  ; present | writable: the entries decide
+        mov     [rdi + rdx*8], rax      ; the directory now names the table
+        ret
+.straddles:
+        lea     rsi, [err_text_split]
+        call    serial_err
+
+; cpu_phys_bits - phys_limit = 1 << (the physical address width from CPUID
+; 0x80000008, or 36 if the leaf is absent). Preserves everything.
+cpu_phys_bits:
+        push    rax
+        push    rbx
+        push    rcx
+        push    rdx
+        mov     eax, 0x80000000
+        cpuid
+        cmp     eax, 0x80000008
+        jb      .default
+        mov     eax, 0x80000008
+        cpuid
+        movzx   ecx, al
+        jmp     .set
+.default:
+        mov     ecx, 36
+.set:
+        mov     rax, 1
+        shl     rax, cl
+        mov     [phys_limit], rax
+        pop     rdx
+        pop     rcx
+        pop     rbx
+        pop     rax
+        ret
+
+; alloc_spare_page - RAX = a zeroed 4 KB page from the pool. Preserves
+; everything else. Exhaustion is a reported error.
+alloc_spare_page:
+        push    rcx
+        push    rdi
+        mov     eax, [spare_next]
+        cmp     eax, SPARE_PAGES
+        jae     .exhausted
+        inc     dword [spare_next]
+        shl     eax, 12
+        lea     rdi, [spare_pages]
+        add     rdi, rax
+        push    rdi
+        xor     eax, eax
+        mov     ecx, 512
+        rep     stosq                   ; the loader zeroed BSS, but say so
+        pop     rax
+        pop     rdi
+        pop     rcx
+        ret
+.exhausted:
+        lea     rsi, [err_spare]
+        call    serial_err
+
+; map_mmio_2m - RAX = a physical address. Installs a present, writable,
+; UNCACHED (PWT|PCD) 2 MB identity mapping of the page containing it,
+; creating the PML4 and PDPT entries on the way if they are absent. Below
+; 4 GB this overwrites an existing identity entry with an uncached one, which
+; is what a BAR there would want too. Preserves everything.
+map_mmio_2m:
+        push    rax
+        push    rcx
+        push    rdx
+        push    rdi
+        push    r8
+        mov     r8, rax
+        cmp     r8, [phys_limit]
+        jae     .too_high
+
+        mov     rax, r8                 ; PML4 entry -> a PDPT
+        shr     rax, 39
+        and     eax, 511
+        lea     rdi, [pml4]
+        lea     rdi, [rdi + rax*8]
+        call    .entry_or_new
+
+        mov     rax, r8                 ; PDPT entry -> a PD
+        shr     rax, 30
+        and     eax, 511
+        lea     rdi, [rdi + rax*8]
+        call    .entry_or_new
+
+        mov     rax, r8                 ; PD entry -> the 2 MB page itself
+        shr     rax, 21
+        and     eax, 511
+        lea     rdi, [rdi + rax*8]
+        mov     rdx, r8
+        mov     rax, 0xFFFFFFFFFFE00000
+        and     rdx, rax
+        or      rdx, 0x83 | 0x18        ; present | writable | 2 MB | PWT | PCD
+        mov     [rdi], rdx
+        invlpg  [r8]
+
+        pop     r8
+        pop     rdi
+        pop     rdx
+        pop     rcx
+        pop     rax
+        ret
+
+; RDI = the address of a table entry; returns RDI = the table it points to,
+; allocating and linking a fresh one if the entry is not present.
+.entry_or_new:
+        mov     rdx, [rdi]
+        test    rdx, 1
+        jnz     .present
+        call    alloc_spare_page
+        mov     rdx, rax
+        or      rdx, 3                  ; present | writable
+        mov     [rdi], rdx
+.present:
+        mov     rax, 0x000FFFFFFFFFF000
+        and     rdx, rax
+        mov     rdi, rdx
+        ret
+.too_high:
+        lea     rsi, [err_bar_high]
+        call    serial_err
+
+; ---------------------------------------------------------------------------
+; The IDT and its exception stubs.
+;
+; Vectors 8, 10-14, 17, 21 and 30 arrive with a CPU-pushed error code; the
+; rest do not. Every stub normalises the frame by pushing a dummy zero where
+; the CPU pushed nothing, then pushes its own vector number, so the common
+; handler sees one shape: [rsp] = vector, [rsp+8] = error code, [rsp+16] = RIP.
+;
+; The stubs are padded to a fixed 16 bytes each, so their addresses are
+; exc_stubs + vector*16, computed with a RIP-relative lea at runtime - no
+; absolute address anywhere, keeping the discipline that earned the stripped
+; relocations.
+; ---------------------------------------------------------------------------
+%define EXC_STUB_SIZE   16
+%assign ERRCODE_MASK (1<<8)|(1<<10)|(1<<11)|(1<<12)|(1<<13)|(1<<14)|(1<<17)|(1<<21)|(1<<30)
+
+align 16
+exc_stubs:
+%assign vec 0
+%rep 32
+.stub_%+ vec:
+  %if ((1 << vec) & ERRCODE_MASK) == 0
+        push    byte 0                  ; the dummy where no error code came
+  %endif
+        push    byte vec
+        jmp     exc_common
+        times   EXC_STUB_SIZE-($-.stub_%+ vec) db 0xCC
+%assign vec vec+1
+%endrep
+
+; exc_common - print "ERR: exception <vector> at 0x<rip>" and stop the world.
+;
+; A parked AP that somehow faults arrives here too and writes serial - a
+; deliberate breach of one-owner (plan decision 9): the machine is already
+; lost, and an interleaved message beats a silent machine-wide reboot.
+exc_common:
+        cli
+        cld                             ; the serial helpers use lodsb
+        lea     rsi, [msg_exc]
+        call    serial_puts
+        mov     rax, [rsp]              ; the vector the stub pushed
+        call    serial_putdec
+        lea     rsi, [msg_exc_at]
+        call    serial_puts
+        mov     rax, [rsp + 16]         ; the RIP the CPU pushed
+        call    serial_puthex64
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+        jmp     halt_forever
+
+; idt_set_gate - RDI = the gate, RAX = the handler. Clobbers RAX.
+; 64-bit interrupt gate: present, DPL 0, type 0xE, IST 0, selector 0x08.
+idt_set_gate:
+        mov     [rdi], ax               ; offset 15:0
+        mov     word [rdi + 2], 0x08
+        mov     word [rdi + 4], 0x8E00
+        shr     rax, 16
+        mov     [rdi + 6], ax           ; offset 31:16
+        shr     rax, 16
+        mov     [rdi + 8], eax          ; offset 63:32
+        mov     dword [rdi + 12], 0
+        ret
+
+; setup_idt - fill gates 0..31 with the stubs and load IDTR. Gates 32..255
+; stay zero-filled BSS - not present - until the keyboard item claims its two.
+setup_idt:
+        push    rax
+        push    rcx
+        push    rsi
+        push    rdi
+        lea     rdi, [idt]
+        lea     rsi, [exc_stubs]
+        xor     ecx, ecx
+.fill:
+        mov     rax, rsi
+        call    idt_set_gate
+        add     rdi, 16
+        add     rsi, EXC_STUB_SIZE
+        inc     ecx
+        cmp     ecx, 32
+        jb      .fill
+        lea     rax, [idt]
+        mov     [idtr + 2], rax         ; base is only known at runtime
+        lidt    [idtr]
+        pop     rdi
+        pop     rsi
+        pop     rcx
+        pop     rax
+        ret
+
+halt_forever:
+        cli
+.hang:  hlt
+        jmp     .hang
+
+; ---------------------------------------------------------------------------
+; The loader's own port and timer primitives: PCI configuration space
+; through CF8/CFC, and the PIT's channel 2 for a bounded wait.
+; ---------------------------------------------------------------------------
+
+; pci_cfg_read32 - EBX = bus<<16 | device<<11 | function<<8, ECX = register.
+; Returns EAX. Preserves everything else.
+pci_cfg_read32:
+        push    rdx
+        mov     eax, ecx
+        and     eax, 0xFC
+        or      eax, ebx
+        or      eax, 0x80000000
+        mov     dx, 0xCF8
+        out     dx, eax
+        mov     dx, 0xCFC
+        in      eax, dx
+        pop     rdx
+        ret
+
+; pci_cfg_write32 - EBX, ECX as above, EAX = the value. Preserves everything.
+pci_cfg_write32:
+        push    rax
+        push    rdx
+        push    rax
+        mov     eax, ecx
+        and     eax, 0xFC
+        or      eax, ebx
+        or      eax, 0x80000000
+        mov     dx, 0xCF8
+        out     dx, eax
+        pop     rax
+        mov     dx, 0xCFC
+        out     dx, eax
+        pop     rdx
+        pop     rax
+        ret
+
+; pit_wait - AX = ticks of the 1.193182 MHz PIT, so at most about 54 ms.
+; Channel 2, mode 0, gated by port 0x61 bit 0, polled on OUT2 in bit 5. The
+; speaker bit is deliberately left clear.
+pit_wait:
+        push    rax
+        push    rcx
+        mov     cx, ax
+        in      al, 0x61
+        and     al, 0xFC                ; speaker off
+        or      al, 0x01                ; gate 2 on
+        out     0x61, al
+        mov     al, 0xB0                ; channel 2, lo/hi, mode 0, binary
+        out     0x43, al
+        mov     al, cl
+        out     0x42, al
+        mov     al, ch
+        out     0x42, al
+.wait:
+        in      al, 0x61
+        test    al, 0x20                ; OUT2 high means terminal count
+        jz      .wait
+        pop     rcx
+        pop     rax
+        ret
+
+; ---------------------------------------------------------------------------
+; The disk - the AHCI driver (stage7/DISK.md, ring 7a), replacing Stage 3's
+; virtio-blk driver. One controller found by class, every port with a SATA
+; disk identified and classified, one port chosen by DISK.md's selection
+; rule, one command slot, every transfer one sector, polled with a bounded
+; wait, interrupts never enabled. The two stores are two PARTITION
+; DESCRIPTORS over the chosen port: blk_rw keeps Stage 3's signature and
+; adds the partition's base. Only the BSP ever calls any of this.
+; ---------------------------------------------------------------------------
+
+; ahci_find - the physical address width, the one-pass PCI scan, then the
+; controller owned: memory, bus mastering and INTx off in its command
+; register BEFORE its BAR is read (the standing gotcha); the ABAR mapped
+; uncached wherever the firmware put it; AE set, IE clear; CAP and PI into
+; the obs page. Called once from efi_main with interrupts off; clobbers
+; registers freely.
+ahci_find:
+        call    cpu_phys_bits
+        call    pci_scan
+        cmp     dword [ahci_found], 0
+        jne     .have
+        lea     rsi, [err_no_ahci]
+        call    serial_err
+.have:
+        mov     ebx, [ahci_bdf]
+        mov     ecx, 0x04
+        call    pci_cfg_read32
+        and     eax, 0xFFFF             ; the status half is write-1-to-clear
+        or      eax, PCI_CMD_MEMORY | PCI_CMD_MASTER | PCI_CMD_INTX_OFF
+        call    pci_cfg_write32
+        mov     ecx, 0x24               ; BAR5, the ABAR: a 32-bit memory BAR
+        call    pci_cfg_read32
+        test    al, 1
+        jnz     .bar_io
+        and     eax, 0xFFFFFFF0
+        mov     [ahci_abar], rax        ; RAX's high half is zero
+        call    map_mmio_2m             ; the page holding its first byte
+        add     rax, 0x10FF
+        call    map_mmio_2m             ; and its last (AHCI 1.3: 0x1100 bytes)
+        mov     rdi, [ahci_abar]
+        mov     eax, [rdi + HBA_GHC]
+        or      eax, GHC_AE
+        and     eax, ~GHC_IE
+        mov     [rdi + HBA_GHC], eax
+        mov     eax, [rdi + HBA_CAP]
+        mov     [obs_page + OBS_AHCI_CAP], rax
+        mov     eax, [rdi + HBA_PI]
+        mov     [obs_page + OBS_AHCI_PI], rax
+        mov     [ahci_pi], eax
+        ret
+.bar_io:
+        lea     rsi, [err_bar_io]
+        call    serial_err
+
+; ahci_port_base - EAX = a port index; RDI = its register block. Clobbers
+; EAX; preserves everything else.
+ahci_port_base:
+        mov     rdi, [ahci_abar]
+        add     rdi, HBA_PORTS
+        shl     eax, 7                  ; 0x80 bytes per port
+        add     rdi, rax
+        ret
+
+; ahci_port_stop - RDI = a port's registers. ST cleared and CR awaited
+; clear, then FRE cleared and FR awaited clear, each bounded; a port that
+; will not stop is a named error. Preserves everything.
+ahci_port_stop:
+        push    rax
+        push    r8
+        and     dword [rdi + PX_CMD], ~PXCMD_ST
+        mov     r8d, AHCI_STOP_TRIES
+.wait_cr:
+        test    dword [rdi + PX_CMD], PXCMD_CR
+        jz      .cr_clear
+        mov     ax, PIT_200US
+        call    pit_wait
+        dec     r8d
+        jnz     .wait_cr
+        jmp     .would_not
+.cr_clear:
+        and     dword [rdi + PX_CMD], ~PXCMD_FRE
+        mov     r8d, AHCI_STOP_TRIES
+.wait_fr:
+        test    dword [rdi + PX_CMD], PXCMD_FR
+        jz      .fr_clear
+        mov     ax, PIT_200US
+        call    pit_wait
+        dec     r8d
+        jnz     .wait_fr
+.would_not:
+        lea     rsi, [err_ahci_stop]
+        call    serial_err
+.fr_clear:
+        pop     r8
+        pop     rax
+        ret
+
+; ahci_port_open - EAX = the index of a port whose device is present.
+; Stops the port, gives it this driver's command list and FIS receive area
+; (zeroed), clears PxSERR and PxIS, masks PxIE, starts it (FRE, then ST
+; once BSY and DRQ are clear). Records the port and its registers. Called
+; for each port identified and again for the chosen one. Clobbers
+; registers freely.
+ahci_port_open:
+        mov     [ahci_port], eax
+        call    ahci_port_base
+        mov     [ahci_port_regs], rdi
+        call    ahci_port_stop
+
+        lea     rdi, [ahci_clb]         ; the list, the FIS area and the table
+        mov     ecx, (1024 + 256 + 256) / 8     ; contiguous in BSS, zeroed
+        xor     eax, eax
+        rep     stosq
+
+        mov     rdi, [ahci_port_regs]
+        lea     rax, [ahci_clb]
+        mov     [rdi + PX_CLB], eax
+        shr     rax, 32
+        mov     [rdi + PX_CLBU], eax    ; zero: BSS lies below 4 GB
+        lea     rax, [ahci_fb]
+        mov     [rdi + PX_FB], eax
+        shr     rax, 32
+        mov     [rdi + PX_FBU], eax
+        mov     dword [rdi + PX_SERR], 0xFFFFFFFF       ; write-1-to-clear
+        mov     dword [rdi + PX_IS], 0xFFFFFFFF
+        mov     dword [rdi + PX_IE], 0
+        or      dword [rdi + PX_CMD], PXCMD_FRE
+        mov     r8d, AHCI_STOP_TRIES
+.wait_tfd:
+        test    dword [rdi + PX_TFD], TFD_BSY | TFD_DRQ
+        jz      .idle
+        mov     ax, PIT_200US
+        call    pit_wait
+        dec     r8d
+        jnz     .wait_tfd
+        lea     rsi, [err_ahci_stop]
+        call    serial_err
+.idle:
+        or      dword [rdi + PX_CMD], PXCMD_ST
+        ret
+
+; ahci_cmd - one command in slot 0 on the open port. AL = the ATA command,
+; EBX = the LBA (bits 47:32 zero), RDI = a 512-byte buffer, DL = 1 when the
+; data flows to the device (the W bit), 0 for a read. Builds the header and
+; the table, waits for the task file to be idle, issues, polls PxCI with a
+; PIT breath between looks, bounded, then checks the task file; every
+; failure is a named ERR: line. Counted and timed for the obs page as the
+; virtio requests were. Preserves everything.
+ahci_cmd:
+        push    rax
+        push    rbx
+        push    rcx
+        push    rdx
+        push    rsi
+        push    rdi
+        push    r8
+        push    r9
+        push    r10
+        mov     r9, rdi                 ; the buffer
+        lea     r10, [ahci_ct]
+        push    rax
+        mov     rdi, r10                ; the table, cleared
+        mov     ecx, 256 / 8
+        xor     eax, eax
+        rep     stosq
+        pop     rax
+        mov     byte [r10 + 0], FIS_H2D
+        mov     byte [r10 + 1], 0x80    ; C: a command, not control
+        mov     [r10 + 2], al           ; the command
+        mov     ecx, ebx
+        mov     [r10 + 4], cl           ; LBA 7:0
+        shr     ecx, 8
+        mov     [r10 + 5], cl           ; LBA 15:8
+        shr     ecx, 8
+        mov     [r10 + 6], cl           ; LBA 23:16
+        mov     byte [r10 + 7], 0x40    ; LBA mode
+        shr     ecx, 8
+        mov     [r10 + 8], cl           ; LBA 31:24; 47:32 stay zero
+        mov     byte [r10 + 12], 1      ; one sector
+        mov     [r10 + CT_PRDT], r9     ; DBA and DBAU
+        mov     dword [r10 + CT_PRDT + 12], 511 ; byte count - 1, no interrupt
+        lea     rsi, [ahci_clb]         ; slot 0's header
+        mov     eax, 5 | (1 << 16)      ; CFL 5 dwords, PRDTL 1
+        test    dl, dl
+        jz      .header
+        or      eax, 1 << 6             ; W
+.header:
+        mov     [rsi], eax
+        mov     dword [rsi + 4], 0      ; PRDBC
+        mov     [rsi + 8], r10          ; CTBA and CTBAU
+
+        mov     rdi, [ahci_port_regs]
+        mov     r8d, AHCI_STOP_TRIES
+.wait_idle:
+        test    dword [rdi + PX_TFD], TFD_BSY | TFD_DRQ
+        jz      .issue
+        mov     ax, PIT_200US
+        call    pit_wait
+        dec     r8d
+        jnz     .wait_idle
+        jmp     .timeout
+.issue:
+        mov     dword [rdi + PX_IS], 0xFFFFFFFF ; a clean slate for this command
+        mov     dword [rdi + PX_CI], 1
+        inc     qword [obs_page + OBS_DISK_REQS]
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        mov     [t_disk], rax
+        mov     r8d, VQ_POLL_TRIES
+.poll:
+        test    dword [rdi + PX_CI], 1
+        jz      .completed
+        mov     ax, PIT_200US
+        call    pit_wait
+        dec     r8d
+        jnz     .poll
+.timeout:
+        lea     rsi, [err_disk_timeout]
+        call    serial_err
+.completed:
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        sub     rax, [t_disk]
+        add     [obs_page + OBS_DISK_WAIT], rax
+        test    dword [rdi + PX_IS], PXIS_TFES
+        jnz     .failed
+        test    dword [rdi + PX_TFD], TFD_ERR
+        jnz     .failed
+        pop     r10
+        pop     r9
+        pop     r8
+        pop     rdi
+        pop     rsi
+        pop     rdx
+        pop     rcx
+        pop     rbx
+        pop     rax
+        ret
+.failed:
+        mov     dword [rdi + PX_SERR], 0xFFFFFFFF
+        lea     rsi, [err_disk_failed]
+        call    serial_err
+
+; ahci_rw - EAX = VBLK_T_IN (a read) or VBLK_T_OUT (a write), EBX = the
+; absolute LBA, RDI = a 512-byte buffer, on the open port. READ DMA EXT or
+; WRITE DMA EXT, one sector. Returns only on success. Preserves everything.
+ahci_rw:
+        push    rax
+        push    rdx
+        cmp     ebx, [ahci_sectors]
+        jae     .beyond
+        mov     dl, al                  ; 0 a read, 1 a write: the W bit
+        mov     al, ATA_READ_DMA_EXT
+        test    dl, dl
+        jz      .go
+        mov     al, ATA_WRITE_DMA_EXT
+.go:
+        call    ahci_cmd
+        pop     rdx
+        pop     rax
+        ret
+.beyond:
+        lea     rsi, [err_disk_beyond]
+        call    serial_err
+
+; ahci_identify - IDENTIFY DEVICE on the open port into ahci_ident: the
+; sector count into ahci_sectors (the LBA48 count in words 100-103 when
+; word 83 bit 10 says so, else words 60-61); 2^32 sectors or more, or a
+; logical sector that is not 512 bytes (word 106 bit 12 with words 117-118
+; not 256), a named error. Clobbers registers freely.
+ahci_identify:
+        mov     al, ATA_IDENTIFY
+        xor     ebx, ebx
+        lea     rdi, [ahci_ident]
+        xor     edx, edx
+        call    ahci_cmd
+        lea     rsi, [ahci_ident]
+        movzx   eax, word [rsi + 106 * 2]
+        test    eax, 1 << 12
+        jz      .sector_512
+        cmp     dword [rsi + 117 * 2], 256      ; words 117-118: the logical sector, in words
+        jne     .bad_sector
+.sector_512:
+        movzx   eax, word [rsi + 83 * 2]
+        test    eax, 1 << 10
+        jz      .lba28
+        mov     rax, [rsi + 100 * 2]            ; words 100-103, a u64
+        mov     rdx, rax
+        shr     rdx, 32
+        test    edx, edx
+        jnz     .too_big
+        jmp     .have
+.lba28:
+        mov     eax, [rsi + 60 * 2]             ; words 60-61
+.have:
+        mov     [ahci_sectors], eax
+        ret
+.bad_sector:
+        lea     rsi, [err_sector_size]
+        call    serial_err
+.too_big:
+        lea     rsi, [err_disk_big]
+        call    serial_err
+
+; disk_select - DISK.md's selection rule. Every implemented port whose
+; device is present and active (DET 3, IPM 1 - a port with a Phy still
+; coming up is given a bounded wait; a port with no device is passed at
+; once) and whose signature is a SATA disk is opened, identified, and its
+; first two sectors read and classified (disk_classify); the port is then
+; stopped, so only the chosen port ever runs with this driver's list. Then:
+; the first port holding a GermOS table is chosen; else the first blank
+; port is chosen and formatted (gpt_write); else the named error naming
+; every identified port, and a halt. Leaves the chosen port open, its count
+; in ahci_sectors, the two descriptors filled. Clobbers registers freely.
+disk_select:
+        xor     r12d, r12d
+        mov     dword [ports_mask], 0
+.port:
+        cmp     r12d, MAX_PORTS
+        jae     .choose
+        bt      dword [ahci_pi], r12d
+        jnc     .next
+        mov     eax, r12d
+        call    ahci_port_base
+        mov     r8d, AHCI_PROBE_TRIES
+        ; Ring 7c (plan decision 4, A2): under staggered spin-up the device
+        ; is not detected until the port has been told to spin it up, so
+        ; DET 0 in the first microseconds means nothing. With CAP.SSS set,
+        ; SUD is set here, DET is given a second to leave 0 - if it stays 0
+        ; the port is empty and is passed - and a device that then appears
+        ; is given ten seconds to reach DET 3, or the boot halts naming the
+        ; port. With SSS clear (the twin) the path from .probe is the one
+        ; ring 7a wrote, byte for byte. This path runs only on the metal.
+        mov     rax, [ahci_abar]
+        test    dword [rax + HBA_CAP], CAP_SSS
+        jz      .probe
+        or      dword [rdi + PX_CMD], PXCMD_SUD
+.spinup_wait:
+        mov     eax, [rdi + PX_SSTS]
+        and     eax, 0xF                ; DET
+        jnz     .spinning               ; a device is there: now the long wait
+        mov     ax, PIT_200US
+        call    pit_wait
+        dec     r8d
+        jnz     .spinup_wait
+        jmp     .next                   ; DET stayed 0 for a second: nothing plugged in
+.spinning:
+        mov     r8d, AHCI_SPINUP_TRIES
+.spin_probe:
+        mov     eax, [rdi + PX_SSTS]
+        and     eax, 0xF0F
+        cmp     eax, 0x103              ; DET 3, IPM 1
+        je      .present
+        mov     ax, PIT_200US
+        call    pit_wait
+        dec     r8d
+        jnz     .spin_probe
+        lea     rsi, [msg_err]          ; ERR: ahci port N did not come up after spin-up
+        call    serial_puts
+        lea     rsi, [err_ahci_spinup]
+        call    serial_puts
+        mov     eax, r12d
+        call    serial_putdec
+        lea     rsi, [err_ahci_spinup_tail]
+        call    serial_puts
+        jmp     halt_forever
+.probe:
+        mov     eax, [rdi + PX_SSTS]
+        mov     ecx, eax
+        and     ecx, 0xF                ; DET
+        jz      .next                   ; no device, no Phy: nothing to wait for
+        and     eax, 0xF0F
+        cmp     eax, 0x103              ; DET 3, IPM 1
+        je      .present
+        mov     ax, PIT_200US
+        call    pit_wait
+        dec     r8d
+        jnz     .probe
+        jmp     .next
+.present:
+        cmp     dword [rdi + PX_SIG], SIG_SATA_DISK
+        jne     .next
+        mov     eax, r12d
+        call    ahci_port_open
+        call    ahci_identify
+        mov     eax, [ahci_sectors]
+        lea     rdx, [port_sectors]
+        mov     [rdx + r12*4], eax
+        call    disk_classify           ; AL = the word
+        lea     rdx, [port_word]
+        mov     [rdx + r12], al
+        bts     dword [ports_mask], r12d
+        mov     rdi, [ahci_port_regs]
+        call    ahci_port_stop
+.next:
+        inc     r12d
+        jmp     .port
+
+.choose:
+        cmp     dword [ports_mask], 0
+        je      .no_disk
+        mov     al, DISK_GERMOS
+        call    port_with_word
+        cmp     eax, -1
+        jne     .chosen
+        mov     al, DISK_BLANK
+        call    port_with_word
+        cmp     eax, -1
+        je      .refuse
+        call    ahci_port_open
+        lea     rdx, [port_sectors]     ; the blank disk's count, for the writer
+        mov     eax, [ahci_port]
+        mov     eax, [rdx + rax*4]
+        mov     [ahci_sectors], eax
+        call    gpt_write               ; the table, then "S7: gpt written"
+        mov     eax, [ahci_port]
+.chosen:
+        call    ahci_port_open          ; open again: another port may have held the list
+        mov     eax, [ahci_port]
+        lea     rdx, [port_sectors]
+        mov     eax, [rdx + rax*4]
+        mov     [ahci_sectors], eax
+        mov     eax, [ahci_port]
+        mov     [obs_page + OBS_AHCI_PORT], rax
+        call    gpt_read                ; the descriptors from the table on the chosen disk
+        ret
+.no_disk:
+        lea     rsi, [err_no_sata]
+        call    serial_err
+.refuse:
+        ; ERR: no GermOS disk and no blank disk - port 0: other, port 1: gpt
+        lea     rsi, [msg_err]
+        call    serial_puts
+        lea     rsi, [err_no_germos]
+        call    serial_puts
+        xor     r12d, r12d
+        xor     r13d, r13d              ; ports named so far
+.name:
+        cmp     r12d, MAX_PORTS
+        jae     .named
+        bt      dword [ports_mask], r12d
+        jnc     .name_next
+        test    r13d, r13d
+        jz      .first_name
+        lea     rsi, [msg_comma]
+        call    serial_puts
+.first_name:
+        lea     rsi, [msg_port]
+        call    serial_puts
+        mov     eax, r12d
+        call    serial_putdec
+        lea     rsi, [msg_colon]
+        call    serial_puts
+        lea     rdx, [port_word]
+        movzx   eax, byte [rdx + r12]
+        call    word_string
+        call    serial_puts
+        inc     r13d
+.name_next:
+        inc     r12d
+        jmp     .name
+.named:
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+        jmp     halt_forever
+
+; word_string - AL = a word; RSI = its name. RIP-relative leas, never a
+; table of addresses in data: relocations are stripped. Preserves
+; everything else.
+word_string:
+        lea     rsi, [word_germos]
+        cmp     al, DISK_GERMOS
+        je      .out
+        lea     rsi, [word_blank]
+        cmp     al, DISK_BLANK
+        je      .out
+        lea     rsi, [word_gpt]
+        cmp     al, DISK_GPT
+        je      .out
+        lea     rsi, [word_torn]
+        cmp     al, DISK_TORN
+        je      .out
+        lea     rsi, [word_other]
+.out:
+        ret
+
+; port_with_word - AL = a word; EAX = the first identified port holding a
+; disk of that word, or -1. Preserves everything else.
+port_with_word:
+        push    rcx
+        push    rdx
+        mov     cl, al
+        xor     eax, eax
+.scan:
+        cmp     eax, MAX_PORTS
+        jae     .none
+        bt      dword [ports_mask], eax
+        jnc     .next
+        lea     rdx, [port_word]
+        cmp     [rdx + rax], cl
+        je      .found
+.next:
+        inc     eax
+        jmp     .scan
+.none:
+        mov     eax, -1
+.found:
+        pop     rdx
+        pop     rcx
+        ret
+
+; disk_classify - the open port's disk in DISK.md's five words: sectors 0
+; and 1 read into gpt_sec0 and gpt_hdr; both all zero is blank; no EFI PART
+; signature at sector 1 is other; else gpt_validate says germos, gpt or
+; torn. AL = the word. Clobbers registers freely.
+disk_classify:
+        mov     eax, VBLK_T_IN
+        xor     ebx, ebx
+        lea     rdi, [gpt_sec0]
+        call    ahci_rw
+        mov     eax, VBLK_T_IN
+        mov     ebx, 1
+        lea     rdi, [gpt_hdr]
+        call    ahci_rw
+        lea     rsi, [gpt_sec0]
+        mov     ecx, 1024 / 8           ; the two sectors are contiguous
+        call    buf_zero
+        test    eax, eax
+        jnz     .blank
+        mov     rax, 'EFI PART'
+        cmp     [gpt_hdr], rax
+        jne     .other
+        call    gpt_validate
+        ret
+.blank:
+        mov     al, DISK_BLANK
+        ret
+.other:
+        mov     al, DISK_OTHER
+        ret
+
+; buf_zero - RSI = a buffer, ECX = its length in qwords. EAX = 1 if every
+; qword is zero, else 0. Preserves everything else.
+buf_zero:
+        push    rcx
+        push    rsi
+.qword:
+        cmp     qword [rsi], 0
+        jne     .no
+        add     rsi, 8
+        dec     ecx
+        jnz     .qword
+        mov     eax, 1
+        jmp     .out
+.no:
+        xor     eax, eax
+.out:
+        pop     rsi
+        pop     rcx
+        ret
+
+; gpt_validate - DISK.md's recognition rule on gpt_hdr (sector 1 of the
+; open port's disk, its signature already seen): revision, size, reserved,
+; the header's own CRC, MyLBA 1, the entries at LBA 2, 128 of 128 bytes,
+; the usable range inside the disk, the tail zero; the 32 array sectors
+; read into gpt_entries and their CRC; every entry either all zero or
+; inside the usable range; an entry of each GermOS type. AL = DISK_GERMOS
+; (the descriptors filled from the two entries), DISK_GPT (a valid table
+; without both), or DISK_TORN. Clobbers registers freely but R12, which
+; the caller's port loop keeps.
+gpt_validate:
+        push    r12
+        call    .body
+        pop     r12
+        ret
+.body:
+        lea     rsi, [gpt_hdr]
+        cmp     dword [rsi + 8], 0x00010000
+        jne     .torn
+        cmp     dword [rsi + 12], 92
+        jne     .torn
+        cmp     dword [rsi + 20], 0
+        jne     .torn
+        ; the header CRC: bytes 0-15, four zero bytes, bytes 20-91
+        mov     eax, 0xFFFFFFFF
+        mov     ecx, 16
+        call    crc32_update
+        push    rsi
+        lea     rsi, [crc_zero4]
+        mov     ecx, 4
+        call    crc32_update
+        pop     rsi
+        push    rsi
+        add     rsi, 20
+        mov     ecx, 72
+        call    crc32_update
+        pop     rsi
+        not     eax
+        cmp     eax, [rsi + 16]
+        jne     .torn
+        cmp     qword [rsi + 24], 1                     ; MyLBA
+        jne     .torn
+        cmp     dword [rsi + 36], 0                     ; AlternateLBA, high half
+        jne     .torn
+        mov     eax, [rsi + 32]
+        cmp     eax, [ahci_sectors]
+        jae     .torn
+        cmp     dword [rsi + 44], 0                     ; FirstUsable, high half
+        jne     .torn
+        cmp     dword [rsi + 52], 0                     ; LastUsable, high half
+        jne     .torn
+        mov     eax, [rsi + 40]
+        cmp     eax, GPT_FIRST_USABLE
+        jb      .torn
+        mov     [gpt_usable_first], eax
+        mov     edx, [rsi + 48]
+        cmp     edx, [ahci_sectors]
+        jae     .torn
+        cmp     edx, eax
+        jb      .torn
+        mov     [gpt_usable_last], edx
+        cmp     qword [rsi + 72], 2                     ; PartitionEntryLBA
+        jne     .torn
+        cmp     dword [rsi + 80], GPT_ENTRIES
+        jne     .torn
+        cmp     dword [rsi + 84], GPT_ENTRY
+        jne     .torn
+        push    rsi
+        add     rsi, 92
+        mov     ecx, (512 - 92) / 4                     ; 420 bytes: 105 dwords
+.tail:
+        cmp     dword [rsi], 0
+        jne     .torn_pop
+        add     rsi, 4
+        dec     ecx
+        jnz     .tail
+        pop     rsi
+
+        ; the array: 32 sectors from LBA 2
+        mov     ebx, 2
+        lea     rdi, [gpt_entries]
+.read:
+        mov     eax, VBLK_T_IN
+        call    ahci_rw
+        add     rdi, 512
+        inc     ebx
+        cmp     ebx, 2 + GPT_ENTRY_SECTORS
+        jb      .read
+        push    rsi
+        lea     rsi, [gpt_entries]
+        mov     eax, 0xFFFFFFFF
+        mov     ecx, GPT_ENTRIES * GPT_ENTRY
+        call    crc32_update
+        not     eax
+        pop     rsi
+        cmp     eax, [rsi + 88]
+        jne     .torn
+
+        ; the entries
+        mov     dword [part_notes + PART_SECTORS], 0
+        mov     dword [part_home + PART_SECTORS], 0
+        xor     r12d, r12d
+.entry:
+        cmp     r12d, GPT_ENTRIES
+        jae     .entries_done
+        lea     rsi, [gpt_entries]
+        mov     eax, r12d
+        shl     eax, 7
+        add     rsi, rax                                ; RSI = the entry
+        mov     ecx, 2
+        call    buf_zero                                ; the type GUID
+        test    eax, eax
+        jz      .used
+        mov     ecx, GPT_ENTRY / 8
+        call    buf_zero                                ; unused: all zero
+        test    eax, eax
+        jz      .torn
+        jmp     .entry_next
+.used:
+        cmp     dword [rsi + 36], 0                     ; FirstLBA, high half
+        jne     .torn
+        cmp     dword [rsi + 44], 0                     ; LastLBA, high half
+        jne     .torn
+        mov     eax, [rsi + 32]
+        mov     edx, [rsi + 40]
+        cmp     eax, [gpt_usable_first]
+        jb      .torn
+        cmp     edx, [gpt_usable_last]
+        ja      .torn
+        cmp     edx, eax
+        jb      .torn
+        sub     edx, eax
+        inc     edx                                     ; EDX = sectors
+        lea     rdi, [guid_notes_type]
+        call    guid_equal
+        jz      .not_notes
+        cmp     dword [part_notes + PART_SECTORS], 0
+        jne     .entry_next                             ; the first of each type wins
+        mov     [part_notes + PART_BASE], eax
+        mov     [part_notes + PART_SECTORS], edx
+        jmp     .entry_next
+.not_notes:
+        lea     rdi, [guid_home_type]
+        call    guid_equal
+        jz      .entry_next
+        cmp     dword [part_home + PART_SECTORS], 0
+        jne     .entry_next
+        mov     [part_home + PART_BASE], eax
+        mov     [part_home + PART_SECTORS], edx
+.entry_next:
+        inc     r12d
+        jmp     .entry
+.entries_done:
+        cmp     dword [part_notes + PART_SECTORS], 0
+        je      .gpt
+        cmp     dword [part_home + PART_SECTORS], 0
+        je      .gpt
+        mov     al, DISK_GERMOS
+        ret
+.gpt:
+        mov     al, DISK_GPT
+        ret
+.torn_pop:
+        pop     rsi
+.torn:
+        mov     al, DISK_TORN
+        ret
+
+; guid_equal - RSI = an entry (its type GUID at 0), RDI = a 16-byte GUID as
+; stored. ZF clear when equal. Preserves everything.
+guid_equal:
+        push    rax
+        push    rcx
+        mov     rax, [rsi]
+        cmp     rax, [rdi]
+        jne     .no
+        mov     rax, [rsi + 8]
+        cmp     rax, [rdi + 8]
+        jne     .no
+        or      eax, 1                  ; ZF clear: equal
+        jmp     .out
+.no:
+        xor     eax, eax                ; ZF set: different
+.out:
+        pop     rcx
+        pop     rax
+        ret
+
+; gpt_read - the chosen disk's table read again and validated; the two
+; descriptors are what gpt_validate filled. A disk chosen as germos is
+; germos; a disk just formatted must read back as germos too - anything
+; else is the writer's error, named. Clobbers registers freely.
+gpt_read:
+        call    disk_classify
+        cmp     al, DISK_GERMOS
+        je      .ok
+        lea     rsi, [err_gpt_readback]
+        call    serial_err
+.ok:
+        ret
+
+; crc32_update - EAX = the running CRC-32 in its inverted form (begin with
+; all ones, finish with NOT), RSI = bytes, ECX = how many. The reflected
+; polynomial 0xEDB88320, bit by bit - the UEFI specification's CRC, whose
+; check value over "123456789" is 0xCBF43926. Preserves everything but EAX.
+crc32_update:
+        push    rcx
+        push    rdx
+        push    rsi
+.byte:
+        test    ecx, ecx
+        jz      .done
+        movzx   edx, byte [rsi]
+        inc     rsi
+        xor     eax, edx
+        mov     edx, 8
+.bit:
+        shr     eax, 1
+        jnc     .no_xor
+        xor     eax, 0xEDB88320
+.no_xor:
+        dec     edx
+        jnz     .bit
+        dec     ecx
+        jmp     .byte
+.done:
+        pop     rsi
+        pop     rdx
+        pop     rcx
+        ret
+
+; disk_rw / home_rw - EAX = VBLK_T_IN (read) or VBLK_T_OUT (write), EBX =
+; the sector within the partition, RDI = a 512-byte buffer, on the notes
+; partition or the home partition. Returns only on success; every failure
+; is a named ERR: line and a halt. Preserves everything. Both are blk_rw
+; on their partition descriptor - Stage 3's signature, unchanged.
+disk_rw:
+        push    rbp
+        lea     rbp, [part_notes]
+        call    blk_rw
+        pop     rbp
+        ret
+
+home_rw:
+        push    rbp
+        lea     rbp, [part_home]
+        call    blk_rw
+        pop     rbp
+        ret
+
+; blk_rw - RBP = a partition descriptor (PART_BASE, PART_SECTORS); EAX,
+; EBX, RDI as above. The sector must lie inside the partition; the base is
+; added and the port driven. Preserves everything.
+blk_rw:
+        push    rbx
+        cmp     ebx, [rbp + PART_SECTORS]
+        jae     .beyond
+        add     ebx, [rbp + PART_BASE]
+        call    ahci_rw
+        pop     rbx
+        ret
+.beyond:
+        lea     rsi, [err_disk_beyond]
+        call    serial_err
+
+; ---------------------------------------------------------------------------
+; The notebook's scan and the home table's read (stage3/NOTEBOOK.md,
+; stage6/HOME.md), at boot, from the disk's read path above. The seed
+; keeps the writers - notebook_append, home_install, gpt_write - which
+; drive the disk through disk_rw and home_rw here.
+; ---------------------------------------------------------------------------
+
+; notebook_init - read sector 0; on the magic and version, count the valid
+; records and log "S7: notebook <N> notes"; otherwise write the header and a
+; zeroed sector 1 and log "S7: notebook formatted". Called once from
+; efi_main after vq_init; clobbers registers freely.
+notebook_init:
+        mov     eax, VBLK_T_IN
+        xor     ebx, ebx
+        lea     rdi, [sector_buf]
+        call    disk_rw
+        mov     rax, 'NOTEBOOK'
+        cmp     [sector_buf], rax
+        jne     .format
+        cmp     dword [sector_buf + 8], 1
+        jne     .format
+
+        mov     dword [nb_count], 0
+        mov     ebx, 1
+.scan:
+        cmp     ebx, [disk_sectors]
+        jae     .scanned
+        mov     eax, VBLK_T_IN
+        lea     rdi, [sector_buf]
+        call    disk_rw
+        call    record_valid
+        test    eax, eax
+        jz      .scanned
+        inc     dword [nb_count]
+        inc     ebx
+        jmp     .scan
+.scanned:
+        mov     [nb_next], ebx          ; the first sector that is not a record
+        mov     eax, [nb_count]
+        mov     [obs_page + OBS_NOTES], rax
+        lea     rsi, [msg_nb]
+        call    serial_puts
+        mov     eax, [nb_count]
+        call    serial_putdec
+        lea     rsi, [msg_notes]
+        call    serial_puts
+        ret
+
+.format:
+        lea     rdi, [sector_buf]       ; the header, from a clean sector
+        mov     ecx, 64
+        xor     eax, eax
+        rep     stosq
+        mov     rax, 'NOTEBOOK'
+        mov     [sector_buf], rax
+        mov     dword [sector_buf + 8], 1       ; version
+        mov     dword [sector_buf + 12], 512    ; sector size
+        mov     qword [sector_buf + 16], 1      ; first journal sector
+        mov     eax, [disk_sectors]
+        dec     eax
+        mov     [sector_buf + 24], rax          ; journal length (RAX high half is zero)
+        mov     eax, VBLK_T_OUT
+        xor     ebx, ebx
+        lea     rdi, [sector_buf]
+        call    disk_rw
+
+        lea     rdi, [sector_buf]       ; sector 1 zeroed: no stale note can
+        mov     ecx, 64                 ; survive the format
+        xor     eax, eax
+        rep     stosq
+        mov     eax, VBLK_T_OUT
+        mov     ebx, 1
+        lea     rdi, [sector_buf]
+        call    disk_rw
+
+        mov     dword [nb_count], 0
+        mov     dword [nb_next], 1
+        lea     rsi, [msg_nb_fmt]
+        call    serial_puts
+        ret
+
+; record_valid - EBX = the sector index; sector_buf holds the sector. EAX = 1
+; if it is a valid record by NOTEBOOK.md's rule - magic, sequence equal to
+; the index, length 1-500, reserved zero, printable text, zero padding - or
+; 0. Preserves everything else.
+record_valid:
+        push    rcx
+        push    rdx
+        push    rsi
+        cmp     dword [sector_buf], 'NOTE'
+        jne     .no
+        cmp     [sector_buf + 4], ebx
+        jne     .no
+        movzx   ecx, word [sector_buf + 8]
+        test    ecx, ecx
+        jz      .no
+        cmp     ecx, NOTE_MAX
+        ja      .no
+        cmp     word [sector_buf + 10], 0
+        jne     .no
+        lea     rsi, [sector_buf + NB_TEXT_OFF]
+        mov     edx, ecx
+.text:
+        lodsb
+        cmp     al, 0x20
+        jb      .no
+        cmp     al, 0x7E
+        ja      .no
+        dec     edx
+        jnz     .text
+        mov     edx, 512 - NB_TEXT_OFF
+        sub     edx, ecx                ; padding bytes after the text
+.pad:
+        test    edx, edx
+        jz      .yes
+        lodsb
+        test    al, al
+        jnz     .no
+        dec     edx
+        jmp     .pad
+.yes:
+        mov     eax, 1
+        jmp     .out
+.no:
+        xor     eax, eax
+.out:
+        pop     rsi
+        pop     rdx
+        pop     rcx
+        ret
+
+; home_init - HOME.md, "The disk": sector 0 recognised (GERMHOME, version
+; 1) or the image formatted (the header written, sectors 1-8 zeroed); the
+; table read into home_table; the entries counted and the next free sector
+; found (home_recount); line twelve. With no second disk, nothing at all.
+; Called once from efi_main; clobbers registers freely.
+home_init:
+        cmp     dword [home_present], 0
+        je      .none
+        mov     eax, VBLK_T_IN
+        xor     ebx, ebx
+        lea     rdi, [sector_buf]
+        call    home_rw
+        mov     rax, 'GERMHOME'
+        cmp     [sector_buf], rax
+        jne     .format
+        cmp     dword [sector_buf + 8], 1
+        jne     .format
+.scan:
+        mov     ebx, HOME_TABLE_FIRST
+        lea     rdi, [home_table]
+.read:
+        mov     eax, VBLK_T_IN
+        call    home_rw
+        add     rdi, 512
+        inc     ebx
+        cmp     ebx, HOME_TABLE_FIRST + HOME_TABLE_SECTORS
+        jb      .read
+        call    home_recount
+        call    choices_update          ; the installed apps on the row
+        lea     rsi, [msg_home]
+        call    serial_puts
+        mov     eax, [home_count]
+        call    serial_putdec
+        lea     rsi, [msg_apps]
+        call    serial_puts
+.none:
+        ret
+
+.format:
+        lea     rdi, [sector_buf]       ; the header, from a clean sector
+        mov     ecx, 64
+        xor     eax, eax
+        rep     stosq
+        mov     rax, 'GERMHOME'
+        mov     [sector_buf], rax
+        mov     dword [sector_buf + 8], 1               ; version
+        mov     dword [sector_buf + 12], 512            ; sector size
+        mov     qword [sector_buf + 16], HOME_TABLE_FIRST
+        mov     qword [sector_buf + 24], HOME_TABLE_SECTORS
+        mov     qword [sector_buf + 32], HOME_DATA_FIRST
+        mov     eax, [part_home + PART_SECTORS]
+        mov     [sector_buf + 40], rax                  ; capacity (RAX high half zero)
+        mov     eax, VBLK_T_OUT
+        xor     ebx, ebx
+        lea     rdi, [sector_buf]
+        call    home_rw
+
+        lea     rdi, [sector_buf]       ; sectors 1-8 zeroed: no stale entry
+        mov     ecx, 64                 ; can survive the format
+        xor     eax, eax
+        rep     stosq
+        mov     ebx, HOME_TABLE_FIRST
+.zero:
+        mov     eax, VBLK_T_OUT
+        lea     rdi, [sector_buf]
+        call    home_rw
+        inc     ebx
+        cmp     ebx, HOME_TABLE_FIRST + HOME_TABLE_SECTORS
+        jb      .zero
+        jmp     .scan                   ; and read it back, as a recognised image is
+
+; ---------------------------------------------------------------------------
+; SHA-256 (FIPS 180-4) - the door's hash, and the seed's install and
+; launch checks.
+; ---------------------------------------------------------------------------
+
+; sha256 - RSI = the bytes, RCX = how many, RDI = 32 bytes for the digest.
+; FIPS 180-4, one 64-byte block at a time, the message schedule and the
+; sixty-four rounds in plain 32-bit arithmetic; the tail padded in its
+; own buffer. Called at an install (the entry's hash) and at a launch (the
+; check). Preserves the callee-saved registers; clobbers RAX, RCX, RDX,
+; RSI, RDI, R8-R11.
+sha256:
+        push    rbx
+        push    rbp
+        push    r12
+        push    r13
+        push    r14
+        push    r15
+        mov     r12, rsi                ; the bytes still to hash
+        mov     r13, rcx                ; how many remain
+        mov     r14, rdi                ; the digest
+        mov     r15, rcx                ; the whole length, for the tail
+        lea     rsi, [sha_init]
+        lea     rdi, [sha_state]
+        mov     ecx, 8
+        rep     movsd
+.blocks:
+        cmp     r13, 64
+        jb      .tail
+        mov     rsi, r12
+        call    sha256_block
+        add     r12, 64
+        sub     r13, 64
+        jmp     .blocks
+.tail:                                  ; the remainder, 0x80, zeros, the
+        lea     rdi, [sha_tail]         ; bit length big-endian - one block
+        mov     ecx, 16                 ; if the remainder is under 56 bytes,
+        xor     eax, eax                ; two otherwise
+        rep     stosq
+        lea     rdi, [sha_tail]
+        mov     rsi, r12
+        mov     rcx, r13
+        rep     movsb
+        mov     byte [rdi], 0x80
+        mov     rax, r15
+        shl     rax, 3
+        bswap   rax
+        mov     edx, 64
+        cmp     r13, 56
+        jb      .one_block
+        mov     edx, 128
+.one_block:
+        lea     rdi, [sha_tail]
+        mov     [rdi + rdx - 8], rax
+        lea     rsi, [sha_tail]
+        call    sha256_block
+        cmp     edx, 64
+        je      .digest
+        lea     rsi, [sha_tail + 64]
+        call    sha256_block
+.digest:
+        lea     rsi, [sha_state]
+        mov     rdi, r14
+        mov     ecx, 8
+.out:
+        lodsd
+        bswap   eax
+        stosd
+        dec     ecx
+        jnz     .out
+        pop     r15
+        pop     r14
+        pop     r13
+        pop     r12
+        pop     rbp
+        pop     rbx
+        ret
+
+; sha256_block - RSI = one 64-byte block, folded into sha_state.
+; Preserves RSI's owner's registers: everything callee-saved is pushed.
+sha256_block:
+        push    rbx
+        push    rbp
+        push    r12
+        push    r13
+        push    r14
+        push    r15
+        push    rdx
+        lea     rdi, [sha_w]
+        mov     ecx, 16
+.load:
+        lodsd
+        bswap   eax
+        stosd
+        dec     ecx
+        jnz     .load
+        mov     ecx, 16
+        lea     rdi, [sha_w]
+.schedule:                              ; W[t] = s1(W[t-2]) + W[t-7] + s0(W[t-15]) + W[t-16]
+        mov     eax, [rdi + rcx*4 - 8]
+        mov     edx, eax
+        ror     edx, 17
+        mov     ebx, eax
+        ror     ebx, 19
+        xor     edx, ebx
+        shr     eax, 10
+        xor     edx, eax                ; s1
+        mov     eax, [rdi + rcx*4 - 60]
+        mov     ebx, eax
+        ror     ebx, 7
+        mov     ebp, eax
+        ror     ebp, 18
+        xor     ebx, ebp
+        shr     eax, 3
+        xor     ebx, eax                ; s0
+        add     edx, ebx
+        add     edx, [rdi + rcx*4 - 28]
+        add     edx, [rdi + rcx*4 - 64]
+        mov     [rdi + rcx*4], edx
+        inc     ecx
+        cmp     ecx, 64
+        jb      .schedule
+
+        lea     rbx, [sha_state]        ; a..h
+        mov     r8d, [rbx]
+        mov     r9d, [rbx + 4]
+        mov     r10d, [rbx + 8]
+        mov     r11d, [rbx + 12]
+        mov     r12d, [rbx + 16]
+        mov     r13d, [rbx + 20]
+        mov     r14d, [rbx + 24]
+        mov     r15d, [rbx + 28]
+        xor     ecx, ecx
+        lea     rsi, [sha_w]
+        lea     rdi, [sha_k]
+.round:
+        mov     eax, r12d               ; T1 = h + S1(e) + Ch(e, f, g) + K[t] + W[t]
+        ror     eax, 6
+        mov     edx, r12d
+        ror     edx, 11
+        xor     eax, edx
+        mov     edx, r12d
+        ror     edx, 25
+        xor     eax, edx
+        mov     edx, r12d
+        and     edx, r13d
+        mov     ebp, r12d
+        not     ebp
+        and     ebp, r14d
+        xor     edx, ebp
+        add     eax, edx
+        add     eax, r15d
+        add     eax, [rdi + rcx*4]
+        add     eax, [rsi + rcx*4]
+        mov     edx, r8d                ; T2 = S0(a) + Maj(a, b, c)
+        ror     edx, 2
+        mov     ebp, r8d
+        ror     ebp, 13
+        xor     edx, ebp
+        mov     ebp, r8d
+        ror     ebp, 22
+        xor     edx, ebp
+        mov     ebp, r8d
+        and     ebp, r9d
+        mov     ebx, r8d
+        and     ebx, r10d
+        xor     ebp, ebx
+        mov     ebx, r9d
+        and     ebx, r10d
+        xor     ebp, ebx
+        add     edx, ebp
+        mov     r15d, r14d              ; h = g, g = f, f = e, e = d + T1,
+        mov     r14d, r13d              ; d = c, c = b, b = a, a = T1 + T2
+        mov     r13d, r12d
+        mov     r12d, r11d
+        add     r12d, eax
+        mov     r11d, r10d
+        mov     r10d, r9d
+        mov     r9d, r8d
+        mov     r8d, eax
+        add     r8d, edx
+        inc     ecx
+        cmp     ecx, 64
+        jb      .round
+        lea     rbx, [sha_state]
+        add     [rbx], r8d
+        add     [rbx + 4], r9d
+        add     [rbx + 8], r10d
+        add     [rbx + 12], r11d
+        add     [rbx + 16], r12d
+        add     [rbx + 20], r13d
+        add     [rbx + 24], r14d
+        add     [rbx + 28], r15d
+        pop     rdx
+        pop     r15
+        pop     r14
+        pop     r13
+        pop     r12
+        pop     rbp
+        pop     rbx
+        ret
+
+; ---------------------------------------------------------------------------
+; The loader's constants, inside .text and so read-only with it: its
+; serial lines and errors, the words and GUIDs the disk's rule reads,
+; the GOP's GUID, and SHA-256's constants.
+; ---------------------------------------------------------------------------
+
+msg_alive:      db      'S7: alive', 13, 10, 0
+msg_gop:        db      'S7: gop ', 0
+msg_fb:         db      ' fb 0x', 0
+msg_exited:     db      'S7: boot services exited', 13, 10, 0
+msg_paging:     db      'S7: gdt and paging ours', 13, 10, 0
+msg_idt:        db      'S7: idt ready', 13, 10, 0
+msg_found:      db      'S7: cores found ', 0
+msg_woken:      db      'S7: cores woken ', 0
+msg_console:    db      'S7: console ', 0
+msg_disk:       db      'S7: disk port ', 0
+msg_notes_at:   db      ' notes ', 0
+msg_home_at:    db      ' home ', 0
+msg_port:       db      'port ', 0
+msg_colon:      db      ': ', 0
+msg_comma:      db      ', ', 0
+word_germos:    db      'germos', 0
+word_blank:     db      'blank', 0
+word_gpt:       db      'gpt', 0
+word_torn:      db      'torn', 0
+word_other:     db      'other', 0
+crc_zero4:      dd      0
+guid_notes_type: db     0x57,0x55,0x84,0x50,0x34,0xee,0x31,0x47,0x8b,0x83,0xd1,0xd6,0xf1,0x4f,0xd8,0xc5
+guid_home_type: db      0x07,0x40,0x6d,0x45,0x03,0xd8,0xa0,0x41,0xa6,0x61,0xca,0x73,0x6d,0xdc,0xf9,0x6b
+msg_nb:         db      'S7: notebook ', 0
+msg_notes:      db      ' notes', 13, 10, 0
+msg_nb_fmt:     db      'S7: notebook formatted', 13, 10, 0
+msg_home:       db      'S7: home ', 0
+msg_apps:       db      ' apps', 13, 10, 0
+msg_region:     db      'S7: component region 0x', 0
+msg_region_cap: db      ' 1048576 bytes', 13, 10, 0     ; COMP_BLOB_MAX, spelled
+msg_obs:        db      'S7: obs page 0x', 0
+msg_glass:      db      'S7: glass core ', 0
+msg_err:        db      'ERR: ', 0
+msg_exc:        db      'ERR: exception ', 0
+msg_exc_at:     db      ' at 0x', 0
+msg_crlf:       db      13, 10, 0
+err_no_gop:     db      'no Graphics Output Protocol', 0
+err_no_mode:    db      'no GOP mode with a 32-bit linear framebuffer', 0
+err_setmode:    db      'GOP SetMode failed', 0
+err_fb_high:    db      'framebuffer sits above 4GB, beyond our identity map', 0
+err_map:        db      'GetMemoryMap failed', 0
+err_map_needs:  db      'memory map needs ', 0
+err_map_have:   db      ' bytes, MAP_BUF_SIZE is ', 0
+err_map_bytes:  db      ' - raise it', 0
+err_no_tramp:   db      'no free page below 1MB for the AP trampoline', 0
+err_ebs:        db      'ExitBootServices failed', 0
+err_ebs_stale:  db      'ExitBootServices: map key still stale after 5 tries', 0
+err_no_rsdp:    db      'no ACPI 2.0 RSDP in the EFI configuration table', 0
+err_no_madt:    db      'no MADT (APIC table) in the XSDT', 0
+err_madt_len:   db      'MADT has an entry of length zero', 0
+err_too_many:   db      'more enabled processors than MAX_CORES - raise it', 0
+err_no_cores:   db      'MADT lists no enabled processors at all', 0
+err_one_core:   db      'the glass needs a second core - boot with -smp 2 or more', 0
+err_no_ahci:    db      'no AHCI controller on PCI bus 0', 0
+err_no_sata:    db      'no SATA disk on any AHCI port', 0
+err_ahci_stop:  db      'AHCI port would not stop', 0
+err_ahci_spinup: db     'ahci port ', 0                            ; ring 7c: under CAP.SSS, a device that
+err_ahci_spinup_tail: db ' did not come up after spin-up', 13, 10, 0   ; appeared after SUD but never reached DET 3
+err_sector_size: db     'disk sector is not 512 bytes', 0
+err_no_germos:  db      'no GermOS disk and no blank disk - ', 0
+err_gpt_readback: db    'the table written does not read back as GermOS', 0
+err_bar_io:     db      'virtio capability names an I/O BAR or a BAR beyond 5 - not a modern device', 0
+err_bar_high:   db      'BAR lies beyond the physical address width', 0
+err_spare:      db      'page-table pool exhausted - raise SPARE_PAGES', 0
+err_disk_big:   db      'disk has 2^32 sectors or more - beyond this stage', 0
+err_disk_beyond: db     'disk request beyond the capacity', 0
+err_disk_timeout: db    'disk request timed out', 0
+err_disk_failed: db     'disk request failed - task file error', 0
+
+; EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID, 9042a9de-23dc-4a38-96fb-7aded080516a.
+; A GUID is little-endian in its first three fields and big-endian in the last
+; two, which is why this is written out field by field rather than as bytes.
+        align   8
+gop_guid:       dd      0x9042a9de
+                dw      0x23dc
+                dw      0x4a38
+                db      0x96, 0xfb, 0x7a, 0xde, 0xd0, 0x80, 0x51, 0x6a
+
+; The SHA-256 constants (FIPS 180-4): the sixty-four round constants and
+; the eight initial hash words.
+        align   4
+sha_k:
+        dd 0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5
+        dd 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174
+        dd 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da
+        dd 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967
+        dd 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85
+        dd 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070
+        dd 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3
+        dd 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+sha_init:
+        dd 0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+
+err_text_split: db      'the image', 39, 's .text spans two 2 MB pages - it cannot be made read-only', 0
+
+; ---------------------------------------------------------------------------
+; LOADER_STATE - the loader's mutable state, one page-aligned block the seed
+; places in its BSS (PARTS.md, "The read-only floor"): writable, and never
+; handed to a part. SHA-256's working state; sha_digest is where the seed's
+; install and launch take a build's hash.
+; ---------------------------------------------------------------------------
+%macro LOADER_STATE 0
+        alignb  4096
+loader_state:
+sha_state:      resb    32
+sha_w:          resb    256
+sha_tail:       resb    128
+sha_digest:     resb    32
+        alignb  4096
+loader_state_end:
+%endmacro

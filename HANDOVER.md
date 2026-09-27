@@ -139,7 +139,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | | |
 |---|---|
 | Stage | **8 — The molt — ring 8a, the floor, OPENED 25 September 2026.** `stage8/spec.md` approved by the owner with all fourteen decisions settled (rings 8a–8g; the first slot `i8042`); `stage8/plan-8a.md` approved at the plan gate with Cowork's six amendments (A1–A6) and all seventeen deviations accepted. Stage 7 closed with ring 7d on 25 September 2026 (rings 7a–7d closed 9, 15, 18 and 25 September); Stages 0–6 closed |
-| Status | **Ring 8a: items 0–13 done; the acceptance machinery FROZEN at item 13 (27 September 2026)**, after the owner's amendment to PARTS.md on Cowork's review of item 12 (`c4a6111`). Tests 1 and 2 PASS; test 3 red by design until item 16 (green on the private draft, 851.8 s); test 4 red on its nine `loader.asm` refusals alone until 16b, the payload table 2046 cases, 0 wrong. Earlier: **tests 1 and 2 PASS** (item 9, 27 September 2026: `stage8/test-8a.sh` with the log, `checkmolt.py --document` and `--seven`; test 2 on ring 7d's binary through D3's seams, 426 s, no `S8:`, `part:` or `molt:` line in twelve captures; tests 3 and 4 not yet written; items 0 to 8: the plan's commit; Stage 8 opened on ring 7d's source, the build byte-identical to ring 7d's, and D3's seams proven by a run - every 7c and 7d entry point returns 0 on the stage8 build with nothing escaping to `stage7/out/`; item 2: D1 measured - the ICH9 TCO resets the twin at 2 × `TCO_TMR` × 0.6 s as the 7-series datasheet says, `TCO_TMR` 25 for 30 s, `SECOND_TO_STS` survives the reset, so the one twin path is the watchdog's; item 3: D2 - `-icount shift=0` repeats exactly at `-smp 4`, not quite at 2, `auto` never; D4 - `qemu_argv` passes `check_argv_7c` unchanged, Esc arrives as `0x01`/`0x81` with no repeats and the checker's hold is 5,000 ms, keys match the byte rule, packets equal moves at any pace from 1 ms, the identity `cpu 000306a9 pci 8086:2918:02`; the hook allows every ring 8a shape, and allows removing a whole directory of frozen files, a finding for the owner, whose decision of 25 September 2026 adds a directory rule at item 13; item 4: `stage8/PARTS.md` written, its worked examples reproduced from its own Python block, 0 wrong, then Cowork's amendment on what ABI 3's services refuse; item 5: the five fixtures, each header valid by PARTS.md, and their byte entries matching the generic event for event on the host; item 6: `stage8/SEED.md` and `stage8/seed-record.md`, seed 0 `bbf80635…b28cd5` from a clean rebuild of `bd613b3`, the worked example reproduced from SEED.md's own block, 0 wrong; item 7: `stage8/parts.py`, both documents' blocks exec'd and checked against their prose, PARTS.md's fixtures section filled from the `.bin`s, `--example` green and 27 one-change copies of the documents refused, `--disk` and `--serial` printing the same table, `--seed` rebuilding seed 0 and naming the build seed 0; item 8: `broker/molt.py`, unfrozen, serving each fixture's frame as `parts.fixture_frame` byte for byte, refusing other slots and malformed bodies, `wire.Wire`'s answers to everything else, and the record carrying the identity, `parts.molt_key` and the frame, 73 checks with no boot). Every earlier gate green on its own binary, as ring 7d closed. **Eight freeze openings on the record** — the eighth the TRIALS.md label-width sentence, by the owner's hand, 25 September 2026 (`076d74b`), 7d's test 1 green once after it. Earlier — **Ring 7d: all four automated tests PASS** (`./stage7/test-7d.sh`, 21 min, the log's item 11 run; items 0–13 committed, one per item, item 13 the four fixes of Cowork's pre-oracle review, the section appended by the owner's hand at item 9) — **test 5: the rehearsal ran in the windowed twin on 24 September 2026 (not trial data, by the owner's pre-registration); the trial is three sittings on the HP's notebook, one a session, the verdict on the third closes the ring. HP sittings 1, 2 and 3 PASSED on 24 September 2026 (the owner's word on each; one, one and two misses); the verdict A — B's median lower in 8 of 12 pairs, ten needed; misses A 4, B 0 — the owner's word on it 25 September 2026; the verdict boot answered `trial concluded`. Ring 7d CLOSED 25 September 2026, by the owner's word.** Ring 7c: all five tests PASS (18 September). Rings 7b and 7a: all five PASS. Stages 0–5 and the three ring 6 gates green on their own binaries |
+| Status | **Ring 8a: items 0–14 done. Item 14 (27 September 2026): the loader moved into `stage8/loader.asm`, `.text` read-only with CR0.WP on every core**; a write into `.text` from the main loop and from the glass core each faults at its own store; `checkmolt.py --document` exit 0 and test 2 green on this binary (425.7 s). Earlier: **items 0–13 done; the acceptance machinery FROZEN at item 13 (27 September 2026)**, after the owner's amendment to PARTS.md on Cowork's review of item 12 (`c4a6111`). Tests 1 and 2 PASS; test 3 red by design until item 16 (green on the private draft, 851.8 s); test 4 red on its nine `loader.asm` refusals alone until 16b, the payload table 2046 cases, 0 wrong. Earlier: **tests 1 and 2 PASS** (item 9, 27 September 2026: `stage8/test-8a.sh` with the log, `checkmolt.py --document` and `--seven`; test 2 on ring 7d's binary through D3's seams, 426 s, no `S8:`, `part:` or `molt:` line in twelve captures; tests 3 and 4 not yet written; items 0 to 8: the plan's commit; Stage 8 opened on ring 7d's source, the build byte-identical to ring 7d's, and D3's seams proven by a run - every 7c and 7d entry point returns 0 on the stage8 build with nothing escaping to `stage7/out/`; item 2: D1 measured - the ICH9 TCO resets the twin at 2 × `TCO_TMR` × 0.6 s as the 7-series datasheet says, `TCO_TMR` 25 for 30 s, `SECOND_TO_STS` survives the reset, so the one twin path is the watchdog's; item 3: D2 - `-icount shift=0` repeats exactly at `-smp 4`, not quite at 2, `auto` never; D4 - `qemu_argv` passes `check_argv_7c` unchanged, Esc arrives as `0x01`/`0x81` with no repeats and the checker's hold is 5,000 ms, keys match the byte rule, packets equal moves at any pace from 1 ms, the identity `cpu 000306a9 pci 8086:2918:02`; the hook allows every ring 8a shape, and allows removing a whole directory of frozen files, a finding for the owner, whose decision of 25 September 2026 adds a directory rule at item 13; item 4: `stage8/PARTS.md` written, its worked examples reproduced from its own Python block, 0 wrong, then Cowork's amendment on what ABI 3's services refuse; item 5: the five fixtures, each header valid by PARTS.md, and their byte entries matching the generic event for event on the host; item 6: `stage8/SEED.md` and `stage8/seed-record.md`, seed 0 `bbf80635…b28cd5` from a clean rebuild of `bd613b3`, the worked example reproduced from SEED.md's own block, 0 wrong; item 7: `stage8/parts.py`, both documents' blocks exec'd and checked against their prose, PARTS.md's fixtures section filled from the `.bin`s, `--example` green and 27 one-change copies of the documents refused, `--disk` and `--serial` printing the same table, `--seed` rebuilding seed 0 and naming the build seed 0; item 8: `broker/molt.py`, unfrozen, serving each fixture's frame as `parts.fixture_frame` byte for byte, refusing other slots and malformed bodies, `wire.Wire`'s answers to everything else, and the record carrying the identity, `parts.molt_key` and the frame, 73 checks with no boot). Every earlier gate green on its own binary, as ring 7d closed. **Eight freeze openings on the record** — the eighth the TRIALS.md label-width sentence, by the owner's hand, 25 September 2026 (`076d74b`), 7d's test 1 green once after it. Earlier — **Ring 7d: all four automated tests PASS** (`./stage7/test-7d.sh`, 21 min, the log's item 11 run; items 0–13 committed, one per item, item 13 the four fixes of Cowork's pre-oracle review, the section appended by the owner's hand at item 9) — **test 5: the rehearsal ran in the windowed twin on 24 September 2026 (not trial data, by the owner's pre-registration); the trial is three sittings on the HP's notebook, one a session, the verdict on the third closes the ring. HP sittings 1, 2 and 3 PASSED on 24 September 2026 (the owner's word on each; one, one and two misses); the verdict A — B's median lower in 8 of 12 pairs, ten needed; misses A 4, B 0 — the owner's word on it 25 September 2026; the verdict boot answered `trial concluded`. Ring 7d CLOSED 25 September 2026, by the owner's word.** Ring 7c: all five tests PASS (18 September). Rings 7b and 7a: all five PASS. Stages 0–5 and the three ring 6 gates green on their own binaries |
 | Repo | `/home/indy/Work/germos` (branch `main`) on Omarchy since 22 September 2026 (`/home/indy/Projects/ai-os` was the Ubuntu path) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, **Omarchy (Arch Linux, kernel 7.2.5-3-omarchy), dual boot on the Crucial P2** since 22 September 2026 (native Ubuntu 26.04 before), 32 logical CPUs |
 | Toolchain | NASM 3.02, QEMU 11.1.1, Python 3.14.7, OVMF at `/usr/share/ovmf/OVMF.fd`, mtools, OpenBSD netcat, xxd, the `claude` CLI **2.1.282** (the spec said 2.1.280; `claude --version` at ring 8a's planning read 2.1.282) — ring 8a needs no new package; every `stage0..8/out/` exists (the fresh-clone gotcha; the ring 8a gate makes its own) |
@@ -3675,7 +3675,7 @@ amendments and all seventeen deviations accepted:
 | Test | State |
 |---|---|
 | 1 — the artefact, the stick, PARTS.md and SEED.md parsed cold, the worked examples, the fixtures, SHA-256's known answer | **PASS** at item 9 (27 September 2026) |
-| 2 — no part, no change: the 7c and 7d checks on the Stage 8 binary, no `S8:` line | **PASS** at item 9 (27 September 2026), on ring 7d's binary (deviation 15) |
+| 2 — no part, no change: the 7c and 7d checks on the Stage 8 binary, no `S8:` line | **PASS** at item 9 (27 September 2026), on ring 7d's binary (deviation 15); **PASS** at item 14 on the binary with `loader.asm` and the read-only floor (425.7 s) |
 | 3 — the fates: good, wrong, hang, fault, liar; undo; Esc; the held request; the idle wait | written at item 10 (27 September 2026); its run constants written at item 12 from the draft's run, where all five fates passed; G5's 300 moves during the hold added by the owner's amendment (`c4a6111`), green on the amended draft; **frozen at item 13**; **red by design** until item 16: on the repository's binary it stops at each install's first missing `molt:` line |
 | 4 — the bodyguard (every ring 8a frozen path, `loader.asm` among them), the argv check, the 7d gate with 7c, 7b and 7a inside it | written at item 11 (27 September 2026); **frozen at item 13** with the directory rule in the hook; **red by design on (c)'s nine `loader.asm` refusals alone** until item 16b: (a), (b) and (d) pass, the 7d gate green inside it |
 | 5 — the owner's, on the HP: good to the threshold and live; Esc; hang live and the HP resetting itself | pending |
@@ -4601,26 +4601,82 @@ would be a freeze opening): **all three kept as committed.**
 | Test 4 (c) | **`2046 payloads: 1392 must be denied, 654 must be allowed, 0 wrong`**; the only refusals are **the nine on `stage8/loader.asm`** (Write and Edit, relative and absolute; `>`, `sed -i`, `cp`, `rm -f`, a python heredoc), which item 16b freezes. Every directory shape is now denied |
 | Test 4 (d) | ring 7d's gate **green**: 7d's tests 1–4, and inside its test 4 the 7c, 7b and 7a gates, all four tests each |
 
+**Item 14** — the loader moved into `stage8/loader.asm`; the read-only
+floor, 27 September 2026.
+
+**The move.** `stage8.asm` does `%include "stage8/loader.asm"` at `.text`'s
+start, below its constants. The move was made by a script over ring 7d's
+source (fourteen spans and the constants, each moved verbatim), and a
+comparison of every non-blank line before and after: nothing lost but the
+four lines deliberately edited, nothing added but the new lines listed in
+the commit. `loader.asm` (2,706 lines) holds, in reading order:
+- **`efi_main` to the handover**: its last act is `call mouse_init`, then `jmp seed_main`. `seed_main` in `stage8.asm` is the rest of the old `efi_main`: the drain, `S7: keyboard ready`, the replay, the prompt and the main loop;
+- serial with `serial_raw_puts`, and the firmware helpers `get_memory_map` and `alloc_tramp_page`;
+- paging: `build_paging`, the new `text_split`, `cpu_phys_bits`, `alloc_spare_page`, `map_mmio_2m`;
+- the IDT, `exc_common` and `halt_forever`;
+- `pci_cfg_read32`/`write32` and `pit_wait`;
+- the disk's read path: the whole AHCI driver with its one command routine `ahci_rw`, `disk_select` and DISK.md's words, `gpt_validate`, `gpt_read`, `crc32_update`, `disk_rw`/`home_rw`/`blk_rw`, `notebook_init` with `record_valid`, and `home_init`;
+- SHA-256;
+- **every constant those read, inside `.text`**: their strings and errors, the words and GUIDs, the GOP's GUID, `sha_k` and `sha_init`. A grep found no write to any of them;
+- the `LOADER_STATE` macro, which the seed expands in its BSS.
+
+**Choices for Cowork's review of the loader (A6):**
+- **Routines that both read and format stay whole.** `disk_select`, `notebook_init` and `home_init` can format a blank disk, and they moved as they were. The seed keeps the writers `gpt_write`, `gpt_build_header`, `notebook_append` and `home_install`, which reach the disk through the loader's `disk_rw` and `home_rw`.
+- **What the loader calls in the seed:** `edid_read`, the ACPI walk and the wake of the cores, `tsc_calibrate`, the glass and the console, `pci_scan` (it also records the NICs, so it stays the seed's), `gpt_write` on a blank disk, `home_recount` and `choices_update`, `nic_find`, `pic_init` and the interrupt entries, and `mouse_init`. The loader's banner lists them.
+- **Kept in the seed's `.data`:** the GDT, `gdtr`, `idtr` and every variable (`svc_table`, `fb_*`, `gop_ptr`, …). PARTS.md leaves the descriptor tables writable this ring.
+
+**The floor.**
+- `build_paging` ends in a jump to `text_split`. That maps the image's 2 MB page as 512 pages of 4 KB in `image_pt`, a new BSS page beside `pd_tables`: `.text` present and read-only, the rest present and writable, with the 2 MB entry's cache bits. A `.text` across two 2 MB pages halts with a named error instead of staying writable.
+- CR0.WP is set straight after the CR3 load, and in the trampoline (`0x80010001`, PG | WP | PE).
+- **`LOADER_STATE`** is one page-aligned block holding `sha_state`, `sha_w`, `sha_tail` and `sha_digest`.
+- `home_undo` sets its build aside in its own `undo_build` (`HB_BYTES`), no longer in `sha_tail`.
+- The three `PCI_CMD_*` defines moved to the top of `stage8.asm`, since the loader's AHCI code now assembles above their old place.
+
+**The build.** It assembled first time: **45,056 bytes** as before (`.text` still 0x401000–0x408FFF, `.data` 8 KB raw, the image to 0x5E3000, inside one 2 MB page), SHA-256 `7a1a5563605d6c0b…`.
+
+| Run | Result |
+|---|---|
+| **A private copy writing into `.text` from the main loop** (`stage8/out/probe8a/item14/`, the 7b shape headless at `-smp 4`) | all nineteen lines to `S7: keyboard ready`, then **`ERR: exception 14 at 0x00000000004035b4`**: the listing puts the probe's `mov byte [rax], 0xCC` at RVA `0x35b4` |
+| **The same from the glass core** (the first instruction of `glass_main`) | **`ERR: exception 14 at 0x0000000000408136`**, its store; then `the glass needs a second core`, as that core is gone. So CR0.WP holds on the application processors through the trampoline |
+| **`checkmolt.py --document`** (test 1's checker; `gate-8a.log`, header 16:28:51) | exit 0; **the 64 round constants lie once in the build, at 0x3428, inside `.text`**. The PE fields test 1's shell reads (MZ, PE, `0x8664`, characteristics `0x22f`, PE32+, subsystem 10) read the same from the build |
+| **`checkmolt.py --seven`** (test 2 on this binary; same header) | **green in 425.7 s**: the 7c serial boots, the stages, the row and the three sittings each return 0; nothing outside `stage8/out/` changed; not one `S8:`, `part:` or `molt:` line in the twelve captures |
+
+**Not re-run at this commit:** test 3 (red by design: no `! molt`), test 4
+(red on (c)'s loader clause until 16b), and the stage7 gates, whose binary
+this item cannot touch (the plan's conventions for items 14 and 15). The
+log also holds an earlier `--seven` header at 16:26:17 with no result: that
+run was stopped by hand after a reorder of the loader's sections changed
+the build under it. Its capture is superseded by the 16:28:51 run.
+
+**For item 15:** the draft's `patch.py` no longer applies. Its hook 1, the
+CR0.WP insertion, stops it: the code moved into `loader.asm`. It exits
+before writing anything. The draft's `split.asm` and its three paging hooks
+are now in the repository, and its other hooks (`mouse_init`'s call site,
+`exc_common`'s blame line, the AHCI poll's breath) now point into
+`loader.asm`. Item 15 rebases the draft's molt code onto this layout.
+
 ## Next action
 
-**Ring 8a, item 14:** the loader moved into `stage8/loader.asm`, and the
-read-only floor (plan item 14), from the draft in
-`stage8/out/probe8a/draft/` (`loader.asm` and `split.asm`, and
-`patch.py`'s paging hooks):
-- `stage8.asm` does `%include "stage8/loader.asm"` at `.text`'s start; the constants stay at the top of `stage8.asm` (the positional-define gotcha).
-- `.text` is read-only on the image's 4 KB split, with CR0.WP on the BSP and in the trampoline. There is no slot, no watchdog and no `S8:` line yet.
-- Proven by: a private copy's write into `.text` from the main loop faulting with `ERR: exception 14 at …`; then **test 2 green on this binary**; then test 1.
+**Ring 8a, item 15:** the slot, ABI 3, the part frame, the home names, the
+notes, the words and shadow (plan item 15), from the draft in
+`stage8/out/probe8a/draft/` (`molt.asm`, and the parts of its `loader.asm`
+that item 15 needs), rebased onto item 14's layout: the loader's new half
+goes into `stage8/loader.asm`, and the seed's half into `stage8.asm`. There
+is no watchdog, pet, health mark, recovery, Esc or blame line yet.
+Probed on a private copy first: good to its threshold, taken and live at
+`-smp 2`, `4` and `8`, with the notes read back by `parts.py --disk`. Then
+test 2 on this binary.
 
-Expected at commit: tests 1–2 green; test 3 red by design (no `! molt`);
-test 4 red on (c)'s loader clause alone, with the payload table 0 wrong
-and the 7d gate green inside it.
+Expected at commit: tests 1–2 green; test 3 red at its first watchdog line
+(`S8: watchdog …` missing on G2) and on the hang, fault and Esc fates;
+test 4 red on (c)'s loader clause.
 
-`/clear` first; one commit per item. Items 1–13 are done, with Cowork's
+`/clear` first; one commit per item. Items 1–14 are done, with Cowork's
 review of item 12 between 12 and 13 (the owner's amendment, `c4a6111`).
 **The criteria are frozen:** a frozen file that turns out wrong is never
 edited. Stop, write the diff unapplied under `stage8/out/`, and wait for
 the owner's hand.
-**Carried to items 14–16:** the draft in `stage8/out/probe8a/draft/`
+**Carried to items 15–16:** the draft in `stage8/out/probe8a/draft/`
 (never wipe `stage8/out/probe8a/`; the directory rule does not guard
 scratch), amended to the owner's four points and green on the fates
 (851.8 s). Carried to item 15 as well: the pointer's centring,
