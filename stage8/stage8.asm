@@ -773,6 +773,20 @@ org 0                           ; file offsets == RVAs
 %define DMA_POOL_PAGES  16
 %define PIT_1MS         1193
 
+; The watchdog (PARTS.md, "The watchdog"): the PCH's TCO, its registers
+; from TCOBASE = PMBASE + 0x60, and the loader's times
+%define TCO_RLD         0x00            ; from TCOBASE: any write reloads
+%define TCO1_STS        0x04            ; bit 3 TIMEOUT
+%define TCO2_STS        0x06            ; bit 1 SECOND_TO_STS, bit 2 BOOT_STS
+%define TCO1_CNT        0x08            ; bit 8 NMI_NOW (write 1 to clear), bit 11 TCO_TMR_HLT
+%define TCO_TMR_REG     0x12
+%define SMI_EN          0x30            ; from PMBASE: bit 13 TCO_EN
+%define GCS_OFF         0x3410          ; from RCBA: bit 5 NO_REBOOT
+%define TCO_TMR_VALUE   25              ; 30 s: 2 x 25 x 0.6 s, the datasheet's rule
+%define PET_MS          1000            ; at most one reload a second
+%define HEALTH_MS       60000           ; the health mark after the ready line
+%define ESC_W_MS        3000            ; W, the owner's window
+
 ; ---------------------------------------------------------------------------
 ; DOS header. Only two fields matter to a UEFI loader: the 'MZ' magic, and
 ; e_lfanew at 0x3C pointing at the PE header.
@@ -4700,6 +4714,7 @@ ip_send:
 ; net_breathe - one 200 us breath of a wait loop: poll the wire, and give
 ; the working indicator its tick. Preserves everything.
 net_breathe:
+        call    molt_breath             ; ring 8a: the heartbeat, the pet (A1)
         push    rax
         push    rcx
         push    rdx
@@ -8622,6 +8637,8 @@ lpc_rcba:
 svc_dma_pages:
         test    edi, edi
         jz      .none
+        cmp     edi, DMA_POOL_PAGES     ; before the sum, which would wrap
+        ja      .none
         mov     eax, [dma_used]
         add     eax, edi
         cmp     eax, DMA_POOL_PAGES
@@ -8980,17 +8997,21 @@ part_service:
         ret
 
 ; note_overflow - an entry dropped because its ring was full (PARTS.md,
-; "Overflows"): counted in the obs page. Preserves every register.
+; "Overflows"): counted in the obs page, and, between two main loop turns
+; only, the pets stopped for the boot. Preserves every register.
 note_overflow:
         inc     qword [obs_page + OBS_MOLT_OVF]
-        ret
+        cmp     dword [in_wait], 0
+        jne     .ret
+        mov     dword [overflow], 1
+.ret:   ret
 
 ; ------------------------------------------------ the main loop, polled --
 
 ; part_loop - the main loop on a boot that loaded a part (PARTS.md: it
-; polls instead of halting): the raw ring fed to the part, shadow's
-; comparison, then ring 7d's turn - keys (the generic's, or the part's in
-; live), packets, the trial, the app.
+; polls instead of halting): the heartbeat and the pet, the raw ring fed
+; to the part, shadow's comparison, the health mark, then ring 7d's turn -
+; keys (the generic's, or the part's in live), packets, the trial, the app.
 part_loop:
         cmp     dword [mouse_announced], 0
         jne     .announced
@@ -9000,11 +9021,24 @@ part_loop:
         lea     rsi, [msg_mouse]
         call    serial_raw_puts
 .announced:
+        call    molt_turn
         call    feed_raw
         cmp     dword [part_state], ST_SHADOW
-        jne     .turn
+        jne     .compared
         xor     edi, edi
         call    shadow_compare
+.compared:
+        cmp     dword [health_done], 0
+        jne     .turn
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        sub     rax, [ready_tsc]
+        mov     rcx, [tsc_per_ms]
+        imul    rcx, rcx, HEALTH_MS
+        cmp     rax, rcx
+        jb      .turn
+        call    health_mark
 .turn:
         cli
         cmp     dword [part_state], ST_LIVE
@@ -9457,6 +9491,34 @@ count_point:
         call    count_note
         ret
 
+; health_mark - 60,000 ms after the ready line (PARTS.md, "The health
+; mark"): "molt healthy <n>", the count note, then "S8: healthy <n>" raw.
+health_mark:
+        mov     dword [health_done], 1
+        call    feed_raw
+        cmp     dword [part_state], ST_SHADOW
+        jne     .notes
+        mov     edi, 1
+        call    shadow_compare
+.notes:
+        lea     rdi, [note_text]
+        lea     rsi, [w_molt_healthy]
+        call    str_copy
+        mov     eax, [boot_n]
+        call    put_dec
+        mov     byte [rdi], 0
+        lea     rsi, [note_text]
+        call    molt_note
+        call    count_note
+        lea     rdi, [l_buf]
+        lea     rsi, [w_s8_healthy]
+        call    str_copy
+        mov     eax, [boot_n]
+        call    put_dec
+        mov     byte [rdi], 0
+        lea     rsi, [l_buf]
+        call    s8_line
+        ret
 
 ; molt_discard_point - inside finish_line's cli, just after ring 7d's drop:
 ; in shadow, the discard's point is the next raw sequence number (PARTS.md,
@@ -10720,6 +10782,8 @@ msg_wrong_slot: db      'wrong slot', 0
 msg_not_frame:  db      'not a part frame', 0
 msg_part_refused: db    'part refused: ', 0
 msg_molt_reserved: db   'molt is reserved', 0
+w_molt_healthy: db      'molt healthy ', 0
+w_s8_healthy:   db      'S8: healthy ', 0
 
         align   FILE_ALIGN, db 0
 data_raw_end:

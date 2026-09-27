@@ -31,9 +31,17 @@
 ; scan, the boot with a molt note in mouse_init's place (the known answer,
 ; the door, the boot note, a live part's init), the header rule and the one
 ; call into a part; their constants inside .text with the rest.
+; What item 16 added: the controller's minimal setup and the Esc window;
+; the TCO found, its evidence read and cleared and the timer halted at
+; step 2, then armed at step 6 (the owner's decision at item 16); the
+; recovery table and the demoted notes; the heartbeat's breaths at the
+; disk's command wait and the pet; the blame line in exc_common.
 ; Its mutable state is BSS: LOADER_STATE at the end of this file is one
-; page-aligned block the seed places in its BSS, and nothing a part is
-; given or its upcalls write is in it.
+; page-aligned block the seed places in its BSS, and no address in it is
+; handed to a part. The seed's own code sets two of its flags - the health
+; mark's health_done, and note_overflow's overflow, reached from the
+; stubs, the live key upcall and mouse_sink when a ring is full - and
+; reads in_wait and ready_tsc; nothing else of the seed's writes it.
 ;
 ; What it calls in the seed, which stays the seed's to change: the display's
 ; EDID, the ACPI walk and the wake of the cores, the TSC's calibration, the
@@ -41,7 +49,9 @@
 ; a blank disk, home_recount and the choices row, the NIC, the PIC and the
 ; interrupt entries, and the i8042's init; and for the molt, molt_note (the
 ; notebook's writer), str_copy and put_dec, the home table's lookups,
-; svc3_fill and pointer_centre, and the part stubs it gives IRQ1 and IRQ12.
+; svc3_fill and pointer_centre, and the part stubs it gives IRQ1 and IRQ12;
+; for Esc and the pet, i8042_wait_ibf, console_puts and console_putc, and
+; it reads tsc_per_ms, the obs page's frame count and the part's region.
 ; ============================================================================
 ; ---------------------------------------------------------------------------
 ; efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
@@ -1255,6 +1265,11 @@ exc_common:
         call    serial_puthex64
         lea     rsi, [msg_crlf]
         call    serial_puts
+        cmp     dword [part_loaded], 0  ; ring 8a: the blame line, with a part
+        je      halt_forever            ; loaded; with none, ring 7d's
+        mov     rax, [rsp]
+        mov     rdx, [rsp + 16]
+        call    exc_blame
         jmp     halt_forever
 
 ; idt_set_gate - RDI = the gate, RAX = the handler. Clobbers RAX.
@@ -1576,6 +1591,7 @@ ahci_cmd:
         mov     [t_disk], rax
         mov     r8d, VQ_POLL_TRIES
 .poll:
+        call    molt_breath             ; ring 8a: the heartbeat, the pet (A1)
         test    dword [rdi + PX_CI], 1
         jz      .completed
         mov     ax, PIT_200US
@@ -3549,7 +3565,11 @@ molt_boot:
         call    molt_scan
         cmp     dword [ms_any], 0
         je      .generic
-        ; 1. the known answer
+        ; 1. A3's minimal setup - port 1 enabled, the buffer drained - before
+        ; the known answer's line, so that a hold sent when that line lands
+        ; is never drained: the window's poll then finds its make. Then the
+        ; known answer.
+        call    esc_setup
         lea     rsi, [kat_abc]
         mov     ecx, 3
         lea     rdi, [ldr_kat]
@@ -3561,6 +3581,30 @@ molt_boot:
         jne     .kat_fail
         lea     rsi, [msg_s8_kat]
         call    s8_line
+        ; 2. the evidence, read and cleared; then the timer halted, so that a
+        ; boot that arms nothing (a recovery, Esc, a door refusal) never
+        ; leans on the firmware to stop a timer an earlier boot armed (the
+        ; owner's decision at item 16). Step 6 unhalts it when it arms.
+        call    tco_find
+        call    tco_evidence
+        call    tco_halt
+        ; 3. the recovery decision
+        call    recovery_apply
+        test    eax, eax
+        jnz     .generic
+        ; 4. Esc, when a slot is in shadow or live
+        call    any_running
+        test    eax, eax
+        jz      .generic
+        call    esc_window
+        cmp     dword [esc_held], 0
+        je      .door
+        lea     rsi, [note_recovery_owner]
+        call    molt_note
+        lea     rsi, [msg_s8_owner]
+        call    s8_line
+        jmp     .generic
+.door:
         ; 5. the door, for each slot in shadow or live
         xor     r12d, r12d
 .door_slot:
@@ -3584,7 +3628,7 @@ molt_boot:
 .door_done:
         cmp     dword [part_loaded], 0
         je      .generic
-        ; 6. the boot note
+        ; 6. the boot note, then the watchdog armed
         mov     eax, [ms_boots]
         inc     eax
         mov     [boot_n], eax
@@ -3608,6 +3652,7 @@ molt_boot:
         mov     byte [rdi], 0
         lea     rsi, [ldr_note]
         call    molt_note
+        call    tco_arm
         call    svc3_fill
         ; 7. the controller: a live part's init, or the generic's
         cmp     dword [part_state], ST_LIVE
@@ -3635,9 +3680,138 @@ molt_boot:
         call    mouse_init
         ret
 
-; molt_ready - S7: keyboard ready is out: S8: lines go raw from here.
+; molt_ready - S7: keyboard ready is out: S8: lines go raw from here, and
+; the health mark counts from now.
 molt_ready:
         mov     dword [after_ready], 1
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        mov     [ready_tsc], rax
+        ret
+
+; any_running - EAX = 1 when a slot is in shadow or live.
+any_running:
+        xor     ecx, ecx
+.s:     cmp     ecx, SLOT_N
+        jae     .no
+        mov     eax, ecx
+        call    slot_rec
+        movzx   eax, byte [rbx + SS_KIND]
+        cmp     eax, ST_SHADOW
+        je      .yes
+        cmp     eax, ST_LIVE
+        je      .yes
+        inc     ecx
+        jmp     .s
+.no:    xor     eax, eax
+        ret
+.yes:   mov     eax, 1
+        ret
+
+; recovery_apply - PARTS.md's recovery table (parts.py recovery_of) with
+; the evidence: EAX = 1 when this boot is a recovery (its notes journaled,
+; its line printed, no part to load), else 0.
+recovery_apply:
+        mov     r13d, WHY_WATCHDOG
+        cmp     dword [evidence], 0
+        jne     .why
+        mov     r13d, WHY_UNHEALTHY
+        cmp     dword [ms_run], 2
+        jae     .why
+        xor     eax, eax
+        ret
+.why:
+        xor     r12d, r12d              ; the blamed: the first shadow or probation slot
+.blame:
+        cmp     r12d, SLOT_N
+        jae     .no_blamed
+        mov     eax, r12d
+        call    slot_rec
+        cmp     byte [rbx + SS_KIND], ST_SHADOW
+        je      .blamed
+        mov     eax, r12d
+        call    slot_on_probation
+        jnz     .blamed
+        inc     r12d
+        jmp     .blame
+.blamed:
+        mov     eax, r12d
+        call    demote_note
+        lea     rdi, [ldr_line]
+        lea     rsi, [w_s8_recovery]
+        call    str_copy
+        mov     eax, r12d
+        call    put_slot
+        mov     al, ' '
+        stosb
+        lea     rsi, [w_watchdog]
+        cmp     r13d, WHY_WATCHDOG
+        je      .bw
+        lea     rsi, [w_unhealthy]
+.bw:    call    str_copy
+        mov     byte [rdi], 0
+        lea     rsi, [ldr_line]
+        call    s8_line
+        mov     eax, 1
+        ret
+.no_blamed:
+        xor     r12d, r12d
+        xor     r14d, r14d              ; demoted any
+.all:
+        cmp     r12d, SLOT_N
+        jae     .all_done
+        mov     eax, r12d
+        call    slot_rec
+        movzx   eax, byte [rbx + SS_KIND]
+        cmp     eax, ST_SHADOW
+        je      .all_one
+        cmp     eax, ST_LIVE
+        jne     .all_next
+.all_one:
+        mov     eax, r12d
+        call    demote_note
+        mov     r14d, 1
+.all_next:
+        inc     r12d
+        jmp     .all
+.all_done:
+        test    r14d, r14d              ; the evidence with nothing running:
+        jz      .none                   ; cleared, and nothing else happens
+        lea     rsi, [note_recovery_all]
+        call    molt_note
+        lea     rsi, [msg_s8_all]
+        call    s8_line
+        mov     eax, 1
+        ret
+.none:
+        xor     eax, eax
+        ret
+
+; demote_note - EAX = a slot, R13D = the why: "molt <slot> demoted <b> <why>".
+demote_note:
+        push    rax
+        call    slot_rec
+        lea     rdi, [ldr_note]
+        lea     rsi, [w_molt_sp]
+        call    str_copy
+        pop     rax
+        call    put_slot
+        lea     rsi, [w_sp_demoted_sp]
+        call    str_copy
+        lea     rsi, [rbx + SS_BUILD]
+        mov     ecx, 16
+        rep     movsb
+        mov     al, ' '
+        stosb
+        lea     rsi, [w_watchdog]
+        cmp     r13d, WHY_WATCHDOG
+        je      .w
+        lea     rsi, [w_unhealthy]
+.w:     call    str_copy
+        mov     byte [rdi], 0
+        lea     rsi, [ldr_note]
+        call    molt_note
         ret
 
 ; ---------------------------------------------------------- the door ----
@@ -3919,6 +4093,318 @@ part_call:
         pop     rbx
         ret
 
+; ---------------------------------------------------------- Esc --------
+
+; esc_setup - A3: wait for the input buffer to empty, enable port 1 (0xAE),
+; let the controller settle, drain the output buffer. Clobbers RAX, RCX.
+esc_setup:
+        call    i8042_wait_ibf
+        mov     al, 0xAE
+        out     0x64, al
+        mov     ax, PIT_1MS * 2
+        call    pit_wait
+.drain: in      al, 0x64
+        test    al, 1
+        jz      .done
+        in      al, 0x60
+        jmp     .drain
+.done:  ret
+
+; esc_window - "hold Esc for the seed" on the console alone, then the
+; ports polled for W = 3,000 ms by the TSC: bytes with status bit 5 set
+; dropped; Esc held when a make (0x01 translated, 0x76 untranslated) that
+; did not follow 0xF0 arrived and no break followed it (parts.py esc_held:
+; F0 76 is Esc's set 2 break, and F0 01 is F9's, neither a make).
+; Clobbers RAX, RCX, RDX, RSI, R9-R11.
+esc_window:
+        lea     rsi, [msg_hold_esc]
+        call    console_puts
+        mov     al, 10
+        call    console_putc
+        mov     dword [esc_held], 0
+        xor     r9d, r9d                ; the previous byte
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        mov     r10, rax
+        mov     rax, [tsc_per_ms]
+        imul    rax, rax, ESC_W_MS
+        mov     r11, rax
+.poll:
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        sub     rax, r10
+        cmp     rax, r11
+        jae     .done
+        in      al, 0x64
+        test    al, 1
+        jz      .poll
+        mov     cl, al
+        in      al, 0x60
+        test    cl, 0x20
+        jnz     .poll
+        movzx   eax, al
+        cmp     eax, 0x01
+        je      .set1
+        cmp     eax, 0x76
+        je      .set2
+        cmp     eax, 0x81
+        je      .released
+        jmp     .prev
+.set1:  cmp     r9d, 0xF0               ; F0 01: F9's break, not Esc
+        je      .prev
+        jmp     .make
+.set2:  cmp     r9d, 0xF0               ; F0 76: Esc's break
+        je      .released
+.make:
+        mov     dword [esc_held], 1
+        jmp     .prev
+.released:
+        mov     dword [esc_held], 0
+.prev:
+        mov     r9d, eax
+        jmp     .poll
+.done:
+        ret
+
+; ------------------------------------------------------- the watchdog ---
+
+; tco_find - the LPC bridge at 00:1f.0 (Intel's): PMBASE, and TCOBASE from
+; it; RCBA, mapped uncached, when its enable bit is set. tco_base 0 when
+; there is no TCO; rcba 0 when RCBA is not enabled, which leaves NO_REBOOT
+; beyond reach, so tco_arm reports the TCO locked. Clobbers RAX, RBX, RCX.
+tco_find:
+        mov     dword [tco_base], 0
+        mov     dword [pm_base], 0
+        mov     dword [rcba], 0
+        mov     ebx, LPC_BDF
+        xor     ecx, ecx
+        call    pci_cfg_read32
+        cmp     ax, PCI_VENDOR_INTEL
+        jne     .out
+        mov     ecx, 0x40
+        call    pci_cfg_read32
+        and     eax, 0xFF80
+        jz      .out
+        mov     [pm_base], eax
+        add     eax, 0x60
+        mov     [tco_base], eax
+        mov     ecx, 0xF0
+        call    pci_cfg_read32
+        test    eax, 1
+        jz      .out
+        and     eax, 0xFFFFC000
+        mov     [rcba], eax
+        call    map_mmio_2m
+.out:   ret
+
+; tco_evidence - SECOND_TO_STS read into evidence, then cleared by writing
+; 1, SECOND_TO_STS before BOOT_STS (the datasheet's order).
+tco_evidence:
+        mov     dword [evidence], 0
+        mov     edx, [tco_base]
+        test    edx, edx
+        jz      .out
+        add     edx, TCO2_STS
+        in      ax, dx
+        shr     eax, 1
+        and     eax, 1
+        mov     [evidence], eax
+        mov     ax, 0x0002
+        out     dx, ax
+        mov     ax, 0x0004
+        out     dx, ax
+.out:   ret
+
+; tco_halt - TCO_TMR_HLT set in TCO1_CNT when there is a TCO; NMI_NOW is
+; write-1-to-clear, so it is never written back. Clobbers RAX, RDX.
+tco_halt:
+        mov     edx, [tco_base]
+        test    edx, edx
+        jz      .out
+        add     edx, TCO1_CNT
+        in      ax, dx
+        and     ax, 0xFEFF
+        or      ax, 0x0800
+        out     dx, ax
+.out:   ret
+
+; tco_arm - PARTS.md's arming and its line. Clobbers RAX, RCX, RDX, RSI,
+; RDI.
+tco_arm:
+        cmp     dword [tco_base], 0
+        je      .none
+        call    tco_halt                ; 1. halt (step 2 halted it already)
+        mov     edi, [rcba]             ; 2. NO_REBOOT cleared and read back;
+        test    edi, edi                ; no RCBA, no reaching it: locked
+        jz      .locked
+        add     edi, GCS_OFF
+        mov     eax, [rdi]
+        and     eax, ~0x20
+        mov     [rdi], eax
+        mov     eax, [rdi]
+        test    eax, 0x20
+        jnz     .locked
+        mov     edx, [pm_base]          ; 3. TCO_EN cleared
+        add     edx, SMI_EN
+        in      eax, dx
+        and     eax, ~0x2000
+        out     dx, eax
+        mov     edx, [tco_base]         ; 4. TCO_TMR
+        add     edx, TCO_TMR_REG
+        mov     ax, TCO_TMR_VALUE
+        out     dx, ax
+        mov     edx, [tco_base]         ; 5. TIMEOUT, SECOND_TO_STS, BOOT_STS
+        add     edx, TCO1_STS
+        mov     ax, 0x0008
+        out     dx, ax
+        mov     edx, [tco_base]
+        add     edx, TCO2_STS
+        mov     ax, 0x0002
+        out     dx, ax
+        mov     ax, 0x0004
+        out     dx, ax
+        mov     edx, [tco_base]         ; 6. reload, then unhalt
+        add     edx, TCO_RLD
+        mov     ax, 1
+        out     dx, ax
+        mov     edx, [tco_base]
+        add     edx, TCO1_CNT
+        in      ax, dx
+        and     ax, 0xF6FF              ; TCO_TMR_HLT and NMI_NOW clear
+        out     dx, ax
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        mov     [last_pet_tsc], rax
+        mov     rax, [heartbeat]
+        mov     [last_pet_hb], rax
+        mov     rax, [obs_page + OBS_FRAMES]
+        mov     [last_pet_fr], rax
+        mov     dword [tco_armed], 1
+        lea     rsi, [msg_s8_tco]       ; 7. its line
+        call    s8_line
+        ret
+.locked:
+        lea     rsi, [msg_s8_locked]    ; halted, unguarded: decision 5's fallback
+        call    s8_line
+        ret
+.none:
+        lea     rsi, [msg_s8_none]
+        call    s8_line
+        ret
+
+; molt_breath - a heartbeat at every breath of a bounded wait (the wire's
+; TCP poll, the disk's command wait): the boot processor is inside a wait
+; until the main loop's next turn (PARTS.md, "Overflows"), the heartbeat
+; moves and the pet is asked (A1). molt_turn - the same at a main loop turn
+; with a part loaded, which leaves any wait. Preserves every register;
+; the flags are not preserved.
+molt_breath:
+        mov     dword [in_wait], 1
+        inc     qword [heartbeat]
+        cmp     dword [tco_armed], 0
+        jne     molt_pet
+        ret
+molt_turn:
+        mov     dword [in_wait], 0
+        inc     qword [heartbeat]
+        cmp     dword [tco_armed], 0
+        jne     molt_pet
+        ret
+
+; molt_pet - the timer reloaded only when all five held since the last
+; pet (PARTS.md, "The pet"), at most once per 1,000 ms by the TSC.
+; Preserves every register.
+molt_pet:
+        cmp     dword [tco_armed], 0
+        je      .ret
+        SAVE_ALL
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        mov     r12, rax
+        sub     rax, [last_pet_tsc]
+        mov     rcx, [tsc_per_ms]
+        imul    rcx, rcx, PET_MS
+        cmp     rax, rcx
+        jb      .out
+        mov     rax, [heartbeat]        ; 1. the heartbeat moved
+        cmp     rax, [last_pet_hb]
+        je      .out
+        mov     rax, [obs_page + OBS_FRAMES]   ; 2. the glass core's frames moved
+        cmp     rax, [last_pet_fr]
+        je      .out
+        cmp     dword [exc_flag], 0     ; 3. no exception
+        jne     .out
+        cmp     dword [overflow], 0     ; 5b. no ring overflowed between turns
+        jne     .out
+        in      al, 0x64                ; 5a. the controller's status is sane
+        cmp     al, 0xFF
+        je      .out
+        test    al, 0xC0
+        jnz     .out
+        cmp     dword [part_state], ST_LIVE     ; 4. a live part's health
+        jne     .pet
+        mov     eax, PH_HEALTH
+        lea     rdi, [svc3_live]
+        call    part_call
+        test    rax, rax
+        jnz     .out
+.pet:
+        mov     edx, [tco_base]
+        add     edx, TCO_RLD
+        mov     ax, 1
+        out     dx, ax
+        mov     [last_pet_tsc], r12
+        mov     rax, [heartbeat]
+        mov     [last_pet_hb], rax
+        mov     rax, [obs_page + OBS_FRAMES]
+        mov     [last_pet_fr], rax
+.out:
+        RESTORE_ALL
+.ret:
+        ret
+
+; ---------------------------------------------------------- the blame ---
+
+; exc_blame - exc_common's second line (PARTS.md, "The blame line"), with
+; a part loaded: RAX = the vector, RDX = the RIP. The flag that stops the
+; pets is set first.
+exc_blame:
+        mov     dword [exc_flag], 1
+        mov     r8, rax
+        mov     r9, rdx
+        lea     rsi, [msg_exc]
+        call    serial_puts
+        mov     rax, r8
+        call    serial_putdec
+        lea     rcx, [part_region]
+        mov     rax, r9
+        sub     rax, rcx
+        jb      .seed
+        cmp     rax, PART_MAX
+        jae     .seed
+        mov     r10, rax
+        lea     rsi, [msg_in_part]
+        call    serial_puts
+        lea     rdi, [ldr_hex]
+        mov     eax, r10d
+        mov     ecx, 8
+        call    put_hex_n
+        mov     byte [rdi], 0
+        lea     rsi, [ldr_hex]
+        call    serial_puts
+        jmp     .end
+.seed:
+        lea     rsi, [msg_in_seed]
+        call    serial_puts
+.end:
+        lea     rsi, [msg_crlf]
+        call    serial_puts
+        ret
+
 ; ---------------------------------------------------------------------------
 ; The loader's constants, inside .text and so read-only with it: its
 ; serial lines and errors, the words and GUIDs the disk's rule reads,
@@ -4057,6 +4543,18 @@ w_molt_boot:    db      'molt boot ', 0
 w_s8_part:      db      'S8: part ', 0
 w_bad_hash:     db      'bad hash', 0
 w_bad_header:   db      'bad header', 0
+w_sp_demoted_sp: db     ' demoted ', 0
+w_s8_recovery:  db      'S8: recovery ', 0
+note_recovery_owner: db 'molt recovery owner', 0
+msg_s8_owner:   db      'S8: recovery owner', 0
+note_recovery_all: db   'molt recovery all', 0
+msg_s8_all:     db      'S8: recovery all', 0
+msg_hold_esc:   db      'hold Esc for the seed', 0
+msg_s8_tco:     db      'S8: watchdog tco 30 s', 0
+msg_s8_locked:  db      'S8: watchdog tco locked', 0
+msg_s8_none:    db      'S8: watchdog none', 0
+msg_in_part:    db      ' in part i8042 +0x', 0
+msg_in_seed:    db      ' in seed', 0
 
 ; ---------------------------------------------------------------------------
 ; LOADER_STATE - the loader's mutable state, one page-aligned block the seed
@@ -4096,6 +4594,24 @@ boot_n:         resd    1               ; this boot's molt boot number
 after_ready:    resd    1               ; S7: keyboard ready is out: S8: lines go raw
         alignb  8
 part_saved_rsp: resq    1               ; RSP across a call into a part
+
+; The evidence, Esc, the watchdog, the pet and the health mark
+evidence:       resd    1               ; SECOND_TO_STS as read at step 2
+esc_held:       resd    1               ; the window's verdict
+tco_base:       resd    1               ; TCOBASE, PMBASE + 0x60; 0 none
+pm_base:        resd    1               ; PMBASE
+rcba:           resd    1               ; RCBA when enabled, mapped; 0 not
+tco_armed:      resd    1               ; the verdict: 1 when the TCO was armed
+exc_flag:       resd    1               ; exc_common set it: the pets stop
+overflow:       resd    1               ; a ring overflowed between two main loop turns
+in_wait:        resd    1               ; inside a bounded wait, its first breath to the next turn
+health_done:    resd    1               ; the health mark taken
+        alignb  8
+ready_tsc:      resq    1               ; the TSC at S7: keyboard ready
+heartbeat:      resq    1               ; the boot processor's, every turn and breath
+last_pet_tsc:   resq    1
+last_pet_hb:    resq    1
+last_pet_fr:    resq    1
 
 ; The loader's line buffers
         alignb  16
