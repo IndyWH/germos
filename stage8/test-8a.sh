@@ -47,9 +47,16 @@ LOG="$OUT/gate-8a.log"
 OVMF="/usr/share/ovmf/OVMF.fd"
 
 mkdir -p "$OUT" "$MOLT" "$SEVEN"
+# HEAD's short hash, +uncommitted when the tracked files differ from it, so a
+# run before its item's commit is not logged under the previous item's hash.
+# Read-only: --no-optional-locks, so git writes no index.
+REV="$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo none)"
+if [ "$REV" != none ] && ! git --no-optional-locks -C "$REPO" diff --quiet HEAD 2>/dev/null; then
+  REV="$REV+uncommitted"
+fi
 {
   echo
-  echo "=== ring 8a gate $(date -Is) commit $(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo none) ==="
+  echo "=== ring 8a gate $(date -Is) commit $REV ==="
 } >> "$LOG"
 exec > >(tee -a "$LOG") 2>&1
 
@@ -182,6 +189,29 @@ elif python3 "$REPO/stage8/checkmolt.py" --seven; then
   pass "test 2: with no part installed the Stage 8 binary is ring 7d's to every frozen 7c and 7d check, and says nothing of ring 8a"
 else
   fail "test 2: with no part installed the Stage 8 binary is not ring 7d's (see above)"
+fi
+echo
+
+# ------------------------------------------------------ test 3: the fates ----
+# checkmolt.py --fates: the five fixtures in the twin at -smp 4, driven by
+# the synthetic human, on five disks each booted blank and given a
+# ring-7d-like notebook from the host. G: the install and its refusals,
+# three shadow boots to good's threshold, the take, live with the idle wait
+# and a request held for HOLD_S, the undo and the take again, Esc at
+# power-on, live again to probation 2. W: the disagreement and the take
+# refused. H (from G after Esc): hang in good's place, its reset within
+# RESET_S and the watchdog's recovery within RECOVER_S. F: the blame line,
+# the reset and the same recovery. L: the torn write refused at the door.
+# Around every boot the notes before it unchanged, the stick copy's tables
+# unchanged, and the mock and relay up only for a boot that asks.
+
+echo "Test 3 - The fates: good, wrong, hang, fault, liar; undo; Esc; the held request; the idle wait"
+if [ ! -f "$STICK" ] || [ ! -f "$EFI" ]; then
+  fail "test 3: no stick was built"
+elif python3 "$REPO/stage8/checkmolt.py" --fates; then
+  pass "test 3: every fixture met its fate in the twin as PARTS.md says, and the floor held under each"
+else
+  fail "test 3: the fates are not what PARTS.md says (see above)"
 fi
 echo
 

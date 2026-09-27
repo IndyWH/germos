@@ -3676,7 +3676,7 @@ amendments and all seventeen deviations accepted:
 |---|---|
 | 1 — the artefact, the stick, PARTS.md and SEED.md parsed cold, the worked examples, the fixtures, SHA-256's known answer | **PASS** at item 9 (27 September 2026) |
 | 2 — no part, no change: the 7c and 7d checks on the Stage 8 binary, no `S8:` line | **PASS** at item 9 (27 September 2026), on ring 7d's binary (deviation 15) |
-| 3 — the fates: good, wrong, hang, fault, liar; undo; Esc; the held request; the idle wait | not yet written |
+| 3 — the fates: good, wrong, hang, fault, liar; undo; Esc; the held request; the idle wait | written at item 10 (27 September 2026); **red by design** until item 16: it stops on its unset run constants until item 12, then on the first missing `S8:` line |
 | 4 — the bodyguard (every ring 8a frozen path, `loader.asm` among them), the argv check, the 7d gate with 7c, 7b and 7a inside it | not yet written |
 | 5 — the owner's, on the HP: good to the threshold and live; Esc; hang live and the HP resetting itself | pending |
 
@@ -4218,23 +4218,99 @@ each case's own message; the checker was not changed.
 
 No guest code changed. Tests 3 and 4 are not yet written.
 
+**Item 10** — `checkmolt.py --fates` (test 3), the synthetic human, and
+Cowork's review of item 9, 27 September 2026. **Tests 1 and 2 PASS; test
+3 FAILS by design**, stopping on its ten unset run constants and naming
+them.
+
+**Cowork's review of item 9, folded in here.** Both log headers named
+HEAD, so a gate run made before its item's commit was logged under the
+previous item's hash (both of item 9's runs say `commit 562c4b5`). Now
+both headers, the gate's and `checkmolt.py`'s own, append `+uncommitted`
+to the short hash when `git diff --quiet HEAD` returns non-zero, for
+example `commit 7368b2e+uncommitted`.
+- The command is read-only: `git --no-optional-locks -C <repo> diff --quiet HEAD`. The flag stops git's opportunistic index refresh, so nothing writes the index. `.git/index`'s mtime and size were unchanged across both headers.
+- Checked in a scratch clone: tracked edits give `+uncommitted`; a clean tree gives the bare hash; an untracked file alone gives the bare hash (only tracked files count); no HEAD gives `none`, as before.
+- Nothing else from item 9 changed.
+
+**The run constants** are ten named placeholders, each `None` until item
+12 writes it from its run: `READY_S`, `SETTLE_S`, `WORD_S`, `ANSWER_S`,
+`HEALTH_SLACK_S`, `HOLD_SLACK_S`, `RESET_S`, `RECOVER_S`,
+`WIGGLE_PACE_S` and `BOOT_T_S` (each boot runs under `timeout -k 5
+<BOOT_T_S>`, decision 15). While any is `None`, `--fates` names them all
+and exits 1. For item 12's run only, `--fates --set NAME=VALUE` gives
+one. It is refused for a name that is not a run constant, and for a
+constant already written, so once item 12 writes them no override is
+possible.
+
+**By rule, never typed.** These come from PARTS.md through `parts.py`:
+- `HOLD_S`, `HEALTH_S`, `HANG_BYTE`, the thresholds, the key-byte rule, every note and table, the take and undo answers, the recovery notes and line, the blame line with `ud2_offset`, the door and the liar's stored bytes;
+- the twin's identity, read from PARTS.md's worked example;
+- the checker's Esc hold, `sendkey esc 5000`, read from PARTS.md's Esc section;
+- the part's pair, built from `checkmetal.I8042_LINES` with `part: i8042 ` in place of `i8042: `.
+
+**The disks and boots** (all at `-smp 4`, scratch under
+`stage8/out/molt/`):
+- **Every disk** starts as a fresh 64 MB file booted blank (the frozen 19-line check). The host then writes 40 notes by NOTEBOOK.md's format (`checknotes.expected_record`): 12 typed notes, ring 7d's aborted sitting as TRIALS.md expands it (27 notes), and `trial verdict A` last.
+- **G1:** `! molt` draws `i8042 generic`; `molt x` is refused; `! molt i8042` goes through the relay to `molt.py --mock --part good`; `! part-i8042` is refused; the take is refused below threshold. `errors` is 3, and the mock's record matches the rule.
+- **G2–G4:** shadow boots, each typed to a third of good's threshold and wiggled, then a click and the health mark. G4 takes the part.
+- **G5:** live. It idles to the health mark, then takes a note and a click through the part, the held `? hold`, `! molt undo` and `! molt take i8042`.
+- **G6:** Esc held. The disk is then copied as H.
+- **G7:** live again, probation 2.
+- **W1–W2:** `wrong` installed; one shadow boot whose first note has a `q`; the take is refused with `disagreements 1`.
+- **H1–H3:** `hang` installed on a boot where good is live (boot 5); one shadow boot and the take; then the live boot. There, 50 plain keys make the 100th byte, and OVMF's first byte must come within `RESET_S`. Then `S8: recovery i8042 watchdog` within `RECOVER_S`, in the same process.
+- **F1–F3:** the same with `fault`. The first `mouse_move` gives exc_common's line and then the blame line.
+- **L1–L2:** `liar` installed. The host checks that the stored build is `i8042-liar.bin`, flips bit 0 of the part's byte 96 on the image, and demands the stored bytes be `liar_stored(bin)` and the door `bad hash`. Then comes the boot.
+- **Around every boot:** the three ports are free before; the mock and the relay run only for a boot that asks; the ports are free after; the stick copy's tables are unchanged (the copy is then removed, 64 MB a boot); the notebook's sectors up to the last note before the boot are byte-identical.
+- **Each boot is judged** against a model of it (`Book`): every note and every ring 8a line in order. The frozen `check_boot_lines` and the echo are checked; the conversation's tail after each word is checked (checktrials' `check_conv_tail`); the app panel's table must equal `table_of`; the notebook must be exactly the notes before plus the model's; and the mock's frame must equal `parts.fixture_frame(fate)`.
+
+**Choices the plan did not spell, for Cowork's review before the freeze:**
+1. **`drive_7d` is not called; its loop is re-spelled as `Human8a`,** with 7d's own helpers imported (`Driver`, `Pointer`, `expected_counts`, `target_col`, `parse_obs_7d`, `KEY_GAP`, `conv_rows`). `drive_7d` waits for one ready line and then runs its steps, so it cannot host a step before the ready line (the Esc hold at `S8: sha256 ok`) or a reset inside one process (the hang's boot and its recovery must be one process, D1). The plan said "imported from `checktrials`"; this is the nearest honest form.
+2. **A word's count note carries the keyboard bytes up to its Enter's make, not its break.** `sendkey` holds a key 100 ms, and the word runs long before the break arrives. So the model's count at a word is the bytes before it plus the line's bytes, less one. The health mark's count note carries every byte. Item 12's run will confirm or refute this.
+3. **G5 idles first, then asks.** The plan listed the held request before the idle wait. The health mark falls 60 s after `ready`, so a 60 s held request run first would span it and leave no idle stretch. Both waits still exceed the deadline.
+4. **Order within a recovery and an Esc:** the note(s) are journaled (their `molt:` mirror) before the `S8:` line. PARTS.md says "journals its notes and prints its line" and "Esc held: `molt recovery owner`, `S8: recovery owner`". One order, per A5.
+5. **"A click working" is a click on `! grow` followed by typing ` molt` and Enter.** The row holds only `? ask` and `! grow` with no apps. The click's `!` is judged in the serial echo, and the table must land in the app panel. On a boot that loaded a part this is a molt word, so its count note is in the model.
+6. **The part's pair on a live boot** is checked by the frozen `check_boot_lines` with the two `part:` lines standing in for the generic's `i8042:` pair (positions and all), after demanding that no `i8042:` line is present.
+7. **OVMF's first byte after a reset** is the first escape byte after the ready line. The guest writes none after `ready`, as every capture shows.
+8. **The held answer's text is never typed.** It lands when the conversation's tail is `> ? hold`, an answer and the prompt; afterwards it must equal the mock's recorded answer to `hold`.
+
+**Proven on the host** (scratch not committed; the dry run lives in the
+session's scratchpad):
+- **Unset constants:** `--fates` names all ten and exits 1. `--set FOO=2` is refused.
+- **A smoke run on the current binary** (still ring 7d's) with trial constants given by `--set`, 100.2 s:
+  - the four blank boots pass the frozen 19-line check;
+  - the host-written notebook reads back and boots as `S7: notebook 40 notes`;
+  - the relay and `molt.py` start and stop around each asking boot, and the ports are free after;
+  - each install fails as it must on a binary with no molt words. The 7d guest sends `! molt` to the broker as a grow, so G1 recorded two requests and `molt x` became a note.
+- **A dry run of the scenario logic** with QEMU faked (a perfect guest by construction) runs every path of G, W, H and F with no exception, and prints each boot's model:
+  - W2's disagreement is `molt i8042 disagree 1 3 k71 k77` (the `q` of "a quiet …" is event 3);
+  - G4's take is `molt i8042 live 4fe6beefc4bc57d0` at `boots 3/3 keys 1131/1000 mouse 5025/5000`;
+  - G5's undo is `molt i8042 undo shadow 4fe6beefc4bc57d0`, and the take again passes on the same three shadow boots;
+  - G7 is probation 2/3;
+  - H3 and F3 end `i8042 demoted <sha16> watchdog`.
+
+  Disk L's host-side flip needs a stored part, so it is exercised first at item 12. Two faults in the checker surfaced and were fixed: a boot whose step failed went on to judge marks that were never taken (now it is judged by its error and the capture alone); and each stick copy was left behind.
+
+| Run | Result |
+|---|---|
+| **The gate, whole** (`stage8/out/gate-8a.log` from line 454, headed `commit beef2da+uncommitted`: the owner's trial-two commit had landed during the session, and the header shows these three files uncommitted on top of it) | **test 1 PASS, test 2 PASS, test 3 FAIL by design**, exit 1 |
+| Test 2's entry points | blank 8 4.5 s, again 4 4.2 s, novga 2 4.2 s, stages 68.5 s, row 43.6 s, sittings 301.5 s; 426.4 s in all, twelve captures, none with a ring 8a line |
+| Test 3, quoted | `the run constants READY_S, SETTLE_S, WORD_S, ANSWER_S, HEALTH_SLACK_S, HOLD_SLACK_S, RESET_S, RECOVER_S, WIGGLE_PACE_S, BOOT_T_S are not set - they are written from item 12's run (plan item 10), never guessed` |
+
+No guest code changed. Test 4 is not yet written.
+
 ## Next action
 
-**Ring 8a, item 10:** `checkmolt.py --fates` (test 3), the synthetic
-human (plan item 10, decision 16): `drive_7d`'s step loop from
-`checktrials` with the stage8 bindings, plus `keys`, `wiggle`, `hold_esc`,
-`ask_held`, `await` and `flip`. It also covers disks G, W, H, F and L,
-each seeded from the host with a ring-7d-like notebook. It is judged
-through `parts.py` and the frozen seams. `broker/molt.py`'s record is
-read (`frame`, `key`, `identity`), but each frame is compared with
-`parts.fixture_frame`, never trusting the mock. The run constants
-(`RESET_S`, `RECOVER_S`, the timeouts, the waits) are named placeholders
-marked for item 12, and the checker refuses to run while any is unset.
-`test-8a.sh` gains test 3. Expected at commit: tests 1–2 green; **test 3
-red**, stopping on its unset constants and naming them, quoted from the
-log.
+**Ring 8a, item 11:** `checkmolt.py --cage` and test 4 (plan item 11):
+- (a) the harness's own strings;
+- (b) `check_argv_7c` on the checker's command. That is `checkmetal.qemu_argv` with the stage8 paths; the fates now run it under a `timeout -k 5 <T>` prefix, which (b) should look past. Also `twin.DEFAULT_PORT == 9998` and `wire.RELAY_PORT == 9997`; D4 found that `check_argv_7c` does not inspect `-icount`, `noreboot` or `-action`, so (b) says so itself;
+- (c) the payload table with the spot checks as data;
+- (d) `./stage7/test-7d.sh`.
 
-`/clear` first; one commit per item. Items 1–9 are done.
+`test-8a.sh` gains test 4. Expected at commit: tests 1–2 green; test 3 red; **test 4 red on (c) alone**.
+
+`/clear` first; one commit per item. Items 1–10 are done. Item 10's eight
+choices above are open to Cowork's review until the freeze (item 13).
 Carried to item 13, by the owner's decision of 25 September 2026: the
 freeze's directory rule, with its shapes in the payload table, 0 wrong.
 Carried to item 15: the pointer's centring, `OBS_MOUSE_ID` and
