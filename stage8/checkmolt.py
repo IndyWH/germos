@@ -46,7 +46,11 @@ Modes (all from the repo root, invoked by stage8/test-8a.sh):
                the spot checks held as data: every ring 8a frozen path,
                stage8/loader.asm among them, denied Write, Edit, `>`,
                sed -i, cp, rm and a heredoc, and still readable; the owner's
-               directory rule in his own examples; the gate, the checker,
+               directory rule in every category of his decision (the repo
+               root, a directory holding a frozen file by name, trailing
+               slash and absolute path, a glob covering one, rm, rmdir, mv,
+               git rm and git mv) and on its allowed side (an ordinary file
+               beside frozen ones, stage8/out wiped); the gate, the checker,
                the tools and the builders allowed. test-8a.sh holds (a),
                its own strings, and (d), ./stage7/test-7d.sh.
 
@@ -437,19 +441,29 @@ MOLT_TWIN = os.path.join(MOLT_OUT, "rehearsal", "twin")
 MOLT_BROKER = os.path.join(REPO, "broker", "molt.py")
 SLOT = "i8042"
 
-# The run constants (plan item 10: named placeholders, written at item 12
-# from its run, each with the run's date; the checker refuses to run while
-# any is None).
-READY_S = None          # QEMU's start, or a reset's first OVMF byte, to "S7: keyboard ready"
-SETTLE_S = None         # after the ready line, before the first input
-WORD_S = None           # a word's answer on the console and its note on the disk
-ANSWER_S = None         # "! molt i8042" to its install note on serial, through the relay and the mock
-HEALTH_SLACK_S = None   # beyond PARTS.md's 60 s, the wait from the ready line for "S8: healthy <n>"
-HOLD_SLACK_S = None     # beyond HOLD_S, the wait for the held answer in the conversation
-RESET_S = None          # the triggering input to the next boot's first OVMF byte (PARTS.md's three terms)
-RECOVER_S = None        # that first OVMF byte to "S8: recovery i8042 watchdog"
-WIGGLE_PACE_S = None    # between two mouse_moves of a wiggle (D4: paced 1 ms or more, one packet each)
-BOOT_T_S = None         # each boot's `timeout -k 5 <T>` (plan decision 15); exit 124 means the steps overran
+# The run constants (plan item 10: named placeholders), written at item 12
+# from its run of 27 September 2026 - `checkmolt.py --fates --set ...` on
+# the probe's draft (stage8/out/gate-8a.log; all five fates ok in 875.1 s)
+# and the draft's timing probe - each a bound with its margin over what the
+# run measured. The checker refuses to run while any is None.
+READY_S = 30.0          # QEMU's start, or a reset's first OVMF byte, to "S7: keyboard ready": 1.4-1.5 s with no
+                        # part to load, 4.4-4.5 s with one (the 3 s Esc window), 0.8 s after a reset's first byte
+SETTLE_S = 1.0          # after the ready line, before the first input: ring 7d's (checktrials.SETTLE_S); no key lost
+WORD_S = 2.0            # a word's answer on the console and its note on the disk: every word's note within one
+                        # key gap (0.2 s, the probe's resolution) of its Enter
+ANSWER_S = 10.0         # "! molt i8042" to its install note on serial, through the relay and the mock: within
+                        # one key gap (0.2 s) of its Enter
+HEALTH_SLACK_S = 10.0   # beyond PARTS.md's 60 s, the wait from the ready line for "S8: healthy <n>": the mark
+                        # came 60.0-60.2 s after the ready line on all eight boots that awaited it
+HOLD_SLACK_S = 10.0     # beyond HOLD_S, the wait for the held answer in the conversation: 60.9 s after its Enter
+RESET_S = 35.0          # the triggering input to the next boot's first OVMF byte: PARTS.md's three terms sum
+                        # to 32.14 s (30 + 1 + 1.14); the run gave 30.3 s (hang) and 31.0 s (fault), the
+                        # draft's four reset probes 30.2-31.0 s
+RECOVER_S = 10.0        # that first OVMF byte to "S8: recovery i8042 watchdog": 0.8 s both times
+WIGGLE_PACE_S = 0.005   # between two mouse_moves of a wiggle: one packet each (D4: from 1 ms); the run's
+                        # shadow counts equal to the model's on every boot (1,677 packets at G2-G4)
+BOOT_T_S = 600          # each boot's `timeout -k 5 <T>` (plan decision 15); exit 124 means the steps overran:
+                        # the longest boot was G5, 151.6 s (the idle health mark, the held request, two words)
 RUN_CONSTANTS = ("READY_S", "SETTLE_S", "WORD_S", "ANSWER_S", "HEALTH_SLACK_S", "HOLD_SLACK_S", "RESET_S", "RECOVER_S",
                  "WIGGLE_PACE_S", "BOOT_T_S")
 
@@ -953,6 +967,7 @@ class Fates:
             problems.append("%s: '%s' with no packet sent" % (label, checkmetal.MOUSE_LINE))
         text = seg.decode("utf-8", "replace").replace("\r", "").split("\n")
         generic = [l for l in text if l.startswith("i8042: ")]
+        got = [m.group(0).decode("ascii", "replace") for m in RAW_8A.finditer(seg)]    # before the pair is swapped
         if live:
             if generic:
                 problems.append("%s: the generic's i8042: lines on a live boot: %r" % (label, generic))
@@ -960,7 +975,6 @@ class Fates:
                 seg = seg.replace((pl + "\r\n").encode(), (gl + "\r\n").encode(), 1)
         more, geometry = checkmetal.check_boot_lines(seg, FATES_SMP, blank, notebook_want, 0, checkmetal.DISK_SECTORS)
         problems += ["%s: %s" % (label, m) for m in more]
-        got = [m.group(0).decode("ascii", "replace") for m in RAW_8A.finditer(seg)]
         want = book.lines()
         if got != want:
             problems.append("%s: the ring 8a lines are %r, want %r" % (label, got, want))
@@ -1123,7 +1137,7 @@ class Fates:
         if take:
             kb, pk = word_count(reads["marks"]["w2"], take_line, self.p)
             answer = book.word(take_line[2:-1], kb, pk)
-        echo = echo_of(notes) + b"!" + echo_of([" molt\n"] + ([take_line] if take else []))
+        echo = echo_of([t + "\n" for t in notes]) + b"!" + echo_of([" molt\n"] + ([take_line] if take else []))
         problems += self.judge(reads["capture"], book, "%d notes" % len(before), echo, packets=True, label=tag)
         found = reads.get("found", {}).get("healthy")
         if found and found[0] < idle["pos"]:
@@ -1580,8 +1594,18 @@ SPOT_DENY_8A = [c for p in FROZEN_8A for c in (
     "python3 - <<'EOF'\nopen('%s','w').write('x')\nEOF" % p)] + [
     "nasm -f bin stage8/fixtures/i8042-%s.asm -o stage8/fixtures/i8042-%s.bin" % (f, f)
     for f in ("good", "wrong", "hang", "fault", "liar")] + [
-    # the owner's directory rule (HANDOVER, ring 8a item 3): a directory holding a frozen file
+    # the owner's directory rule (HANDOVER, ring 8a item 3), every category of
+    # the decision (Cowork's review of item 11): a directory holding a frozen file
     "rm -rf stage7", "mv stage7 old7", "git rm -r stage8/fixtures", "rm -rf stage8/fixtures", "rm -rf stage8",
+    "rm -r broker",
+    # the repo root, relative and absolute
+    "rm -rf .", "rm -rf %s" % REPO,
+    # a glob that covers a frozen file
+    "rm -rf stage*", "rm stage8/fixtures/*", "rm -f stage8/*.md", "mv stage8/fixtures/* /tmp",
+    # rmdir and git mv
+    "rmdir stage8/fixtures", "git mv stage7 old7", "git mv stage8/fixtures old",
+    # a directory by a trailing slash and by its absolute path
+    "rm -r stage7/", "rm -rf %s" % os.path.join(REPO, "stage8", "fixtures"),
 ]
 SPOT_ALLOW_8A = [
     "./stage8/test-8a.sh", "./stage8/test-8a.sh 2>&1 | tail -20",
@@ -1595,6 +1619,10 @@ SPOT_ALLOW_8A = [
     "./stage8/mkimage.sh", "python3 stage8/mkstick.py", "python3 broker/molt.py --mock --part hang",
     "rm -rf stage8/out/molt stage8/out/probe8a", "rm -rf stage8/out", "rm -f stage8/out/i8042-good.check.bin",
     "mv stage8/HP-8a.md stage8/HP-8a.draft.md",
+    # the allowed side of the owner's directory rule: an ordinary file beside
+    # frozen files removed or moved, and stage8/out wiped by a glob
+    "rm -f stage8/HP-8a.md", "git mv stage8/HP-8a.md stage8/HP-8a.old.md", "mv broker/molt.py /tmp/molt.py.bak",
+    "rm -rf stage8/out/*",
     "git add stage8/PARTS.md stage8/checkmolt.py", "git commit -F msg.txt", "./stage7/test-7d.sh",
 ]
 WRITE_ALLOW_8A = ["stage8/stage8.asm", "stage8/mkimage.sh", "stage8/mkstick.py", "broker/molt.py", "stage8/seed-record.md",

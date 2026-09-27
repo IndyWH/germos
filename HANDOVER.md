@@ -3676,7 +3676,7 @@ amendments and all seventeen deviations accepted:
 |---|---|
 | 1 — the artefact, the stick, PARTS.md and SEED.md parsed cold, the worked examples, the fixtures, SHA-256's known answer | **PASS** at item 9 (27 September 2026) |
 | 2 — no part, no change: the 7c and 7d checks on the Stage 8 binary, no `S8:` line | **PASS** at item 9 (27 September 2026), on ring 7d's binary (deviation 15) |
-| 3 — the fates: good, wrong, hang, fault, liar; undo; Esc; the held request; the idle wait | written at item 10 (27 September 2026); **red by design** until item 16: it stops on its unset run constants until item 12, then on the first missing `S8:` line |
+| 3 — the fates: good, wrong, hang, fault, liar; undo; Esc; the held request; the idle wait | written at item 10 (27 September 2026); its run constants written at item 12 from the draft's run, where all five fates passed; **red by design** until item 16: on the repository's binary it stops at each install's first missing `molt:` line |
 | 4 — the bodyguard (every ring 8a frozen path, `loader.asm` among them), the argv check, the 7d gate with 7c, 7b and 7a inside it | written at item 11 (27 September 2026); **red by design on (c) alone** until item 16b: (a), (b) and (d) pass, the 7d gate green inside it |
 | 5 — the owner's, on the HP: good to the threshold and live; Esc; hang live and the HP resetting itself | pending |
 
@@ -4358,23 +4358,186 @@ owner's directory rule as five spot denials. The rule's code comes at item
 
 No guest code changed.
 
+**Item 12** — the probe, 27 September 2026 (plan item 12, the ring 7d
+method). **Test 3's ten run constants are written from a run; the
+implementation, drafted privately in full, passes all five fates.**
+Nothing of the draft is committed; `git diff --stat` shows
+`stage8/checkmolt.py` and `HANDOVER.md` alone.
+
+**Cowork's review of item 11, folded in here, while `checkmolt.py` is still
+open.** Test 4 (c) held the owner's directory rule of 25 September 2026
+through only five examples, so a hook that caught only a plain directory
+name would have passed at item 13. `SPOT_DENY_8A` now covers every category
+of the decision recorded under item 3, each as data:
+- the repo root: `rm -rf .` and `rm -rf` with the repo's absolute path;
+- a glob that covers a frozen file: `rm -rf stage*`, `rm stage8/fixtures/*`, `rm -f stage8/*.md`, `mv stage8/fixtures/* /tmp`;
+- `rmdir stage8/fixtures`; `git mv stage7 old7` and `git mv stage8/fixtures old`;
+- a directory by a trailing slash and by its absolute path: `rm -r stage7/` and `rm -rf` with the absolute path of `stage8/fixtures`;
+- `rm -r broker`, since `broker/` holds frozen files.
+
+`SPOT_ALLOW_8A` gains the allowed side of the same decision: `rm -f
+stage8/HP-8a.md`, `git mv stage8/HP-8a.md stage8/HP-8a.old.md`, `mv
+broker/molt.py /tmp/molt.py.bak` (an ordinary file beside frozen files,
+removed or moved), and `rm -rf stage8/out/*` (stage8/out wiped by a glob).
+Today's hook, fed each shape as data: **all 17 directory shapes ALLOWED**
+(the five and the twelve new) and **all 30 allowances ALLOWED**, so (c)
+stays red on them until item 13 brings the rule, as the five did. At item
+13 the same shapes go into the payload table, 0 wrong. The module docstring
+says so.
+
+**The draft** lives in `stage8/out/probe8a/draft/`: a `patch.py` that makes
+its `stage8.asm` from the repository's by 19 hooks (each asserted to apply
+exactly once), and the new code in six includes: `defs.inc`, `bss.inc`,
+`data.inc`, `loader.asm` (1,881 lines: the scan, the known answer, the
+watchdog and the pet, recovery, Esc, the door, `part_call`, the blame
+line), `molt.asm` (1,831 lines: ABI 3's services and upcalls, the raw
+ring's stubs, the polled main loop, shadow's comparison, the health mark,
+the four words, the part's home install) and `split.asm` (the read-only
+floor). `build.sh` assembles it and packs a stick with stage8's own
+`mkstick` rebound. **Decisions 2–10 are all in it; it assembled first
+time: 57,344 bytes**, SHA-256 `1d5f495b8d4bf567…`. Its stick was copied
+over `stage8/out/stick.img` for the runs and is rebuilt from the
+repository's source at the end.
+
+**How the draft is built, for Cowork's review before items 14–16** (each a
+choice PARTS.md left to the implementation, or a place the draft had to
+decide):
+1. **The notes are the state.** `molt_scan` re-reads the notebook at boot and at every word, one forward pass equal to `parts.py`'s `history`, `counts_of`, `probation_of`, `arrival` and `unhealthy_run`. There is no second copy of the state to drift.
+2. **No part, no change, literally.** Only when a part loads are IRQ1's and IRQ12's gates pointed at the part stubs (`irq1_part`, `irq12_part`), and only then does the boot enter the polled loop (`part_loop`) instead of `main_loop`. The shared code gained: a `molt_breath` call in `net_breathe` and in the AHCI poll (the heartbeat, and a pet only once armed); `molt_finish` in `finish_line` (returns unless a part is live); the `molt`/`part-` checks in `bang_line`; the `molt ` note refusal; `part-` filtered from `home_recount`'s count and the choices row; the `part-` app-frame refusal; the blame hook in `exc_common`; the `.text` split and CR0.WP.
+3. **Shadow compares keys and packets as two channels.** The generic's keys leave in the main loop (`kbd_next`) but its packets leave in IRQ context (`mouse_byte`), so one merged sequence would make a correct part disagree whenever a packet completed while a key waited in the ring. Each event carries the raw sequence number of the byte that completed it. At a count point an event one side has beyond the other counts only once both sides have taken its byte (its tag below both frontiers), so input still in flight is never counted. `<k>` is the event's position in the part's arrival-ordered sequence: W2 gives `k71 k77` at 3, PARTS.md's.
+4. **The Esc window's minimal setup** (A3: `0xAE`, the settle, the drain) runs just before `S8: sha256 ok` is printed, not just before the window. The checker sends its hold when that line lands, and a drain after it could eat the make. The window itself still opens after steps 2 and 3.
+5. **Machine notes are written from their own buffer** (`nb_write`), never through the line buffer, so a `disagree` note journaled mid-line cannot take the user's typing.
+6. **A live part's keys** go through a queue to the main loop, which counts `OBS_KEYS` and calls `handle_key`; **its packets** go to `mouse_sink`, the second half of `mouse_byte` in main-loop context. With a part live, `finish_line` first feeds the raw ring to the part (its decoder keeps its state), then drops the keys it gave, as ring 7d drops the generic's.
+7. **For item 15 (item 5's note):** with a part live the seed centres the pointer itself before `init`, and sets `OBS_MOUSE_ID` to 1 at the part's first packet (the seed cannot ask the mouse while the part owns the controller). `OBS_I8042_CMD` stays 0 with a part live.
+8. **Pet condition 5, the rings:** an overflow of the keyboard ring, the mouse ring, the raw ring or the live key queue since the last pet blocks the pet. Only a pet clears the flag, so an overflow stops the pets for the boot and the watchdog resets. That is the literal reading of "no ring has overflowed". The raw ring's 256 entries fill after about 128 keys typed during one long wait. Open for the review.
+9. **The shadow table's `pci_read32` is real**, so a part can find the seed's `.text` through the table's addresses. The stray-write probe below does exactly that.
+10. **Known limits of the comparison**, by PARTS.md's letter and never met by the gate: keys the generic discards after a request (`finish_line`) are still decoded by the part, so they count as disagreements; and the generic's `kbd_e0` reset at that discard is invisible to the part.
+
+**Two faults in the checker, found by the run and fixed before the freeze**
+(both in `checkmolt.py`, neither in the guest):
+- **`shadow_boot`'s expected echo** was `echo_of(notes)`: the note texts without the Enter each was typed with. Every other boot uses `echo_of([t + "\n"])`. The capture's `\r\n` after each note was right. Now `echo_of([t + "\n" for t in notes])`.
+- **`judge` collected the ring 8a lines after swapping the part's `part:` pair for the generic's `i8042:` pair** (the swap lets the frozen 7c line check run on a live boot). So a live boot's `part:` lines, which `Book.loaded` expects, were never found. Now they are collected from the segment before the swap.
+
+Both surfaced on the first run of disk G, at G2 and at G5. The draft was
+not changed for either.
+
+**The runs**, every one against the draft's stick:
+- **Disk by disk first** (a private runner, `steps.py`, that calls the checker's own `Fates` methods with trial constants): G and H, then W, F and L. After the two checker fixes, all five were green.
+- **The run the constants are read from:** `python3 stage8/checkmolt.py --fates --set READY_S=90 --set SETTLE_S=1.0 --set WORD_S=3.0 --set ANSWER_S=40 --set HEALTH_SLACK_S=30 --set HOLD_SLACK_S=30 --set RESET_S=45 --set RECOVER_S=90 --set WIGGLE_PACE_S=0.005 --set BOOT_T_S=900`, in `stage8/out/gate-8a.log` under its own header: **`the fates: G ok, W ok, H ok, F ok, L ok in 875.1 s`**, 21 boots.
+- **A timing probe for the waits the fates' captures carry no stamp for:** the fetch's install note and every word's note (`! molt`, the take, the undo) came **within one key gap (0.2 s, the probe's resolution) of their Enter**.
+- **The confirmation, with the constants written and no `--set`:** `python3 stage8/checkmolt.py --fates`, the log again: **`the fates: G ok, W ok, H ok, F ok, L ok in 852.5 s`**.
+
+| Fact | Measured how |
+|---|---|
+| **QEMU's start to `S7: keyboard ready`:** 1.4–1.5 s with no part to load; 4.4–4.5 s with one (the 3 s Esc window); **0.8 s from a reset's first OVMF byte** (the recovery boot loads nothing, so no window) | the run's stamps, every boot |
+| **The health mark 60.0–60.2 s after the ready line**, on all eight boots that awaited it (G2–G5, G7, W2, H2, F2) | the same |
+| **The held request (A1):** `? hold` answered **60.9 s after its Enter** (HOLD_S 60), `S7: alive` once, no OVMF byte in between; G5's idle wait to the health mark with a part live, no reset | G5 |
+| **The reset (RESET_S's terms):** **30.3 s** from the hang's last key to OVMF's first byte (H3), **31.0 s** from the fault's packet (F3). PARTS.md's three terms sum to 32.14 s | H3, F3 |
+| **The recovery line 0.8 s after OVMF's first byte**, both times: **the one path D1 chose, walked** (`S8: recovery i8042 watchdog`, `molt i8042 demoted <sha16> watchdog`, in the same process and capture as the hang) | H3, F3 |
+| **The wiggle at 5 ms a move:** every shadow boot's packets equal to the model's (1,677 at G2–G4, 109 at W2, H2, F2), the counts journaled equal to the checker's own | G2–G4, W2, H2, F2 |
+| **The longest boot:** G5, 151.6 s (the idle mark, the held request, two words); **the whole fates run 875.1 s** (14.6 min) | the run |
+
+**The constants, written into `checkmolt.py` with the run's date** (a bound
+each, with its margin over the measure):
+
+| Constant | Value | From |
+|---|---|---|
+| `READY_S` | 30.0 | worst 4.5 s |
+| `SETTLE_S` | 1.0 | ring 7d's `checktrials.SETTLE_S`; no key lost in the run |
+| `WORD_S` | 2.0 | within 0.2 s |
+| `ANSWER_S` | 10.0 | within 0.2 s, through the relay and the mock |
+| `HEALTH_SLACK_S` | 10.0 | 60.0–60.2 s after the ready line |
+| `HOLD_SLACK_S` | 10.0 | 60.9 s, 0.9 s beyond `HOLD_S` |
+| `RESET_S` | 35.0 | 30.3 s and 31.0 s; PARTS.md's terms 32.14 s |
+| `RECOVER_S` | 10.0 | 0.8 s |
+| `WIGGLE_PACE_S` | 0.005 | packets equal to moves (D4: from 1 ms) |
+| `BOOT_T_S` | 600 | the longest boot 151.6 s |
+
+`--set` now refuses every name, since all ten are written.
+
+**The rules the gate cannot reach, probed and quoted** (`probes.py`, each
+on a build of its own under `stage8/out/probe8a/draft/p-*/`, booted through
+the checker's own `Fates.boot`: the ports, the mock and the relay only when
+asked, the stick copy's tables, the notes unchanged; notes appended from the
+host by NOTEBOOK.md's record where a history is needed). Every boot's step
+list completed with no problem from the checker's own checks.
+
+- **`S8: watchdog tco locked`.** D1 showed that `noreboot=on` does not lock in the twin: GCS reads back 0 and the machine simply never resets. So the path is shown on a copy whose read-back ORs in bit 5, as silicon may (`-DPROBE_LOCK`). Good's shadow boot then printed:
+  ```
+  S8: sha256 ok
+  S8: part i8042 shadow 4fe6beefc4bc57d0
+  molt: boot 1 i8042 shadow
+  S8: watchdog tco locked
+  S7: keyboard ready
+  molt: healthy 1
+  molt: i8042 count 1 54 0 0
+  S8: healthy 1
+  ```
+  The boot went on unguarded to its health mark (decision 5's fallback).
+- **The known answer failing** (`-DPROBE_KAT`: one byte of the `abc` digest altered), on a notebook with good's install note: `ERR: sha256 known answer`, then `S7: keyboard ready`. There is no `S8:` line at all, no window, no part, no note, and the generic's pair.
+- **`another part is on probation`** (`-DSLOT_N=2`: `disk` stubbed as a second slot; notes `molt disk shadow aaaaaaaaaaaaaaaa 1 1 1`, `molt disk live aaaaaaaaaaaaaaaa`, `molt i8042 shadow bbbbbbbbbbbbbbbb 1 1 1`). The boot printed `S8: part i8042 bad hash` and `S8: part disk bad hash` (neither has a home entry). `! molt` drew both slots' rows, `disk live aaaaaaaaaaaaaaaa` at `probation 0/3`. **`! molt take i8042` → `another part is on probation`; `! molt i8042` → `another part is on probation`, with `requests` 0: nothing was sent.** `errors` was 2.
+- **`molt recovery all`.** Hang was fetched through the mock, then the host appended its history to past probation (`live`, then boots 2–4 each `healthy`: `parts.recovery_of(notes, True)` gives `('recovery', 'watchdog', [('i8042', 'f0668b687c68cab0')], True)`). Live at boot 5, fifty keys: the reset 30.2 s after the last key, then:
+  ```
+  S8: sha256 ok
+  molt: i8042 demoted f0668b687c68cab0 watchdog
+  molt: recovery all
+  S8: recovery all
+  ```
+  0.8 s after OVMF's first byte.
+- **A part's stray write into `.text`.** Good's `byte` entry was rewritten on the host to `mov rax, [rcx + 8]` (the table's `pci_read32`, an address in the seed's `.text`), `mov byte [rax], 0xCC`, `ret`. Its header hash was made anew and it was put in place of good's stored build, with the entry's hash and a live history for it (build `94803b17eb0cb352…`). The first key after its `init`:
+  ```
+  ERR: exception 14 at 0x00000000005dd182
+  ERR: exception 14 in part i8042 +0x00000182
+  ```
+  `+0x182` is the write's offset, and `0x5dd000` is the part region. The reset came 31.0 s after the key, then `molt i8042 demoted 94803b17eb0cb352 watchdog` and `S8: recovery i8042 watchdog`. **So the read-only floor holds from a part: the write faults instead of changing the seed.**
+- **The unhealthy path (A4, D1 point 9; deviation 13's mirror), in the twin.** A copy clears `SECOND_TO_STS` by hand before the loader reads it (`-DPROBE_NO_EVIDENCE`). Hang live at boot 2; the reset 30.2 s after the last key. Boot 3 found no evidence and an unhealthy run of 1, so it **loaded the part live again** (`molt: boot 3 i8042 live`, `S8: watchdog tco 30 s`, the part's pair). Fifty keys, and the reset 30.2 s later. At boot 4 the run was 2: `molt i8042 demoted f0668b687c68cab0 unhealthy`, `S8: recovery i8042 unhealthy`, 0.8 s after OVMF's first byte. All of it was one QEMU process.
+
+**Test 2 on the draft, for items 14 and 15** (not a plan requirement):
+`python3 stage8/checkmolt.py --seven` with the draft's stick is **green in
+425.9 s**. The 7c serial boots, the stages, the row and the three
+sittings all return 0; nothing outside `stage8/out/` changed; and not one
+`S8:`, `part:` or `molt:` line appears in the twelve captures. So every
+shared hook and the read-only floor (the `.text` split, CR0.WP on every
+core) leave a machine with no molt note ring 7d's.
+
+**Cleanup.** `stage8/out/stick.img` and `BOOTX64.EFI` are rebuilt from the
+repository's source (`./stage8/mkimage.sh`, `python3 stage8/mkstick.py`):
+45,056 bytes, `bbf80635…b28cd5`, seed 0's. **The draft stays in
+`stage8/out/probe8a/draft/`, which is the source items 14–16 bring in by
+their three commits**: it is gitignored scratch, so nothing may wipe
+`stage8/out/probe8a/` before item 16. `python3
+stage8/out/probe8a/draft/patch.py` remakes its `stage8.asm` from the
+repository's, and `stage8/out/probe8a/draft/build.sh --install` builds it
+and puts its stick in place.
+
+| Run | Result |
+|---|---|
+| **The gate, whole, on the repository's binary** (`stage8/out/gate-8a.log` from line 1672, headed `commit a6f1a6b+uncommitted`, 13:58:51 to 14:28:35, 29.7 min) | **test 1 PASS, test 2 PASS, test 3 FAIL by design, test 4 FAIL by design on (c) alone**, exit 1 |
+| Test 3, quoted | `G1: no 'molt: i8042 shadow [0-9a-f]{16} ' within 10 s of the step`, and the same at W1, F1 and L1 (disk H not made): **the first missing ring 8a line, not a placeholder**. `the fates: G FAILED, W FAILED, H FAILED, F FAILED, L FAILED in 81.8 s` |
+| Test 4 (a), (b) | held; the command now `timeout -k 5 600` before `checkmetal.qemu_argv` itself |
+| Test 4 (c) | the payload table `1678 payloads: 1117 must be denied, 561 must be allowed, 0 wrong`; **166 refusals, every one an expected "allows"**: 64 Write/Edit on the 16 paths, 80 spellings, 5 `nasm -o`, **17 directory shapes**. Nothing allowed was denied |
+| Test 4 (d) | ring 7d's gate **green**: 7d's tests 1–4, and inside its test 4 the 7c, 7b and 7a gates, all four tests each |
+
+No guest code changed in the repository.
+
 ## Next action
 
-**Ring 8a, item 12:** the probe (plan item 12).
-- The implementation is drafted privately under `stage8/out/probe8a/draft/`.
-- `checkmolt.py --fates --set …` runs against it, and test 3's ten run constants are read from that run and written into `checkmolt.py` with the run's date.
-- The rules the gate cannot reach are probed and quoted here.
-- `stage8/out/stick.img` is rebuilt from the repository's source.
+**Ring 8a, item 13:** freeze the acceptance machinery (plan item 13).
+- `PROTECTED` grows the fifteen paths, and the hook gains **the owner's directory rule of 25 September 2026** (`rm`, `rmdir`, `mv`, `git rm` and `git mv` on the repo root, a directory holding a frozen file, or a glob that covers one; an ordinary file beside frozen ones and `stage8/out` stay allowed). Its comment says plainly that a rule which reads the command cannot catch every route.
+- `payloads.py` gains `FROZEN_8A`: the freeze cases, the allowances, and **every shape of `SPOT_DENY_8A`'s directory rule and `SPOT_ALLOW_8A`'s allowed side as data** (Cowork's review of item 11), 0 wrong.
+- The one-expectation grep of PARTS.md and `checkmolt.py` (A5); immediacy shown with one denied `Edit` on PARTS.md.
+- Then `./stage8/test-8a.sh` whole.
 
-Expected at commit: tests 1–2 green; tests 3–4 red on the repository's binary, test 3 now on the first missing `S8:` line. `git diff --stat` shows `stage8/checkmolt.py` and `HANDOVER.md` only.
+Expected at commit: tests 1–2 green; test 3 red by design (the repository's binary has no molt words yet); **test 4 red on (c)'s loader clause alone**, with the payload table 0 wrong and the 7d gate green inside it.
 
-`/clear` first; one commit per item. Items 1–11 are done. Item 10's eight
-choices and item 11's one are open to Cowork's review until the freeze
-(item 13).
-Carried to item 13, by the owner's decision of 25 September 2026: the
-freeze's directory rule, with its shapes in the payload table, 0 wrong.
-Carried to item 15: the pointer's centring, `OBS_MOUSE_ID` and
-`OBS_I8042_CMD` stay the seed's with a part live (item 5).
+`/clear` first; one commit per item. Items 1–12 are done. **Open to
+Cowork's review until the freeze:** item 10's eight choices, item 11's one,
+and item 12's two checker fixes (the checker is frozen at item 13).
+**Carried to items 14–16:** the draft in `stage8/out/probe8a/draft/`
+(never wipe `stage8/out/probe8a/`), and item 12's ten choices in it (open to
+Cowork's review before item 14 brings the first of it in). Carried to item
+15 as well: the pointer's centring, `OBS_MOUSE_ID` and `OBS_I8042_CMD` with a
+part live (item 5; item 12's choice 7).
 
 Earlier — **Ring 7d is CLOSED (25 September 2026), and with it every ring of Stage
 7's order. Next: Stage 8 — the molt**, by the owner's order of 22
