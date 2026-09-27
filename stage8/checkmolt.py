@@ -37,6 +37,18 @@ Modes (all from the repo root, invoked by stage8/test-8a.sh):
                The run constants are item 12's: while one is unset the mode
                refuses to run and names it. For item 12's run only, an
                unset one may be given as --set NAME=VALUE; a set one never.
+  --cage       test 4's (b) and (c): a fates boot's command, `timeout -k 5
+               <T>` before checkmetal.qemu_argv itself with the stage8
+               paths, through ring 7c's frozen check_argv_7c, with -icount,
+               noreboot and -action refused here since that check does not
+               inspect them (D4); the mock's command; the frozen modules'
+               ports. Then the payload table as a subprocess, 0 wrong, and
+               the spot checks held as data: every ring 8a frozen path,
+               stage8/loader.asm among them, denied Write, Edit, `>`,
+               sed -i, cp, rm and a heredoc, and still readable; the owner's
+               directory rule in his own examples; the gate, the checker,
+               the tools and the builders allowed. test-8a.sh holds (a),
+               its own strings, and (d), ./stage7/test-7d.sh.
 
 Every expected line, count and byte is PARTS.md's or SEED.md's rule
 through stage8/parts.py, or the frozen 7c and 7d checkers' own. Written
@@ -716,7 +728,7 @@ class Human8a:
         if os.path.exists(serial_path):
             os.remove(serial_path)
         errlog = open(os.path.join(MOLT_OUT, "qemu.%s.stderr.txt" % tag), "wb")
-        argv = ["timeout", "-k", "5", "%d" % BOOT_T_S] + checkmetal.qemu_argv(smp, disk, stick_copy, serial_path)
+        argv = boot_argv(smp, disk, stick_copy, serial_path, "%d" % BOOT_T_S)
         self.proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errlog)
         self.drv = Driver(self.proc, serial_path, MOLT_OUT)
         err = None
@@ -1447,6 +1459,23 @@ class Fates:
         return ok
 
 
+def boot_argv(smp, disk, stick_copy, serial_path, t):
+    """The one place a fates boot's command is spelled: `timeout -k 5 <T>`
+    before checkmetal.qemu_argv itself (plan decision 15). Test 4 (b)
+    inspects this."""
+    return ["timeout", "-k", "5", t] + checkmetal.qemu_argv(smp, disk, stick_copy, serial_path)
+
+
+def molt_argv(fate, record, hold_s=None):
+    """The one place the mock's command is spelled. Test 4 (b) inspects this."""
+    argv = [sys.executable, MOLT_BROKER, "--mock", "--part", fate, "--port", str(checkmetal.BROKER_PORT),
+            "--record", record, "--germline", MOLT_GERMLINE, "--image", ESP, "--workdir", MOLT_TWIN,
+            "--rehearsal-port", str(checkmetal.REHEARSAL_PORT), "--plans", PLANS_DIR]
+    if hold_s is not None:
+        argv += ["--hold-s", "%d" % hold_s]
+    return argv
+
+
 def start_molt(fate, record, hold_s=None):
     """broker/molt.py --mock --part <fate> on 9999 with the gate's own
     germline, image and twin workdir (checkmetal.start_mock's lifecycle)."""
@@ -1456,12 +1485,7 @@ def start_molt(fate, record, hold_s=None):
     if os.path.exists(record):
         os.remove(record)
     log = open(os.path.join(MOLT_OUT, "mock.molt.stderr.txt"), "ab")
-    argv = [sys.executable, MOLT_BROKER, "--mock", "--part", fate, "--port", str(checkmetal.BROKER_PORT),
-            "--record", record, "--germline", MOLT_GERMLINE, "--image", ESP, "--workdir", MOLT_TWIN,
-            "--rehearsal-port", str(checkmetal.REHEARSAL_PORT), "--plans", PLANS_DIR]
-    if hold_s is not None:
-        argv += ["--hold-s", "%d" % hold_s]
-    proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=log)
+    proc = subprocess.Popen(molt_argv(fate, record, hold_s), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=log)
     deadline = time.time() + 10.0
     line = b""
     while time.time() < deadline:
@@ -1536,14 +1560,170 @@ def run_fates(overrides=()):
     return 0 if all(results.values()) else 1
 
 
+# ---------------------------------------------------- test 4: the cage ------
+# (a) is test-8a.sh's own strings and (d) its run of ./stage7/test-7d.sh.
+# Here: (b) the argv check - a fates boot's command is `timeout -k 5 <T>`
+# before checkmetal.qemu_argv itself with the stage8 paths, passed through
+# the frozen check_argv_7c; the flags check_argv_7c does not inspect (D4:
+# -icount, noreboot, -action) refused here; the mock's command; the ports
+# the frozen modules hold. (c) the payload table as a subprocess, 0 wrong,
+# and the spot checks held as data: every ring 8a frozen path, loader.asm
+# among them, denied every mutation and readable; the owner's directory
+# rule of 25 September 2026 in his own examples; running the gate, the
+# checker, the tools and the builders allowed, and writing the builder.
+
+FIXTURES_8A = ["stage8/fixtures/i8042-%s.%s" % (f, x) for f in ("good", "wrong", "hang", "fault", "liar") for x in ("asm", "bin")]
+FROZEN_8A = ["stage8/PARTS.md", "stage8/SEED.md", "stage8/parts.py", "stage8/test-8a.sh", "stage8/checkmolt.py"] + FIXTURES_8A \
+    + ["stage8/loader.asm"]
+SPOT_DENY_8A = [c for p in FROZEN_8A for c in (
+    "echo x > %s" % p, "sed -i 's/a/b/' %s" % p, "cp /tmp/x %s" % p, "rm -f %s" % p,
+    "python3 - <<'EOF'\nopen('%s','w').write('x')\nEOF" % p)] + [
+    "nasm -f bin stage8/fixtures/i8042-%s.asm -o stage8/fixtures/i8042-%s.bin" % (f, f)
+    for f in ("good", "wrong", "hang", "fault", "liar")] + [
+    # the owner's directory rule (HANDOVER, ring 8a item 3): a directory holding a frozen file
+    "rm -rf stage7", "mv stage7 old7", "git rm -r stage8/fixtures", "rm -rf stage8/fixtures", "rm -rf stage8",
+]
+SPOT_ALLOW_8A = [
+    "./stage8/test-8a.sh", "./stage8/test-8a.sh 2>&1 | tail -20",
+    "python3 stage8/checkmolt.py --document", "python3 stage8/checkmolt.py --seven",
+    "python3 stage8/checkmolt.py --fates", "python3 stage8/checkmolt.py --cage",
+    "python3 stage8/parts.py --example", "python3 stage8/parts.py --disk stage8/out/molt/disk.G.img",
+    "python3 stage8/parts.py --serial stage8/out/hp-8a.log", "python3 stage8/parts.py --seed",
+    "cat stage8/PARTS.md | head", "grep -n 'molt' stage8/checkmolt.py", "xxd stage8/fixtures/i8042-liar.bin | head",
+    "nasm -f bin stage8/fixtures/i8042-good.asm -o stage8/out/i8042-good.check.bin",
+    "tail -5 stage8/out/gate-8a.log", "echo x >> stage8/out/gate-8a.log",
+    "./stage8/mkimage.sh", "python3 stage8/mkstick.py", "python3 broker/molt.py --mock --part hang",
+    "rm -rf stage8/out/molt stage8/out/probe8a", "rm -rf stage8/out", "rm -f stage8/out/i8042-good.check.bin",
+    "mv stage8/HP-8a.md stage8/HP-8a.draft.md",
+    "git add stage8/PARTS.md stage8/checkmolt.py", "git commit -F msg.txt", "./stage7/test-7d.sh",
+]
+WRITE_ALLOW_8A = ["stage8/stage8.asm", "stage8/mkimage.sh", "stage8/mkstick.py", "broker/molt.py", "stage8/seed-record.md",
+                  "stage8/HP-8a.md", "stage8/plan-8a.md", "HANDOVER.md"]
+RELAY_PORT_8A = PORTS[2]
+ARGV_REFUSED_8A = ("-icount", "-global", "-action", "-watchdog", "-watchdog-action", "-no-reboot", "-accel", "-enable-kvm")
+
+
+def tool_verdict(tool, tool_input):
+    payload = json.dumps({"tool_name": tool, "tool_input": tool_input})
+    r = subprocess.run([sys.executable, checkmetal.HOOK], input=payload.encode(), stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE, env=dict(os.environ, CLAUDE_PROJECT_DIR=REPO))
+    return {0: "ALLOW", 2: "DENY"}.get(r.returncode, "EXIT %d" % r.returncode)
+
+
+def check_argv_8a():
+    """(b): the fates' own commands, built by the functions the fates call."""
+    point_molt_seams()
+    disk = os.path.join(MOLT_OUT, "disk.G.img")
+    copy = os.path.join(MOLT_OUT, "stick.G1.img")
+    serial = os.path.join(MOLT_OUT, "serial.G1.txt")
+    t = "%d" % BOOT_T_S if BOOT_T_S is not None else "BOOT_T_S"
+    argv = boot_argv(FATES_SMP, disk, copy, serial, t)
+    problems = []
+    if argv[:3] != ["timeout", "-k", "5"] or argv.count("timeout") != 1:
+        problems.append("a boot's command does not begin 'timeout -k 5 <T>' once: %r" % argv[:5])
+    if BOOT_T_S is not None and not (isinstance(BOOT_T_S, int) and BOOT_T_S > 0):
+        problems.append("BOOT_T_S is not a positive whole number of seconds: %r" % BOOT_T_S)
+    qemu = argv[4:]
+    if qemu != checkmetal.qemu_argv(FATES_SMP, disk, copy, serial):
+        problems.append("after the timeout prefix, a boot's command is not checkmetal.qemu_argv itself")
+    problems += checkmetal.check_argv_7c(qemu, RELAY_PORT_8A, checkmetal.MAC)
+    for flag in ARGV_REFUSED_8A:
+        if flag in qemu:
+            problems.append("the command carries %s - check_argv_7c does not inspect it (D4), so it is refused here" % flag)
+    for word in ("noreboot", "i6300esb"):
+        if [a for a in qemu if word in a]:
+            problems.append("the command names %s - D1 chose the ICH9 TCO with no flag" % word)
+    if "-smp" not in qemu or qemu[qemu.index("-smp") + 1] != "4":
+        problems.append("the fates do not run at -smp 4")
+    for path in (disk, copy, serial):
+        if not path.startswith(MOLT_OUT + os.sep):
+            problems.append("a boot's file is not under stage8/out/molt/: %s" % path)
+    m = molt_argv("hang", os.path.join(MOLT_OUT, "broker.H1.jsonl"), 60)
+    opt = {m[i]: m[i + 1] for i in range(2, len(m) - 1) if m[i].startswith("--") and not m[i + 1].startswith("--")}
+    if m[1] != MOLT_BROKER or "--mock" not in m:
+        problems.append("the broker is not broker/molt.py --mock: %r" % m[:3])
+    if opt.get("--port") != "9999" or opt.get("--rehearsal-port") != "9998" or opt.get("--part") != "hang":
+        problems.append("the mock is not on 9999 with its twin on 9998: %r" % m)
+    for key in ("--record", "--germline", "--image", "--workdir"):
+        if not opt.get(key, "").startswith(OUT + os.sep):
+            problems.append("the mock's %s is not under stage8/out/: %r" % (key, opt.get(key)))
+    if opt.get("--plans") != PLANS_DIR or "--model" in m:
+        problems.append("the mock reads plans other than the repository's, or names a model: %r" % m)
+    import wire
+    if (checkmetal.BROKER_PORT, checkmetal.REHEARSAL_PORT, checkmetal.RELAY_PORT) != PORTS or PORTS != (9999, 9998, 9997):
+        problems.append("the frozen 7c ports are not 9999, 9998 and 9997")
+    if twin.DEFAULT_PORT != 9998 or wire.RELAY_PORT != 9997 or twin.VGA_ARGS != checkmetal.DISPLAY:
+        problems.append("the frozen modules' ports or display are not ring 7c's")
+    return problems
+
+
+def check_bodyguard_8a():
+    """(c): the payload table whole, then the spot checks as data."""
+    problems = []
+    r = subprocess.run([sys.executable, checkmetal.PAYLOADS], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    last = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else ""
+    m = re.fullmatch(r"(\d+) payloads: (\d+) must be denied, (\d+) must be allowed, (\d+) wrong", last)
+    if r.returncode != 0 or not m or m.group(4) != "0":
+        problems.append("the payload table: exit %d, last line %r - want exit 0 and 0 wrong" % (r.returncode, last))
+        for line in r.stdout.splitlines():
+            if line.startswith("  WRONG"):
+                problems.append("  " + line.strip())
+    else:
+        say("the payload table: %s" % last)
+    for p in FROZEN_8A:
+        for path in (p, os.path.join(REPO, p)):
+            for tool, ti in (("Write", {"file_path": path, "content": "x"}),
+                             ("Edit", {"file_path": path, "old_string": "a", "new_string": "b"})):
+                v = tool_verdict(tool, ti)
+                if v != "DENY":
+                    problems.append("the hook %ss %s on %s - every ring 8a frozen path must be frozen" % (v.lower(), tool, path))
+        v = tool_verdict("Read", {"file_path": os.path.join(REPO, p)})
+        if v != "ALLOW":
+            problems.append("the hook %ss Read on %s - a frozen file stays readable" % (v.lower(), p))
+    for p in WRITE_ALLOW_8A:
+        v = tool_verdict("Write", {"file_path": p, "content": "x"})
+        if v != "ALLOW":
+            problems.append("the hook %ss Write on %s - the builder, the mock and the records are never frozen" % (v.lower(), p))
+    for c in SPOT_DENY_8A:
+        v = checkmetal.hook_verdict(c)
+        if v != "DENY":
+            problems.append("the hook %ss %r - every mutation of a ring 8a frozen path must be denied" % (v.lower(), c))
+    for c in SPOT_ALLOW_8A:
+        v = checkmetal.hook_verdict(c)
+        if v != "ALLOW":
+            problems.append("the hook %ss %r - running the gate, the checker, the tools and the builders must be allowed"
+                            % (v.lower(), c))
+    return problems
+
+
+def run_cage():
+    problems = check_argv_8a()
+    if not report("the checker's commands are not the twin of the HP", problems):
+        return 1
+    say("the checker's QEMU command is 'timeout -k 5 %s' before checkmetal.qemu_argv itself: one restricted cage to the relay "
+        "on %d, the e1000e with %s, -cpu IvyBridge, the display, the stick copy over xhci, the SATA disk on ide.1, two drives "
+        "under stage8/out/molt/, no esp.img, -smp %d; none of %s, no noreboot, no i6300esb; the mock on %d with its twin on %d, "
+        "its files under stage8/out/"
+        % (BOOT_T_S if BOOT_T_S is not None else "<BOOT_T_S, item 12's>", RELAY_PORT_8A, checkmetal.MAC, FATES_SMP,
+           " ".join(ARGV_REFUSED_8A), checkmetal.BROKER_PORT, checkmetal.REHEARSAL_PORT))
+    problems = check_bodyguard_8a()
+    ok = report("the bodyguard does not freeze ring 8a's paths", problems)
+    if ok:
+        say("the bodyguard: the %d ring 8a frozen paths denied Write and Edit (relative and absolute) and %d spellings, readable; "
+            "the builder's %d files writable; %d shapes of running and building allowed"
+            % (len(FROZEN_8A), len(SPOT_DENY_8A), len(WRITE_ALLOW_8A), len(SPOT_ALLOW_8A)))
+    say("the cage: %s" % ("held, and the criteria frozen" if ok else "not proven"))
+    return 0 if ok else 1
+
+
 # --------------------------------------------------------------- main ------
 
 def main(argv):
-    modes = {"--document": run_document, "--seven": run_seven, "--fates": run_fates}
+    modes = {"--document": run_document, "--seven": run_seven, "--fates": run_fates, "--cage": run_cage}
     sets = argv[1:]
     if not argv or argv[0] not in modes or (sets and (argv[0] != "--fates" or len(sets) % 2
                                                       or any(a != "--set" for a in sets[0::2]))):
-        say("usage: checkmolt.py --document | --seven | --fates [--set NAME=VALUE ...]")
+        say("usage: checkmolt.py --document | --seven | --fates [--set NAME=VALUE ...] | --cage")
         return 1
     os.makedirs(OUT, exist_ok=True)
     tee = tee_log(" ".join(argv))

@@ -3677,7 +3677,7 @@ amendments and all seventeen deviations accepted:
 | 1 — the artefact, the stick, PARTS.md and SEED.md parsed cold, the worked examples, the fixtures, SHA-256's known answer | **PASS** at item 9 (27 September 2026) |
 | 2 — no part, no change: the 7c and 7d checks on the Stage 8 binary, no `S8:` line | **PASS** at item 9 (27 September 2026), on ring 7d's binary (deviation 15) |
 | 3 — the fates: good, wrong, hang, fault, liar; undo; Esc; the held request; the idle wait | written at item 10 (27 September 2026); **red by design** until item 16: it stops on its unset run constants until item 12, then on the first missing `S8:` line |
-| 4 — the bodyguard (every ring 8a frozen path, `loader.asm` among them), the argv check, the 7d gate with 7c, 7b and 7a inside it | not yet written |
+| 4 — the bodyguard (every ring 8a frozen path, `loader.asm` among them), the argv check, the 7d gate with 7c, 7b and 7a inside it | written at item 11 (27 September 2026); **red by design on (c) alone** until item 16b: (a), (b) and (d) pass, the 7d gate green inside it |
 | 5 — the owner's, on the HP: good to the threshold and live; Esc; hang live and the HP resetting itself | pending |
 
 **Carried into this ring, from ring 7d's closure:**
@@ -4299,18 +4299,78 @@ session's scratchpad):
 
 No guest code changed. Test 4 is not yet written.
 
+**Item 11** — `checkmolt.py --cage` and test 4, 27 September 2026. **Tests
+1 and 2 PASS; test 3 FAILS by design** (its ten unset run constants, as at
+item 10); **test 4 FAILS by design on (c) alone.** (a), (b) and (d) pass.
+
+- **(a), in `test-8a.sh`**, 7d's self-checks on the harness's own strings:
+  - the netdev: slirp, `restrict=on`, one guestfwd to `10.0.2.4:9999` via `nc -N 127.0.0.1 9997`, no hostfwd;
+  - the ports 9999, 9998 and 9997, the e1000e with the HP's MAC, the machine, the display;
+  - `sata_drive` and `stick_drive` spelled on `stage8/out/molt/`;
+  - `OUT` is `stage8/out`, with the scratch (`molt/`, `seven/`) and the log under it; no QEMU line of the harness names `esp.img`.
+- **(b), `checkmolt.py --cage`.** The fates' two commands are now each spelled in one function, `boot_argv` and `molt_argv`, which the fates call and (b) inspects. Nothing else in `--fates` changed.
+  - A boot's command begins `timeout -k 5 <T>` exactly once, and the rest is `checkmetal.qemu_argv` itself. That rest goes through the frozen `check_argv_7c`, with `checkmetal.OUT` pointed at `stage8/out` as the fates point it. `-smp` is 4, and the three files are under `stage8/out/molt/`.
+  - **D4's gap, closed here:** `-icount`, `-global`, `-action`, `-watchdog`, `-watchdog-action`, `-no-reboot`, `-accel` and `-enable-kvm` are refused, and so is any argument naming `noreboot` or `i6300esb` (D1 chose the ICH9 TCO with no flag).
+  - With `BOOT_T_S` unset, the prefix is judged by its shape and the line says so. Once item 12 writes it, `BOOT_T_S` must be a positive whole number of seconds.
+  - The mock: `broker/molt.py --mock`, `--port 9999`, `--rehearsal-port 9998`, its record, germline, image and workdir under `stage8/out/`, the repository's plans, and no `--model`.
+  - The ports as the frozen modules hold them: `checkmetal`'s three, `twin.DEFAULT_PORT` 9998, `wire.RELAY_PORT` 9997, and `twin.VGA_ARGS` is 7c's display.
+- **(c), `checkmolt.py --cage`.** First the payload table as a subprocess: exit 0 and 0 wrong, **1678 payloads, 1117 denied, 561 allowed, 0 wrong** today. Then the spot checks, held as data:
+  - **the 16 frozen paths** (the 15 of item 13 and `stage8/loader.asm`): `Write` and `Edit` denied on each, relative and absolute, and `Read` allowed;
+  - **80 shell spellings denied:** `>`, `sed -i`, `cp` over, `rm -f` and a heredoc's `open(…,'w')` on each path;
+  - **5 `nasm … -o` over a fixture's `.bin`, denied;**
+  - **the owner's directory rule, in his own examples** (item 3's decision): `rm -rf stage7`, `mv stage7 old7`, `git rm -r stage8/fixtures`, `rm -rf stage8/fixtures`, `rm -rf stage8`;
+  - **Write allowed** on the builder, the mock and the records (`stage8.asm`, `mkimage.sh`, `mkstick.py`, `broker/molt.py`, `seed-record.md`, `HP-8a.md`, `plan-8a.md`, `HANDOVER.md`);
+  - **26 shapes allowed:**
+    - the gate, and the checker's four modes;
+    - `parts.py`'s four modes;
+    - reads (`cat`, `grep`, `xxd`), and `nasm` of a fixture to a check copy under `stage8/out/`;
+    - the log's `tail` and `>>`;
+    - the builders and `molt.py --mock`;
+    - the scratch wipes, `rm -rf stage8/out` among them, and an ordinary file removed or moved beside frozen ones;
+    - `git add` of the paths, `git commit -F`, and the 7d gate.
+- **(d), in `test-8a.sh`:** `./stage7/test-7d.sh`, whose output lands in both logs. As in 7d, (b) to (d) run only when (a) holds.
+
+| Run | Result |
+|---|---|
+| **The gate, whole** (`stage8/out/gate-8a.log` from line 751, headed `commit 41621e4+uncommitted`, 11:50:21 to 12:18:43, 28.4 min) | **test 1 PASS, test 2 PASS, test 3 FAIL by design, test 4 FAIL by design on (c) alone**, exit 1 |
+| Test 4 (a) | the harness's strings held |
+| Test 4 (b) | the fates' command and the mock's held; `timeout -k 5 <BOOT_T_S, item 12's>` |
+| Test 4 (c) | the payload table `1678 payloads: 1117 must be denied, 561 must be allowed, 0 wrong`; **154 refusals, every one an expected "allows"**: 64 Write/Edit on the 16 paths, 80 spellings, 5 `nasm -o`, 5 directory shapes. Nothing allowed was denied |
+| Test 4 (d) | `./stage7/test-7d.sh` **green**: 7d's tests 1–4, and inside its test 4 the 7c, 7b and 7a gates, all four tests each, on ring 7d's own binary. This is the earlier gates' one run at this commit (plan conventions) |
+
+**(b) has teeth, shown on the host** by two scratch probes (in the
+session's scratchpad, not committed; no boot, no port).
+- **Probe 1, 22 cases, 0 wrong.** It bends the fates' own builders:
+  - each of D4's three flags, `-no-reboot`, `-enable-kvm` and an `i6300esb` inserted;
+  - no timeout, and the timeout twice;
+  - `-smp 2`;
+  - the relay port 9999;
+  - a drive under `stage7/out/`, a drive under `stage8/out/seven/`, and `esp.img` on SATA;
+  - the mock without `--mock`, on 9997, with its twin on 9999, with the germline in the repository, or with `--model`;
+  - `BOOT_T_S` set to 0 or to 2.5.
+
+  Each is refused; the baseline and `BOOT_T_S` 900 are accepted.
+- **Probe 2, 9 cases, 0 wrong.** It bends `checkmetal.qemu_argv` itself, so the equality check agrees and the flag checks must refuse alone. Each of the eight flags and `-smp 2` is refused by its own message.
+
+**One choice for Cowork's review before the freeze:** (c) holds the
+owner's directory rule as five spot denials. The rule's code comes at item
+13, so from then on (c) holds the hook to the owner's own examples.
+
+No guest code changed.
+
 ## Next action
 
-**Ring 8a, item 11:** `checkmolt.py --cage` and test 4 (plan item 11):
-- (a) the harness's own strings;
-- (b) `check_argv_7c` on the checker's command. That is `checkmetal.qemu_argv` with the stage8 paths; the fates now run it under a `timeout -k 5 <T>` prefix, which (b) should look past. Also `twin.DEFAULT_PORT == 9998` and `wire.RELAY_PORT == 9997`; D4 found that `check_argv_7c` does not inspect `-icount`, `noreboot` or `-action`, so (b) says so itself;
-- (c) the payload table with the spot checks as data;
-- (d) `./stage7/test-7d.sh`.
+**Ring 8a, item 12:** the probe (plan item 12).
+- The implementation is drafted privately under `stage8/out/probe8a/draft/`.
+- `checkmolt.py --fates --set …` runs against it, and test 3's ten run constants are read from that run and written into `checkmolt.py` with the run's date.
+- The rules the gate cannot reach are probed and quoted here.
+- `stage8/out/stick.img` is rebuilt from the repository's source.
 
-`test-8a.sh` gains test 4. Expected at commit: tests 1–2 green; test 3 red; **test 4 red on (c) alone**.
+Expected at commit: tests 1–2 green; tests 3–4 red on the repository's binary, test 3 now on the first missing `S8:` line. `git diff --stat` shows `stage8/checkmolt.py` and `HANDOVER.md` only.
 
-`/clear` first; one commit per item. Items 1–10 are done. Item 10's eight
-choices above are open to Cowork's review until the freeze (item 13).
+`/clear` first; one commit per item. Items 1–11 are done. Item 10's eight
+choices and item 11's one are open to Cowork's review until the freeze
+(item 13).
 Carried to item 13, by the owner's decision of 25 September 2026: the
 freeze's directory rule, with its shapes in the payload table, 0 wrong.
 Carried to item 15: the pointer's centring, `OBS_MOUSE_ID` and

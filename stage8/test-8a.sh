@@ -215,6 +215,78 @@ else
 fi
 echo
 
+# ------------------------------------------ test 4: the cage and the freeze --
+# Four parts. (a) This harness inspects its OWN cage, machine, display, stick
+# and disk strings, its scratch and its log, and that no QEMU line of its own
+# names esp.img; (b)-(c) stage8/checkmolt.py --cage: a fates boot's command
+# (timeout, then ring 7c's own) through the frozen check_argv_7c with the
+# flags it does not inspect refused, the mock's command, the ports; the
+# payload table 0 wrong with every ring 8a frozen path - stage8/loader.asm
+# among them - denied every mutation, and the spot checks; (d) ring 7d's
+# gate, which runs 7d's tests 1-4 and inside its test 4 the 7c, 7b and 7a
+# gates, each on ring 7d's own binary. Its output lands in both logs.
+
+echo "Test 4 - The cage and the freeze: the harness's strings, the argv check, the payload table with every ring 8a frozen path, the 7d gate with 7c, 7b and 7a inside it"
+cage_probs=()
+case "$CAGE_NETDEV" in
+  user,*) : ;;
+  *) cage_probs+=("the netdev is not slirp user mode: $CAGE_NETDEV") ;;
+esac
+case ",$CAGE_NETDEV," in
+  *,restrict=on,*) : ;;
+  *) cage_probs+=("the netdev lacks restrict=on: $CAGE_NETDEV") ;;
+esac
+n_fwd=$(printf '%s' "$CAGE_NETDEV" | grep -o 'guestfwd=' | wc -l)
+[ "$n_fwd" -eq 1 ] || cage_probs+=("expected exactly one guestfwd, found $n_fwd: $CAGE_NETDEV")
+printf '%s' "$CAGE_NETDEV" | grep -qE "guestfwd=tcp:10\.0\.2\.4:9999-cmd:nc -N 127\.0\.0\.1 ${RELAY_PORT}(,|\$)" || \
+  cage_probs+=("the guestfwd is not tcp:10.0.2.4:9999 via 'nc -N 127.0.0.1 ${RELAY_PORT}': $CAGE_NETDEV")
+case "$CAGE_NETDEV" in
+  *hostfwd*) cage_probs+=("the netdev opens a hostfwd: $CAGE_NETDEV") ;;
+esac
+[ "$BROKER_PORT" = 9999 ] && [ "$REHEARSAL_PORT" = 9998 ] && [ "$RELAY_PORT" = 9997 ] || \
+  cage_probs+=("the ports are not 9999, 9998 and 9997: $BROKER_PORT $REHEARSAL_PORT $RELAY_PORT")
+[ "$CAGE_DEVICE" = "e1000e,netdev=n0,mac=$MAC" ] || cage_probs+=("the device is not an e1000e on netdev n0 with the patient's MAC: $CAGE_DEVICE")
+[ "$MAC" = "6c:3b:e5:3b:86:45" ] || cage_probs+=("the MAC is not the patient's: $MAC")
+[ "$DISPLAY" = "-vga none -device VGA,edid=on,xres=1920,yres=1080" ] || cage_probs+=("the display is not the standard VGA device with the 1920x1080 EDID: $DISPLAY")
+[ "$MACHINE" = "-machine q35 -cpu IvyBridge -m 256M -bios $OVMF" ] || cage_probs+=("the machine is not q35 on the patient's CPU with OVMF: $MACHINE")
+[ "$(sata_drive "$MOLT/disk.G.img")" = "-drive if=none,id=d0,format=raw,file=$MOLT/disk.G.img -device ide-hd,drive=d0,bus=ide.1" ] || \
+  cage_probs+=("the disk is not the raw file under stage8/out/molt/ on an ide-hd at ide.1")
+[ "$(stick_drive "$MOLT/stick.G1.img")" = "-device qemu-xhci -drive if=none,id=stick,format=raw,file=$MOLT/stick.G1.img -device usb-storage,drive=stick" ] || \
+  cage_probs+=("the stick is not a raw copy under stage8/out/molt/ on usb-storage behind qemu-xhci")
+[ "$OUT" = "$REPO/stage8/out" ] || cage_probs+=("the output directory $OUT is not stage8/out/")
+for d in "$MOLT" "$SEVEN" "$LOG"; do
+  case "$d" in
+    "$OUT"/*) : ;;
+    *) cage_probs+=("$d is not under stage8/out/") ;;
+  esac
+done
+if grep -qE 'qemu-system-x86_64.*esp\.img' "${BASH_SOURCE[0]}"; then
+  cage_probs+=("a QEMU line of this harness names esp.img - the stick is the only boot medium on the twin of the HP")
+fi
+
+t4=0
+if [ "${#cage_probs[@]}" -ne 0 ]; then
+  fail "test 4: this harness's own cage, machine, display, stick, disk, scratch or log string is not the twin of the HP"
+  for p in "${cage_probs[@]}"; do echo "    - $p"; done
+else
+  echo "    the harness's own -netdev string carries restrict=on and the single guestfwd to 10.0.2.4:9999 via nc to the relay on 127.0.0.1:$RELAY_PORT; the ports 9999, 9998 and 9997; the e1000e with the patient's MAC; q35 on IvyBridge; the VGA device with the 1920x1080 EDID; the stick a copy on usb-storage behind qemu-xhci and the disk a raw file on ide.1, both under stage8/out/molt/; the scratch and the log under stage8/out/; no QEMU line names esp.img"
+  python3 "$REPO/stage8/checkmolt.py" --cage || t4=1
+  echo
+  echo "    --- ./stage7/test-7d.sh on ring 7d's binary (7d's tests 1-4; the 7c, 7b and 7a gates inside its test 4) ---"
+  if "$REPO/stage7/test-7d.sh"; then
+    echo "    --- ./stage7/test-7d.sh: green ---"
+  else
+    echo "    --- ./stage7/test-7d.sh: RED ---"
+    t4=1
+  fi
+  if [ "$t4" -eq 0 ]; then
+    pass "test 4: the harness's strings, the argv check, every ring 8a path frozen and the payload table 0 wrong, the 7d gate green with 7c, 7b and 7a inside it"
+  else
+    fail "test 4: the cage, the freeze or an earlier gate is not proven (see above)"
+  fi
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 if [ "$fails" -eq 0 ]; then
