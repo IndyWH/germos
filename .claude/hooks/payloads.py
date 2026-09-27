@@ -908,6 +908,126 @@ CASES += [
     (bash("echo 'the trial, the cue, the hit, the miss, layout B, the synthetic human, the verdict'"), ALLOW, "bodyguard allows: the ring's words in prose"),
 ]
 
+# --- Stage 8 ring 8a: the freeze (plan item 13, decision 1), the directory rule --
+# The fifteen files of the molt frozen - the two documents, the tool, the
+# gate, the checker, the five fixtures and their binaries - and the
+# allowances this ring runs, measured at item 3: the gate (its output to the
+# log), the checker's four modes, the tool's four, the builders and the
+# guest written, loader.asm written until item 16b, the mock, the seed
+# record, the plan and HP-8a.md, the scratch wiped, git add of the paths.
+# Then the owner's directory rule of 25 September 2026, every shape of
+# test 4 (c)'s SPOT_DENY_8A and SPOT_ALLOW_8A as data (Cowork's review of
+# item 11), and the rule's own edges.
+FIXTURES_8A = ["stage8/fixtures/i8042-%s.%s" % (f, x) for f in ("good", "wrong", "hang", "fault", "liar") for x in ("asm", "bin")]
+FROZEN_8A = ["stage8/PARTS.md", "stage8/SEED.md", "stage8/parts.py", "stage8/test-8a.sh", "stage8/checkmolt.py"] + FIXTURES_8A
+STICK8A = "-device qemu-xhci -drive if=none,id=stick,format=raw,file=stage8/out/molt/stick.G1.img -device usb-storage,drive=stick "
+MOLT8A = "-drive if=none,id=d0,format=raw,file=stage8/out/molt/disk.G.img -device ide-hd,drive=d0,bus=ide.1 "
+CASES += [(c, v, "ring 8a freeze: " + w) for c, v, w in freeze_cases(FROZEN_8A)]
+CASES += [(bash("nasm -f bin stage8/fixtures/i8042-%s.asm -o stage8/fixtures/i8042-%s.bin" % (f, f)), DENY,
+           "ring 8a freeze: nasm -o over the %s fixture's binary" % f) for f in ("good", "wrong", "hang", "fault", "liar")]
+CASES += [
+    (write("stage8/PARTS.md"), DENY, "ring 8a freeze: the document"),
+    (edit("stage8/SEED.md"), DENY, "ring 8a freeze: Edit on the seed's document"),
+    (write("stage8/parts.py"), DENY, "ring 8a freeze: the tool"),
+    (write("stage8/checkmolt.py"), DENY, "ring 8a freeze: the checker"),
+    (write("stage8/test-8a.sh"), DENY, "ring 8a freeze: the gate"),
+    (write("stage8/fixtures/i8042-hang.asm"), DENY, "ring 8a freeze: a fixture's source"),
+    (bash("sed -i 's/RESET_S = 35.0/RESET_S = 40.0/' stage8/checkmolt.py"), DENY, "ring 8a freeze: sed -i on a run constant"),
+    (bash("sed -i 's/W = 3,000 ms/W = 5,000 ms/' stage8/PARTS.md"), DENY, "ring 8a freeze: sed -i on the Esc window"),
+    (bash("echo x >> stage8/PARTS.md"), DENY, "ring 8a freeze: appending to the document"),
+    (bash("python3 - <<'EOF'\nopen('stage8/fixtures/i8042-good.bin','wb').write(b'x')\nEOF"), DENY, "ring 8a freeze: python writing a fixture"),
+    (write("stage8/loader.asm"), ALLOW, "ring 8a freeze allows: loader.asm until item 16b (A6)"),
+    (edit("stage8/loader.asm"), ALLOW, "ring 8a freeze allows: Edit on loader.asm until item 16b"),
+    (write("stage8/stage8.asm"), ALLOW, "ring 8a freeze allows: Write the implementation"),
+    (write("stage8/mkimage.sh"), ALLOW, "ring 8a freeze allows: the builder is not frozen"),
+    (write("stage8/mkstick.py"), ALLOW, "ring 8a freeze allows: the stick's builder is not frozen"),
+    (write("broker/molt.py"), ALLOW, "ring 8a freeze allows: the mock is not frozen (decision 14)"),
+    (write("stage8/seed-record.md"), ALLOW, "ring 8a freeze allows: the seed record, append-only by SEED.md's rule"),
+    (write("stage8/HP-8a.md"), ALLOW, "ring 8a freeze allows: the owner's procedure is paperwork"),
+    (write("stage8/plan-8a.md"), ALLOW, "ring 8a freeze allows: the plan is paperwork"),
+    (write("stage8/out/probe8a/draft/molt.asm"), ALLOW, "ring 8a freeze allows: the draft under out/"),
+    (write("stage9/PARTS.md"), ALLOW, "ring 8a freeze allows: a later stage's document of the same name"),
+    (bash("./stage8/test-8a.sh"), ALLOW, "ring 8a freeze allows: running the gate"),
+    (bash("./stage8/test-8a.sh 2>&1 | tail -20"), ALLOW, "ring 8a freeze allows: the gate piped"),
+    (bash("tail -5 stage8/out/gate-8a.log"), ALLOW, "ring 8a freeze allows: reading the gate's log"),
+    (bash("echo x >> stage8/out/gate-8a.log"), ALLOW, "ring 8a freeze allows: appending to the gate's log under out/"),
+    (bash("python3 stage8/checkmolt.py --document"), ALLOW, "ring 8a freeze allows: the checker's document mode"),
+    (bash("python3 stage8/checkmolt.py --seven"), ALLOW, "ring 8a freeze allows: the checker's seven mode"),
+    (bash("python3 stage8/checkmolt.py --fates"), ALLOW, "ring 8a freeze allows: the checker's fates mode"),
+    (bash("python3 stage8/checkmolt.py --cage"), ALLOW, "ring 8a freeze allows: the checker's cage mode"),
+    (bash("python3 stage8/parts.py --example"), ALLOW, "ring 8a freeze allows: the tool on the worked examples"),
+    (bash("python3 stage8/parts.py --disk stage8/out/molt/disk.G.img"), ALLOW, "ring 8a freeze allows: the tool on a disk image"),
+    (bash("python3 stage8/parts.py --serial stage8/out/hp-8a.log"), ALLOW, "ring 8a freeze allows: the tool on the chart"),
+    (bash("python3 stage8/parts.py --seed"), ALLOW, "ring 8a freeze allows: the tool on the seed record"),
+    (bash("nasm -f bin stage8/fixtures/i8042-good.asm -o stage8/out/i8042-good.check.bin"), ALLOW, "ring 8a freeze allows: a fixture reassembled under out/"),
+    (bash("./stage8/mkimage.sh && python3 stage8/mkstick.py"), ALLOW, "ring 8a freeze allows: the builders"),
+    (bash("python3 broker/molt.py --mock --part hang"), ALLOW, "ring 8a freeze allows: the mock"),
+    (bash("stage8/out/probe8a/draft/build.sh --install"), ALLOW, "ring 8a freeze allows: the draft's build"),
+    (bash("git add stage8/PARTS.md stage8/SEED.md stage8/parts.py stage8/test-8a.sh stage8/checkmolt.py stage8/fixtures .claude/hooks/protect-tests.py .claude/hooks/payloads.py"),
+     ALLOW, "ring 8a freeze allows: git add"),
+    (bash(QEMU7 + DISPLAY6B + STICK8A + MOLT8A + CAGE7B + "-display none -serial file:stage8/out/molt/serial.G1.txt -monitor stdio"),
+     ALLOW, "bodyguard allows: the fates' boot under the molt scratch"),
+    (bash(QEMU7 + DISPLAY6B + STICK8A + "-drive if=none,id=d0,format=raw,file=/tmp/molt.img -device ide-hd,drive=d0,bus=ide.1 " + CAGE7B),
+     DENY, "bodyguard: a molt disk outside out/ is denied"),
+    (bash("echo 'the molt, the part, the slot, shadow, live, demoted, the watchdog, the seed'"), ALLOW, "bodyguard allows: the ring's words in prose"),
+]
+CASES += [(bash(c), DENY, "ring 8a directory rule: " + w) for c, w in [
+    ("rm -rf stage7", "a directory holding frozen files (the owner's example)"),
+    ("mv stage7 old7", "moved (the owner's example)"),
+    ("git rm -r stage8/fixtures", "git rm (the owner's example)"),
+    ("rm -rf stage8/fixtures", "the fixtures' directory"),
+    ("rm -rf stage8", "the ring's directory"),
+    ("rm -r broker", "broker/ holds frozen files"),
+    ("rm -rf stage6 plans", "two directories, each holding frozen files"),
+    ("rm -rf .", "the repo root"),
+    ("rm -rf %s" % REPO, "the repo root, absolute"),
+    ("rm -rf %s/" % REPO, "the repo root, absolute with a slash"),
+    ("rm -rf ./", "the repo root, ./"),
+    ("rm -rf ..", "a directory above the working one"),
+    ("rm -rf stage*", "a glob covering the stages"),
+    ("rm stage8/fixtures/*", "a glob covering the fixtures"),
+    ("rm -f stage8/*.md", "a glob covering PARTS.md and SEED.md"),
+    ("mv stage8/fixtures/* /tmp", "a glob moved away"),
+    ("rm -rf stage[0-8]", "a bracket glob"),
+    ("rm -f stage8/fixtures/i8042-?ood.bin", "a ? glob on one fixture"),
+    ("rmdir stage8/fixtures", "rmdir"),
+    ("git mv stage7 old7", "git mv"),
+    ("git mv stage8/fixtures old", "git mv of the fixtures"),
+    ("git -C . rm -r stage8", "git with an option before rm"),
+    ("rm -r stage7/", "a trailing slash"),
+    ("rm -rf %s" % os.path.join(REPO, "stage8", "fixtures"), "an absolute directory"),
+    ("rm -rf stage8/out/..", "a dot segment back to the ring's directory"),
+    ("rm -rf ../stage7", "a relative path from a sibling directory"),
+    ("rm -rf fixtures", "a bare directory name, as the freeze treats a bare basename"),
+    ("cd stage8/out && rm -rf ../fixtures", "the second segment of a chain"),
+    ("ls; rm -rf 'stage7'", "a quoted directory after a semicolon"),
+    ("true | rm -rf stage6", "after a pipe"),
+    ("/bin/rm -rf stage5", "the verb by its path"),
+    ("LC_ALL=C rm -rf stage4", "an assignment before the verb"),
+    ("rm -rf -- stage3", "after --"),
+    ("mv stage8/HP-8a.md stage8", "a file moved into a directory holding frozen files: any argument counts"),
+]]
+CASES += [(bash(c), ALLOW, "ring 8a directory rule allows: " + w) for c, w in [
+    ("rm -f stage8/HP-8a.md", "an ordinary file beside frozen files"),
+    ("git mv stage8/HP-8a.md stage8/HP-8a.old.md", "git mv of an ordinary file beside frozen files"),
+    ("mv broker/molt.py /tmp/molt.py.bak", "an unfrozen file moved out of broker/"),
+    ("mv stage8/HP-8a.md stage8/HP-8a.draft.md", "an ordinary file renamed in place"),
+    ("rm -rf stage8/out", "the ring's scratch"),
+    ("rm -rf stage8/out/*", "the ring's scratch by a glob"),
+    ("rm -rf stage8/out/molt stage8/out/probe8a", "the gate's and the probes' scratch"),
+    ("rm -f stage8/out/i8042-good.check.bin", "a reassembled fixture under out/"),
+    ("rm -f stage8/out/molt/*.img", "the fates' disks by a glob"),
+    ("mv stage8/out/molt/serial.G1.txt stage8/out/serial.G1.old.txt", "a capture moved within out/"),
+    ("rm -rf stage7/out/trials stage7/out/probe7d", "an earlier ring's scratch"),
+    ("rm -rf /tmp/stage7", "an absolute path outside the repo"),
+    ("rm -f stage8/out/probe8a/draft/b/stick.img", "the draft's build"),
+    ("echo rm -rf stage7", "rm as a word in prose"),
+    ("git commit -m 'no rm -rf stage7 here'", "the words in a quoted message"),
+    ("grep -rn rmdir stage8/PARTS.md", "grep for the word"),
+    ("git rm --cached stage8/out/x.log", "git rm of an ordinary path"),
+    ("git stash list", "a git verb outside the rule"),
+]]
+
 
 def run(case):
     tool, tool_input = case

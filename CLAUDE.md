@@ -147,7 +147,7 @@ python3 broker/relay.py --bind 127.0.0.1 --port 9997   # the relay in the twin, 
                                                 # (unfrozen; refuses every bind but 10.0.2.4 and 127.0.0.1)
 
 # The hook's payload table - every freeze and bodyguard case, 0 wrong or exit 1
-python3 .claude/hooks/payloads.py       # 1678 cases at ring 7d
+python3 .claude/hooks/payloads.py       # 2046 cases at ring 8a
 ```
 
 Windowed, for the oracle test (Stage 7 ring 7c shape - the twin of the HP,
@@ -530,6 +530,11 @@ test in the twin.
   mention a frozen name, write the script to a file first and run the file.
 - **Commit messages that mention the bodyguard's words go in via `-F`** from
   a file written with the Write tool; `-m` puts the words in the command.
+- **The directory rule (ring 8a, the owner's of 25 September 2026).** `rm`,
+  `rmdir`, `mv`, `git rm` and `git mv` are denied on the repo root, on a
+  directory holding a frozen file (a bare name like `fixtures` included),
+  and on a glob that covers one. Name the scratch path itself
+  (`rm -rf stage8/out/molt`), never its parent.
 
 ## The plan gate
 

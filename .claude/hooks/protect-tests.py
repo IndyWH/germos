@@ -222,6 +222,23 @@ PLAN_MARKER = "PLAN_APPROVED"
 # it to the frozen GLASS.md by his own hand; the copy is paperwork),
 # stage7/stage7.asm, stage7/mkimage.sh, stage7/mkstick.py and
 # stage7/plan-7d.md.
+#
+# Stage 8 ring 8a (plan decision 1, item 13) freezes fifteen files:
+# stage8/PARTS.md (the molt's one text - the slot, ABI 3, the frame, the
+# notes, the words, shadow, the watchdog, the recovery table, Esc: the
+# assembler implements it), stage8/SEED.md (the seed record's format and
+# SHA-256's known answers), stage8/parts.py (the criterion's parser: it
+# executes both documents' Python and holds it to their prose),
+# stage8/test-8a.sh and stage8/checkmolt.py (the gate and the synthetic
+# human; test 3's run constants were written from item 12's run against a
+# private draft), and the five fixture parts, each .asm and its .bin (the
+# fates the gate judges the guest's floor by). stage8/loader.asm joins at
+# item 16b, after Cowork's review (A6). Deliberately NOT frozen:
+# stage8/stage8.asm, stage8/mkimage.sh, stage8/mkstick.py (the builders),
+# broker/molt.py (the mock, a tool the checker holds to PARTS.md),
+# stage8/seed-record.md (append-only by SEED.md's rule), stage8/HP-8a.md
+# and stage8/plan-8a.md (paperwork). With them comes the owner's directory
+# rule of 25 September 2026 (DIR_VERBS below).
 PROTECTED = (
     "stage0/test.sh",
     "stage0/checkpixels.py",
@@ -286,6 +303,21 @@ PROTECTED = (
     "stage7/test-7d.sh",
     "stage7/checktrials.py",
     "stage7/trials.py",
+    "stage8/PARTS.md",
+    "stage8/SEED.md",
+    "stage8/parts.py",
+    "stage8/test-8a.sh",
+    "stage8/checkmolt.py",
+    "stage8/fixtures/i8042-good.asm",
+    "stage8/fixtures/i8042-good.bin",
+    "stage8/fixtures/i8042-wrong.asm",
+    "stage8/fixtures/i8042-wrong.bin",
+    "stage8/fixtures/i8042-hang.asm",
+    "stage8/fixtures/i8042-hang.bin",
+    "stage8/fixtures/i8042-fault.asm",
+    "stage8/fixtures/i8042-fault.bin",
+    "stage8/fixtures/i8042-liar.asm",
+    "stage8/fixtures/i8042-liar.bin",
 )
 
 BASENAMES = sorted({os.path.basename(p) for p in PROTECTED})
@@ -507,6 +539,152 @@ def resolve(token):
     return None  # some other directory's file of the same name - not ours
 
 
+# ------------------------------------------------ the directory rule --------
+# The owner's decision of 25 September 2026 (ring 8a item 3's finding: the
+# freeze judged named frozen paths only, so "rm -rf stage7" removed every
+# frozen file of Stage 7 unseen). rm, rmdir, mv, git rm and git mv are
+# denied when any argument is the repo root, a directory that holds a
+# frozen file, or a glob that covers one. An ordinary file beside frozen
+# files, and a scratch directory such as stage8/out, stay allowed.
+#
+# How an argument is judged. Each segment of the command (split at ; & |
+# ( ) and newlines, quotes honoured) whose verb is one of the five gives
+# its non-option words. A word naming only . and .. is the root. An
+# absolute path is judged only inside the repo, from the root. A relative
+# path is judged as a suffix, from any directory - the bare-basename rule
+# of the freeze, for directories: "fixtures" is stage8/fixtures from inside
+# stage8. It is denied if its components match the last components of a
+# frozen path or of a directory holding one, each by fnmatch, so a glob is
+# matched as the shell matches it, one component at a time.
+#
+# The honest limit, said plainly: a rule that reads the command cannot
+# catch every route. A script that removes a folder, find -delete, xargs
+# fed from a pipe, a cd whose target this rule cannot know, or any other
+# program that removes files gets past it. The freeze's other rules still
+# catch the frozen names where they appear; this rule closes the plain
+# shell verbs on a directory, and no more.
+DIR_VERBS = ("rm", "rmdir", "mv")
+GIT_DIR_VERBS = ("rm", "mv")
+SEGMENT_PUNCT = "();<>|&\n"
+
+
+def _ancestors():
+    dirs = set()
+    for p in PROTECTED:
+        parts = p.split("/")[:-1]
+        for i in range(1, len(parts) + 1):
+            dirs.add("/".join(parts[:i]))
+    return sorted(dirs)
+
+
+FROZEN_DIRS = _ancestors()
+DIR_CANDIDATES = [p.split("/") for p in list(PROTECTED) + FROZEN_DIRS]
+
+
+def _words(cmd):
+    """The command as shell words, with segment and redirection operators
+    as their own tokens. An unbalanced quote falls back to a plain split."""
+    import shlex
+    try:
+        lex = shlex.shlex(cmd, posix=True, punctuation_chars=SEGMENT_PUNCT)
+        lex.whitespace = " \t\r"
+        lex.whitespace_split = True
+        return list(lex)
+    except ValueError:
+        spaced = re.sub(r"([();<>|&\n])", r" \1 ", cmd)
+        return [QUOTES.sub("", w) for w in spaced.split(" ") if w]
+
+
+def _segments(cmd):
+    seg, skip = [], False
+    for w in _words(cmd):
+        if w and all(c in SEGMENT_PUNCT for c in w):
+            if "<" in w or ">" in w:
+                skip = True             # a redirection: its target is not an argument
+                continue
+            if seg:
+                yield seg
+            seg = []
+            continue
+        if skip:
+            skip = False
+            continue
+        seg.append(w)
+    if seg:
+        yield seg
+
+
+def _dir_args(seg):
+    """The arguments of a directory verb in this segment, or []."""
+    i = 0
+    while i < len(seg) and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", seg[i]):
+        i += 1                          # VAR=value before the command
+    while i < len(seg) and seg[i] in ("command", "builtin", "nohup", "time", "nice", "exec"):
+        i += 1
+    if i >= len(seg):
+        return []
+    verb = os.path.basename(seg[i])
+    rest = seg[i + 1:]
+    if verb == "git":
+        j = 0
+        while j < len(rest) and rest[j].startswith("-"):
+            j += 2 if rest[j] in ("-C", "-c", "--git-dir", "--work-tree") else 1
+        if j >= len(rest) or rest[j] not in GIT_DIR_VERBS:
+            return []
+        rest = rest[j + 1:]
+    elif verb not in DIR_VERBS:
+        return []
+    args, opts = [], True
+    for w in rest:
+        if opts and w == "--":
+            opts = False
+        elif opts and w.startswith("-") and w != "-":
+            continue
+        else:
+            args.append(w)
+    return args
+
+
+def _covers(parts, full):
+    """Do these path components name a frozen path or a directory holding
+    one - all of it (full) or its last components (a relative path)?"""
+    import fnmatch
+    for cand in DIR_CANDIDATES:
+        if full and len(cand) != len(parts):
+            continue
+        if len(cand) < len(parts):
+            continue
+        tail = cand[len(cand) - len(parts):]
+        if all(fnmatch.fnmatchcase(c, p) for c, p in zip(tail, parts)):
+            return "/".join(cand)
+    return None
+
+
+def dir_rule(cmd):
+    for seg in _segments(cmd):
+        for arg in _dir_args(seg):
+            a = arg.replace("\\", "/")
+            if a.startswith("~") or "$" in a:
+                continue                # the rule cannot resolve it (the stated limit)
+            if a.startswith("/"):
+                path = os.path.normpath(a)
+                if path == REPO:
+                    deny(arg, "removing or moving the repo root")
+                if not path.startswith(REPO + os.sep):
+                    continue
+                parts, full = os.path.relpath(path, REPO).split("/"), True
+            else:
+                parts = [p for p in os.path.normpath(a).split("/") if p not in ("", ".", "..")]
+                if not parts:
+                    deny(arg, "removing or moving the repo root, or a directory above one")
+                full = False
+            hit = _covers(parts, full)
+            if hit:
+                what = "a directory holding frozen files" if hit in FROZEN_DIRS else "a frozen file"
+                deny(hit, "%s named by %r, by rm, rmdir, mv, git rm or git mv - the owner's directory "
+                          "rule of 25 September 2026" % (what, arg))
+
+
 def deny(target, why):
     sys.stderr.write(
         "BLOCKED by .claude/hooks/protect-tests.py.\n"
@@ -555,6 +733,10 @@ def main():
 
         # The bodyguard first, on every command, whatever else it mentions.
         storage_guard(cmd)
+
+        # The owner's directory rule: a directory or a glob that holds a
+        # frozen file, named to rm, rmdir, mv, git rm or git mv.
+        dir_rule(cmd)
 
         # Every path-shaped mention of a protected basename, with the literal
         # text as it appeared, so the mutation check can target it exactly.

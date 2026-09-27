@@ -139,7 +139,7 @@ stage closures in two days from an empty folder. Next: the Stage 6 spec.
 | | |
 |---|---|
 | Stage | **8 — The molt — ring 8a, the floor, OPENED 25 September 2026.** `stage8/spec.md` approved by the owner with all fourteen decisions settled (rings 8a–8g; the first slot `i8042`); `stage8/plan-8a.md` approved at the plan gate with Cowork's six amendments (A1–A6) and all seventeen deviations accepted. Stage 7 closed with ring 7d on 25 September 2026 (rings 7a–7d closed 9, 15, 18 and 25 September); Stages 0–6 closed |
-| Status | **Ring 8a: tests 1 and 2 PASS** (item 9, 27 September 2026: `stage8/test-8a.sh` with the log, `checkmolt.py --document` and `--seven`; test 2 on ring 7d's binary through D3's seams, 426 s, no `S8:`, `part:` or `molt:` line in twelve captures; tests 3 and 4 not yet written; items 0 to 8: the plan's commit; Stage 8 opened on ring 7d's source, the build byte-identical to ring 7d's, and D3's seams proven by a run - every 7c and 7d entry point returns 0 on the stage8 build with nothing escaping to `stage7/out/`; item 2: D1 measured - the ICH9 TCO resets the twin at 2 × `TCO_TMR` × 0.6 s as the 7-series datasheet says, `TCO_TMR` 25 for 30 s, `SECOND_TO_STS` survives the reset, so the one twin path is the watchdog's; item 3: D2 - `-icount shift=0` repeats exactly at `-smp 4`, not quite at 2, `auto` never; D4 - `qemu_argv` passes `check_argv_7c` unchanged, Esc arrives as `0x01`/`0x81` with no repeats and the checker's hold is 5,000 ms, keys match the byte rule, packets equal moves at any pace from 1 ms, the identity `cpu 000306a9 pci 8086:2918:02`; the hook allows every ring 8a shape, and allows removing a whole directory of frozen files, a finding for the owner, whose decision of 25 September 2026 adds a directory rule at item 13; item 4: `stage8/PARTS.md` written, its worked examples reproduced from its own Python block, 0 wrong, then Cowork's amendment on what ABI 3's services refuse; item 5: the five fixtures, each header valid by PARTS.md, and their byte entries matching the generic event for event on the host; item 6: `stage8/SEED.md` and `stage8/seed-record.md`, seed 0 `bbf80635…b28cd5` from a clean rebuild of `bd613b3`, the worked example reproduced from SEED.md's own block, 0 wrong; item 7: `stage8/parts.py`, both documents' blocks exec'd and checked against their prose, PARTS.md's fixtures section filled from the `.bin`s, `--example` green and 27 one-change copies of the documents refused, `--disk` and `--serial` printing the same table, `--seed` rebuilding seed 0 and naming the build seed 0; item 8: `broker/molt.py`, unfrozen, serving each fixture's frame as `parts.fixture_frame` byte for byte, refusing other slots and malformed bodies, `wire.Wire`'s answers to everything else, and the record carrying the identity, `parts.molt_key` and the frame, 73 checks with no boot). Every earlier gate green on its own binary, as ring 7d closed. **Eight freeze openings on the record** — the eighth the TRIALS.md label-width sentence, by the owner's hand, 25 September 2026 (`076d74b`), 7d's test 1 green once after it. Earlier — **Ring 7d: all four automated tests PASS** (`./stage7/test-7d.sh`, 21 min, the log's item 11 run; items 0–13 committed, one per item, item 13 the four fixes of Cowork's pre-oracle review, the section appended by the owner's hand at item 9) — **test 5: the rehearsal ran in the windowed twin on 24 September 2026 (not trial data, by the owner's pre-registration); the trial is three sittings on the HP's notebook, one a session, the verdict on the third closes the ring. HP sittings 1, 2 and 3 PASSED on 24 September 2026 (the owner's word on each; one, one and two misses); the verdict A — B's median lower in 8 of 12 pairs, ten needed; misses A 4, B 0 — the owner's word on it 25 September 2026; the verdict boot answered `trial concluded`. Ring 7d CLOSED 25 September 2026, by the owner's word.** Ring 7c: all five tests PASS (18 September). Rings 7b and 7a: all five PASS. Stages 0–5 and the three ring 6 gates green on their own binaries |
+| Status | **Ring 8a: items 0–13 done; the acceptance machinery FROZEN at item 13 (27 September 2026)**, after the owner's amendment to PARTS.md on Cowork's review of item 12 (`c4a6111`). Tests 1 and 2 PASS; test 3 red by design until item 16 (green on the private draft, 851.8 s); test 4 red on its nine `loader.asm` refusals alone until 16b, the payload table 2046 cases, 0 wrong. Earlier: **tests 1 and 2 PASS** (item 9, 27 September 2026: `stage8/test-8a.sh` with the log, `checkmolt.py --document` and `--seven`; test 2 on ring 7d's binary through D3's seams, 426 s, no `S8:`, `part:` or `molt:` line in twelve captures; tests 3 and 4 not yet written; items 0 to 8: the plan's commit; Stage 8 opened on ring 7d's source, the build byte-identical to ring 7d's, and D3's seams proven by a run - every 7c and 7d entry point returns 0 on the stage8 build with nothing escaping to `stage7/out/`; item 2: D1 measured - the ICH9 TCO resets the twin at 2 × `TCO_TMR` × 0.6 s as the 7-series datasheet says, `TCO_TMR` 25 for 30 s, `SECOND_TO_STS` survives the reset, so the one twin path is the watchdog's; item 3: D2 - `-icount shift=0` repeats exactly at `-smp 4`, not quite at 2, `auto` never; D4 - `qemu_argv` passes `check_argv_7c` unchanged, Esc arrives as `0x01`/`0x81` with no repeats and the checker's hold is 5,000 ms, keys match the byte rule, packets equal moves at any pace from 1 ms, the identity `cpu 000306a9 pci 8086:2918:02`; the hook allows every ring 8a shape, and allows removing a whole directory of frozen files, a finding for the owner, whose decision of 25 September 2026 adds a directory rule at item 13; item 4: `stage8/PARTS.md` written, its worked examples reproduced from its own Python block, 0 wrong, then Cowork's amendment on what ABI 3's services refuse; item 5: the five fixtures, each header valid by PARTS.md, and their byte entries matching the generic event for event on the host; item 6: `stage8/SEED.md` and `stage8/seed-record.md`, seed 0 `bbf80635…b28cd5` from a clean rebuild of `bd613b3`, the worked example reproduced from SEED.md's own block, 0 wrong; item 7: `stage8/parts.py`, both documents' blocks exec'd and checked against their prose, PARTS.md's fixtures section filled from the `.bin`s, `--example` green and 27 one-change copies of the documents refused, `--disk` and `--serial` printing the same table, `--seed` rebuilding seed 0 and naming the build seed 0; item 8: `broker/molt.py`, unfrozen, serving each fixture's frame as `parts.fixture_frame` byte for byte, refusing other slots and malformed bodies, `wire.Wire`'s answers to everything else, and the record carrying the identity, `parts.molt_key` and the frame, 73 checks with no boot). Every earlier gate green on its own binary, as ring 7d closed. **Eight freeze openings on the record** — the eighth the TRIALS.md label-width sentence, by the owner's hand, 25 September 2026 (`076d74b`), 7d's test 1 green once after it. Earlier — **Ring 7d: all four automated tests PASS** (`./stage7/test-7d.sh`, 21 min, the log's item 11 run; items 0–13 committed, one per item, item 13 the four fixes of Cowork's pre-oracle review, the section appended by the owner's hand at item 9) — **test 5: the rehearsal ran in the windowed twin on 24 September 2026 (not trial data, by the owner's pre-registration); the trial is three sittings on the HP's notebook, one a session, the verdict on the third closes the ring. HP sittings 1, 2 and 3 PASSED on 24 September 2026 (the owner's word on each; one, one and two misses); the verdict A — B's median lower in 8 of 12 pairs, ten needed; misses A 4, B 0 — the owner's word on it 25 September 2026; the verdict boot answered `trial concluded`. Ring 7d CLOSED 25 September 2026, by the owner's word.** Ring 7c: all five tests PASS (18 September). Rings 7b and 7a: all five PASS. Stages 0–5 and the three ring 6 gates green on their own binaries |
 | Repo | `/home/indy/Work/germos` (branch `main`) on Omarchy since 22 September 2026 (`/home/indy/Projects/ai-os` was the Ubuntu path) — **public since 1 September 2026 at `github.com/IndyWH/germos`, MIT licence** (commit `beef02e`) |
 | Machine | mlrig, **Omarchy (Arch Linux, kernel 7.2.5-3-omarchy), dual boot on the Crucial P2** since 22 September 2026 (native Ubuntu 26.04 before), 32 logical CPUs |
 | Toolchain | NASM 3.02, QEMU 11.1.1, Python 3.14.7, OVMF at `/usr/share/ovmf/OVMF.fd`, mtools, OpenBSD netcat, xxd, the `claude` CLI **2.1.282** (the spec said 2.1.280; `claude --version` at ring 8a's planning read 2.1.282) — ring 8a needs no new package; every `stage0..8/out/` exists (the fresh-clone gotcha; the ring 8a gate makes its own) |
@@ -3676,8 +3676,8 @@ amendments and all seventeen deviations accepted:
 |---|---|
 | 1 — the artefact, the stick, PARTS.md and SEED.md parsed cold, the worked examples, the fixtures, SHA-256's known answer | **PASS** at item 9 (27 September 2026) |
 | 2 — no part, no change: the 7c and 7d checks on the Stage 8 binary, no `S8:` line | **PASS** at item 9 (27 September 2026), on ring 7d's binary (deviation 15) |
-| 3 — the fates: good, wrong, hang, fault, liar; undo; Esc; the held request; the idle wait | written at item 10 (27 September 2026); its run constants written at item 12 from the draft's run, where all five fates passed; **red by design** until item 16: on the repository's binary it stops at each install's first missing `molt:` line |
-| 4 — the bodyguard (every ring 8a frozen path, `loader.asm` among them), the argv check, the 7d gate with 7c, 7b and 7a inside it | written at item 11 (27 September 2026); **red by design on (c) alone** until item 16b: (a), (b) and (d) pass, the 7d gate green inside it |
+| 3 — the fates: good, wrong, hang, fault, liar; undo; Esc; the held request; the idle wait | written at item 10 (27 September 2026); its run constants written at item 12 from the draft's run, where all five fates passed; G5's 300 moves during the hold added by the owner's amendment (`c4a6111`), green on the amended draft; **frozen at item 13**; **red by design** until item 16: on the repository's binary it stops at each install's first missing `molt:` line |
+| 4 — the bodyguard (every ring 8a frozen path, `loader.asm` among them), the argv check, the 7d gate with 7c, 7b and 7a inside it | written at item 11 (27 September 2026); **frozen at item 13** with the directory rule in the hook; **red by design on (c)'s nine `loader.asm` refusals alone** until item 16b: (a), (b) and (d) pass, the 7d gate green inside it |
 | 5 — the owner's, on the HP: good to the threshold and live; Esc; hang live and the HP resetting itself | pending |
 
 **Carried into this ring, from ring 7d's closure:**
@@ -4570,30 +4570,63 @@ repository's source: 45,056 bytes, `bbf80635…`, seed 0's. The draft keeps
 its amended sources, and `build.sh --install` builds them. The unamended
 build is in `draft/b/` and the amended one in `draft/b2/`.
 
+**The owner's word on the amendment's three readings, 27 September 2026,
+before the freeze** (asked after `c4a6111`, since after item 13 a change
+would be a freeze opening): **all three kept as committed.**
+- The discard compares the key pairs both sides already hold first, so the line's Enter is compared.
+- The limit names both `kbd_e0` and the shift state.
+- `molt_overflows` sits at `0x360`, as PARTS.md's sixth superseded sentence.
+
+**Item 13** — the ring 8a acceptance machinery frozen, 27 September 2026.
+- **`PROTECTED` grows fifteen paths:** `stage8/PARTS.md`, `SEED.md`, `parts.py`, `test-8a.sh`, `checkmolt.py`, and the five fixtures' `.asm` and `.bin`. The hook's comment says why each is a criterion or a criterion's parser, and what stays unfrozen: the builders, `broker/molt.py`, the seed record, `HP-8a.md` and the plan. `stage8/loader.asm` joins at item 16b.
+- **The owner's directory rule of 25 September 2026 is in the hook** (`dir_rule`). Each segment of the command (split at `; & | ( )` and newlines, quotes honoured, a redirection's target skipped) whose verb is `rm`, `rmdir`, `mv`, `git rm` or `git mv` (after `VAR=` assignments, `command`/`nohup`/`time`/`nice`/`exec`, or `git`'s own options) gives its non-option words. Each word is judged against every frozen path and every directory holding one:
+  - a word of only `.` and `..` is the root;
+  - an absolute path is judged from the root, and only inside the repo (the repo itself is the root);
+  - a relative path is judged as a suffix, the freeze's bare-basename rule for directories: `fixtures` and `../stage7` are denied;
+  - a glob is matched component by component with `fnmatch`, as the shell matches it.
+
+  **The comment says the limit plainly:** a rule that reads the command cannot catch every route. A script that removes a folder, `find -delete`, `xargs` fed from a pipe, a `cd` whose target the rule cannot know, or a word with `$` or `~` gets past it.
+- **`payloads.py` gains the ring 8a section:** `freeze_cases` on the fifteen, `nasm -o` over each fixture's binary, the targeted denials, and the allowances measured at item 3. `loader.asm`'s Write and Edit stay allowed until 16b. Then **34 directory-rule denials**: all 17 of test 4 (c)'s shapes, plus the rule's edges (a bracket glob, a `?` glob, `git -C . rm`, a dot segment, `../stage7`, a bare `fixtures`, the second segment of a chain, after a pipe, `/bin/rm`, an assignment first, after `--`, a file moved *into* a directory holding frozen files, since the owner said "any argument"). And **18 allowances**: all of (c)'s allowed side, plus scratch globs, `/tmp/stage7`, the words in prose and in a quoted message, `git rm` of an ordinary path. **The table: `2046 payloads: 1392 must be denied, 654 must be allowed, 0 wrong`.** Every earlier stage's allowance survives the rule.
+- **The spot lists of test 4 (c), fed to the hook as data:** all 102 denials but `loader.asm`'s five are denied; all 30 allowances allowed; the builder's eight files writable. The five `loader.asm` mutations are the clause that stays red until 16b.
+- **A5, the one-expectation grep:** PARTS.md's only "or"s near a line are the guest's general rules (the recovery table's two `<why>`s, the `demoted` state), not twin expectations. The checker awaits exactly `S8: watchdog tco 30 s` and `S8: recovery i8042 watchdog`, and no pattern alternates two lines.
+- **Immediacy:** one `Edit` on PARTS.md (`W = 3,000 ms` → `5,000`) was **denied** by the live hook: "stage8/PARTS.md is frozen acceptance machinery … (a direct Edit)".
+- **`git diff 076d74b` over the 63 earlier `PROTECTED` paths: empty.**
+- `CLAUDE.md`: the payload count (2046 at ring 8a) and one bullet on the directory rule under "Working with the hooks".
+
+| Run | Result |
+|---|---|
+| **The gate, whole, on the repository's binary** (`stage8/out/gate-8a.log` from line 2552, headed `commit c4a6111+uncommitted`, 15:11:28 to 15:41:34, 30.1 min) | **test 1 PASS, test 2 PASS, test 3 FAIL by design, test 4 FAIL by design on (c)'s loader clause alone**, exit 1: the expected state at this commit |
+| Test 3, quoted | `G1: no 'molt: i8042 shadow [0-9a-f]{16} ' within 10 s of the step`, and the same at W1, F1 and L1: `the fates: G FAILED, W FAILED, H FAILED, F FAILED, L FAILED in 81.9 s`. The repository's binary has no molt words yet |
+| Test 4 (a), (b) | held: the harness's strings; `timeout -k 5 600` before `checkmetal.qemu_argv` itself |
+| Test 4 (c) | **`2046 payloads: 1392 must be denied, 654 must be allowed, 0 wrong`**; the only refusals are **the nine on `stage8/loader.asm`** (Write and Edit, relative and absolute; `>`, `sed -i`, `cp`, `rm -f`, a python heredoc), which item 16b freezes. Every directory shape is now denied |
+| Test 4 (d) | ring 7d's gate **green**: 7d's tests 1–4, and inside its test 4 the 7c, 7b and 7a gates, all four tests each |
+
 ## Next action
 
-**Ring 8a, item 13:** freeze the acceptance machinery (plan item 13).
-- `PROTECTED` grows the fifteen paths, and the hook gains **the owner's directory rule of 25 September 2026** (`rm`, `rmdir`, `mv`, `git rm` and `git mv` on the repo root, a directory holding a frozen file, or a glob that covers one; an ordinary file beside frozen ones and `stage8/out` stay allowed). Its comment says plainly that a rule which reads the command cannot catch every route.
-- `payloads.py` gains `FROZEN_8A`: the freeze cases, the allowances, and **every shape of `SPOT_DENY_8A`'s directory rule and `SPOT_ALLOW_8A`'s allowed side as data** (Cowork's review of item 11), 0 wrong.
-- The one-expectation grep of PARTS.md and `checkmolt.py` (A5); immediacy shown with one denied `Edit` on PARTS.md.
-- Then `./stage8/test-8a.sh` whole.
+**Ring 8a, item 14:** the loader moved into `stage8/loader.asm`, and the
+read-only floor (plan item 14), from the draft in
+`stage8/out/probe8a/draft/` (`loader.asm` and `split.asm`, and
+`patch.py`'s paging hooks):
+- `stage8.asm` does `%include "stage8/loader.asm"` at `.text`'s start; the constants stay at the top of `stage8.asm` (the positional-define gotcha).
+- `.text` is read-only on the image's 4 KB split, with CR0.WP on the BSP and in the trampoline. There is no slot, no watchdog and no `S8:` line yet.
+- Proven by: a private copy's write into `.text` from the main loop faulting with `ERR: exception 14 at …`; then **test 2 green on this binary**; then test 1.
 
-Expected at commit: tests 1–2 green; test 3 red by design (the repository's binary has no molt words yet); **test 4 red on (c)'s loader clause alone**, with the payload table 0 wrong and the 7d gate green inside it.
+Expected at commit: tests 1–2 green; test 3 red by design (no `! molt`);
+test 4 red on (c)'s loader clause alone, with the payload table 0 wrong
+and the 7d gate green inside it.
 
-`/clear` first; one commit per item. Items 1–12 are done, and so is
-Cowork's review of item 12 (the owner's amendment to PARTS.md, the G5
-wiggle clause, the draft following; the fates green on the draft).
-**Open to Cowork's review until the freeze:** item 10's eight choices,
-item 11's one, and item 12's two checker fixes (the checker is frozen at
-item 13). The amendment's one reading (the discard compares the pairs
-first, so the Enter is compared), the shift-state clause of the limit,
-and `molt_overflows` at `0x360` (the sixth superseded sentence) are open
-to the owner's word before the freeze.
+`/clear` first; one commit per item. Items 1–13 are done, with Cowork's
+review of item 12 between 12 and 13 (the owner's amendment, `c4a6111`).
+**The criteria are frozen:** a frozen file that turns out wrong is never
+edited. Stop, write the diff unapplied under `stage8/out/`, and wait for
+the owner's hand.
 **Carried to items 14–16:** the draft in `stage8/out/probe8a/draft/`
-(never wipe `stage8/out/probe8a/`), with item 12's ten choices settled by
-the owner's four points. Carried to item
-15 as well: the pointer's centring, `OBS_MOUSE_ID` and `OBS_I8042_CMD` with a
-part live (item 5; item 12's choice 7).
+(never wipe `stage8/out/probe8a/`; the directory rule does not guard
+scratch), amended to the owner's four points and green on the fates
+(851.8 s). Carried to item 15 as well: the pointer's centring,
+`OBS_MOUSE_ID` and `OBS_I8042_CMD` with a part live (item 5; item 12's
+choice 7), and `molt_overflows` at `0x360`. Item 16 stops for Cowork's
+review of `loader.asm` (A6) before 16b freezes it.
 
 Earlier — **Ring 7d is CLOSED (25 September 2026), and with it every ring of Stage
 7's order. Next: Stage 8 — the molt**, by the owner's order of 22
