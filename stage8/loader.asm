@@ -32,8 +32,9 @@
 ; the door, the boot note, a live part's init), the header rule and the one
 ; call into a part; their constants inside .text with the rest.
 ; What item 16 added: the controller's minimal setup and the Esc window;
-; the TCO found, its evidence read and cleared and the timer halted at
-; step 2, then armed at step 6 (the owner's decision at item 16); the
+; the TCO found and its timer halted at step 1, before the known answer,
+; its evidence read and cleared at step 2, and the timer armed at step 6
+; (the owner's decisions at item 16 and at the A6 review); the
 ; recovery table and the demoted notes; the heartbeat's breaths at the
 ; disk's command wait and the pet; the blame line in exc_common.
 ; Its mutable state is BSS: LOADER_STATE at the end of this file is one
@@ -3568,8 +3569,15 @@ molt_boot:
         ; 1. A3's minimal setup - port 1 enabled, the buffer drained - before
         ; the known answer's line, so that a hold sent when that line lands
         ; is never drained: the window's poll then finds its make. Then the
-        ; known answer.
+        ; TCO found and its timer halted, so that no boot with a molt note -
+        ; one that arms nothing (a failed known answer, a recovery, Esc, a
+        ; door refusal) included - leans on the firmware to stop a timer an
+        ; earlier boot armed; step 6 unhalts it when it arms (the owner's
+        ; decisions at item 16 and at the A6 review). Halting reads and
+        ; clears no status bit. Then the known answer.
         call    esc_setup
+        call    tco_find
+        call    tco_halt
         lea     rsi, [kat_abc]
         mov     ecx, 3
         lea     rdi, [ldr_kat]
@@ -3581,13 +3589,9 @@ molt_boot:
         jne     .kat_fail
         lea     rsi, [msg_s8_kat]
         call    s8_line
-        ; 2. the evidence, read and cleared; then the timer halted, so that a
-        ; boot that arms nothing (a recovery, Esc, a door refusal) never
-        ; leans on the firmware to stop a timer an earlier boot armed (the
-        ; owner's decision at item 16). Step 6 unhalts it when it arms.
-        call    tco_find
+        ; 2. the evidence, read and cleared, after the known answer as
+        ; PARTS.md orders it (the TCO was found and halted at step 1)
         call    tco_evidence
-        call    tco_halt
         ; 3. the recovery decision
         call    recovery_apply
         test    eax, eax
@@ -4235,7 +4239,7 @@ tco_halt:
 tco_arm:
         cmp     dword [tco_base], 0
         je      .none
-        call    tco_halt                ; 1. halt (step 2 halted it already)
+        call    tco_halt                ; 1. halt (the boot's step 1 halted it already)
         mov     edi, [rcba]             ; 2. NO_REBOOT cleared and read back;
         test    edi, edi                ; no RCBA, no reaching it: locked
         jz      .locked
