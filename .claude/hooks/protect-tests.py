@@ -232,8 +232,11 @@ PLAN_MARKER = "PLAN_APPROVED"
 # stage8/test-8a.sh and stage8/checkmolt.py (the gate and the synthetic
 # human; test 3's run constants were written from item 12's run against a
 # private draft), and the five fixture parts, each .asm and its .bin (the
-# fates the gate judges the guest's floor by). stage8/loader.asm joins at
-# item 16b, after Cowork's review (A6). Deliberately NOT frozen:
+# fates the gate judges the guest's floor by). stage8/loader.asm joined at
+# item 16b, after Cowork's review (A6): the floor no grown part replaces -
+# efi_main to the handover, the read-only split, the disk's read path,
+# SHA-256, the door, the recovery rules, Esc, the watchdog and the pet;
+# from here only the owner's hand opens it. Deliberately NOT frozen:
 # stage8/stage8.asm, stage8/mkimage.sh, stage8/mkstick.py (the builders),
 # broker/molt.py (the mock, a tool the checker holds to PARTS.md),
 # stage8/seed-record.md (append-only by SEED.md's rule), stage8/HP-8a.md
@@ -318,6 +321,7 @@ PROTECTED = (
     "stage8/fixtures/i8042-fault.bin",
     "stage8/fixtures/i8042-liar.asm",
     "stage8/fixtures/i8042-liar.bin",
+    "stage8/loader.asm",
 )
 
 BASENAMES = sorted({os.path.basename(p) for p in PROTECTED})

@@ -936,8 +936,8 @@ CASES += [
     (bash("sed -i 's/W = 3,000 ms/W = 5,000 ms/' stage8/PARTS.md"), DENY, "ring 8a freeze: sed -i on the Esc window"),
     (bash("echo x >> stage8/PARTS.md"), DENY, "ring 8a freeze: appending to the document"),
     (bash("python3 - <<'EOF'\nopen('stage8/fixtures/i8042-good.bin','wb').write(b'x')\nEOF"), DENY, "ring 8a freeze: python writing a fixture"),
-    (write("stage8/loader.asm"), ALLOW, "ring 8a freeze allows: loader.asm until item 16b (A6)"),
-    (edit("stage8/loader.asm"), ALLOW, "ring 8a freeze allows: Edit on loader.asm until item 16b"),
+    (write("stage8/loader.asm"), DENY, "ring 8a freeze: loader.asm from item 16b (A6)"),
+    (edit("stage8/loader.asm"), DENY, "ring 8a freeze: Edit on loader.asm from item 16b"),
     (write("stage8/stage8.asm"), ALLOW, "ring 8a freeze allows: Write the implementation"),
     (write("stage8/mkimage.sh"), ALLOW, "ring 8a freeze allows: the builder is not frozen"),
     (write("stage8/mkstick.py"), ALLOW, "ring 8a freeze allows: the stick's builder is not frozen"),
@@ -971,6 +971,10 @@ CASES += [
      DENY, "bodyguard: a molt disk outside out/ is denied"),
     (bash("echo 'the molt, the part, the slot, shadow, live, demoted, the watchdog, the seed'"), ALLOW, "bodyguard allows: the ring's words in prose"),
 ]
+# Item 16b (A6): the loader frozen after Cowork's review - the full battery,
+# and the two allowances item 13 kept for it turned into denials above.
+FROZEN_8A_LOADER = ["stage8/loader.asm"]
+CASES += [(c, v, "ring 8a loader freeze: " + w) for c, v, w in freeze_cases(FROZEN_8A_LOADER)]
 CASES += [(bash(c), DENY, "ring 8a directory rule: " + w) for c, w in [
     ("rm -rf stage7", "a directory holding frozen files (the owner's example)"),
     ("mv stage7 old7", "moved (the owner's example)"),

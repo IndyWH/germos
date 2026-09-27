@@ -137,6 +137,20 @@ python3 stage7/trials.py --disk stage7/out/disk.img   # the sitting tables and t
                        # verdict from a GermOS disk image; --serial LOG from the
                        # HP's chart; --example the document's worked examples
 
+# Stage 8 ring 8a - the floor
+./stage8/test-8a.sh    # acceptance tests 1-4 on the 7c twin, every run
+                       # appended to stage8/out/gate-8a.log: the artefact,
+                       # PARTS.md and SEED.md read cold, the fixtures, the
+                       # known answer; no part, no change (ring 7d's checks on
+                       # this build); the five fates - good to its threshold
+                       # and live, wrong, hang and fault reset by the watchdog
+                       # and demoted, the liar at the door, Esc, the 60 s held
+                       # request and the idle health mark; the cage, the
+                       # sixteen frozen paths with loader.asm, the payload
+                       # table, then ring 7d's gate with 7c, 7b and 7a inside
+                       # it. Needs 9999, 9998 and 9997 free. About 43 min
+                       # (42.9 at item 16b), test 3 alone about 14.
+
 # The mock brokers (what the gates talk to; never spend a token)
 python3 broker/broker.py --mock --port 9999     # Stage 4
 python3 broker/plans.py --mock                  # Stage 6 (answers, apps, installs)
@@ -147,7 +161,7 @@ python3 broker/relay.py --bind 127.0.0.1 --port 9997   # the relay in the twin, 
                                                 # (unfrozen; refuses every bind but 10.0.2.4 and 127.0.0.1)
 
 # The hook's payload table - every freeze and bodyguard case, 0 wrong or exit 1
-python3 .claude/hooks/payloads.py       # 2046 cases at ring 8a
+python3 .claude/hooks/payloads.py       # 2064 cases at ring 8a item 16b
 ```
 
 Windowed, for the oracle test (Stage 7 ring 7c shape - the twin of the HP,
