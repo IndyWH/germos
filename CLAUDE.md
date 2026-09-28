@@ -459,7 +459,7 @@ test in the twin.
 - **A counter's rule lives in its frozen document; look it up before the
   number is typed.** `grows_served` counts app frames whose `source` byte
   is 1 (GLASS.md), so two frames generated from a fresh germline make it
-  0, not 2; the checker's 2 was arithmetic and cost the project's fifth
+  0, not 2; the checker's 2 was arithmetic and cost the project's sixth
   freeze opening (ring 7b item 10b) - the ring 6b item 10b class again.
   A number no run can give before the freeze is written as the document's
   rule, never as a guess.
@@ -535,7 +535,7 @@ test in the twin.
   so under QEMU 11.1.1 every obs-page and surface read returned "xp read 0
   of N bytes", the rehearsal judged "the app did not run", and test 3 of the
   7c gate fell over from that one line while the guest booted perfectly. The
-  project's sixth freeze opening, by the owner's hand: `{16}` became
+  project's seventh freeze opening, by the owner's hand: `{16}` became
   `{8,16}` (22 September 2026). A parser of the host's tools is a criterion's
   eye, not the criterion, and the tools move under it: pin nothing about a
   tool's output format that the tool does not document.

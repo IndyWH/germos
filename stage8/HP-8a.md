@@ -248,7 +248,9 @@ i8042 live f0668b687c68cab0`**, `molt: boot 7 i8042 live`, **`S8:
 watchdog tco 30 s`**, and the part's pair.
 
 **Leave the mouse alone** and type short numbered lines, Enter after
-each: `hang 1`, `hang 2`, `hang 3`, …
+each: `hang 1`, `hang 2`, `hang 3`, … **Type line 8 straight after line
+7's Enter, with no pause**, so that the hang comes as close to `hang 7`'s
+stamp as the chart allows.
 
 The part spins for ever on the 100th byte it is given after its own
 `init`. Each of those lines is seven keys, so fourteen bytes, and by
@@ -256,7 +258,9 @@ PARTS.md's rule the HP stops during the **eighth line, at its first
 key**. Mouse movement brings it sooner, three bytes a packet. The typed
 letters stop appearing: the HP has stopped answering.
 
-**Do nothing.** No key, no power button. Within about half a minute **the
+**Do nothing.** No key, no power button. The one exception is the HP's
+own firmware screen asking for a key after the reset; the debugging
+table says what to press. Within about half a minute **the
 HP resets itself**. The monitor goes through the HP's own start, the
 stick boots again, and the chart shows the next boot's noise and `S7:
 alive`.
@@ -270,7 +274,7 @@ alive`.
 
 **Three things to read from the chart afterwards (A2, A4):**
 1. **Whether the HP kept the evidence bit**: which of the first two paths it took.
-2. **The HP's own deadline.** The chart stamps whole lines. Line 7's echo, `hang 7`, is the last line stamped before the hang, and the eighth line's first letter is its unfinished tail, which lands at the front of the next boot's first line. Take **the stamp of `hang 7` to the stamp of the next `S7: alive`**. That interval holds the deadline plus the HP's own way from its reset to GermOS, which the chart cannot split. It is recorded beside the twin's 30.2 s (hang's trigger to OVMF's first byte) and the datasheet's 30 s.
+2. **The HP's own deadline.** The chart stamps whole lines. Line 7's echo, `hang 7`, is the last line stamped before the hang, and the eighth line's first letter is its unfinished tail, which lands at the front of the next boot's first line. Take **the stamp of `hang 7` to the stamp of the next `S7: alive`**. That interval holds the deadline, **the pause between line 7's Enter and line 8's first key**, and the HP's own way from its reset to GermOS. The chart cannot split them. It is recorded beside the twin's 30.2 s (hang's trigger to OVMF's first byte) and the datasheet's 30 s.
 3. **The recovery boot's lines** as above.
 
 ## 11. Afterwards
@@ -304,6 +308,8 @@ His word closes the ring.
 | `S8: part i8042 bad hash` or `bad header` | the door refused the stored part: a torn write or a changed disk | nothing is demoted and the generic serves; `! molt i8042` fetches it again |
 | the take answers `disagreements <d>` | the part and the generic decoded some input differently, probably the discard limit (step 4) | the chart holds the `molt: i8042 disagree …` lines (the event pair each time). **`! molt i8042` fetches the same build again**, and an install restarts its shadow counts from 0: three more shadow boots, typed more gently |
 | `S8: recovery i8042 unhealthy` during boots 2–4 | two part-loading boots in a row were powered off before `S8: healthy` | `good` is demoted. `! molt i8042` fetches it again (the mock must be serving `good`); the counts start from 0 |
+| **`S8: recovery i8042 watchdog` on a boot where `good` was loaded** (boots 2 to 5, or 7) | the watchdog fired with `good` in shadow or live, which is not expected. The likeliest cause on the metal is the pet's outside check: a PS/2 timeout or parity error leaves bit 6 or 7 of the status byte set until the next byte arrives, and an idle human lets the deadline pass. The other causes are a ring overflow and a hang in the seed | keep the chart and photograph the screen. `good` is demoted: **stop the day there** and bring the chart to Cowork before going on. `! molt undo` returns `good` to shadow, with its counts starting again from 0 |
+| **The HP stops at its own firmware screen after a reset**: a message about an unexpected restart, waiting for a key | the HP's firmware noticed the watchdog's reset and wants acknowledging | photograph it, then press the key the screen asks for to continue. **Never Esc or a menu key.** Let the stick boot. It is a finding; the next GermOS boot reads the evidence bit as usual |
 | `S8: watchdog none` | no Intel LPC bridge at 00:1f.0, or PMBASE 0 | the boot goes on unguarded; a finding. Boot 9 then needs the power button, as the `tco locked` path |
 | `S8: watchdog tco locked` | `NO_REBOOT` read back set: the firmware or the strap holds it | unguarded, decision 5's fallback; step 10's third path |
 | `hold Esc` never appears on a part boot | no slot is in shadow or live, or a recovery ran first | the lines before it say which |
