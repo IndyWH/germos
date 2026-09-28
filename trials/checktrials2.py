@@ -1608,7 +1608,161 @@ def run_sittings():
     return 0 if run.ok else 1
 
 
-MODES = {"--document": run_document, "--rows": run_rows, "--sittings": run_sittings}
+# ------------------------------------------------ test 4: the cage --------
+# (b) the checker's own QEMU command through ring 7c's frozen check_argv_7c,
+# with trials/out/ in stage7/out/'s place for that call; (c) the payload
+# table whole, 0 wrong, and the spot checks held as data: the four frozen
+# paths denied every mutation and readable, trials/ itself protected by the
+# owner's directory rule, the builder and the records writable, running the
+# gate, the checker and the tool allowed; (d) the frozen stage7/trials.py
+# on a disk holding both families prints trial one's report unchanged.
+# test-trial2.sh holds (a), its own strings, and (e), ring 8a's gate.
+
+FROZEN_8T = ["trials/TRIALS2.md", "trials/trials2.py", "trials/checktrials2.py", "trials/test-trial2.sh"]
+SPOT_DENY_8T = [c for p in FROZEN_8T for c in (
+    "echo x > %s" % p, "sed -i 's/a/b/' %s" % p, "cp /tmp/x %s" % p, "rm -f %s" % p,
+    "python3 - <<'EOF'\nopen('%s','w').write('x')\nEOF" % p)] + [
+    "rm -rf trials", "mv trials old-trials", "git rm -r trials", "rm trials/*.py", "rm -f trials/*.md", "rm -rf trials/",
+    "rm -rf %s" % os.path.join(REPO, "trials"), "rmdir trials", "git mv trials old-trials",
+]
+SPOT_ALLOW_8T = [
+    "./trials/test-trial2.sh", "./trials/test-trial2.sh 2>&1 | tail -20",
+    "python3 trials/checktrials2.py --document", "python3 trials/checktrials2.py --rows",
+    "python3 trials/checktrials2.py --sittings", "python3 trials/checktrials2.py --cage",
+    "python3 trials/trials2.py --example", "python3 trials/trials2.py --disk trials/out/t8/disk.V.img",
+    "python3 trials/trials2.py --serial trials/out/hp-8t.log", "python3 trials/trials2.py --status trials/out/hp-8t.log",
+    "cat trials/TRIALS2.md | head", "grep -n trial2 trials/checktrials2.py", "tail -5 trials/out/gate-8t.log",
+    "rm -rf trials/out/t8", "rm -rf trials/out/probe8t/i8", "rm -f trials/out/t8/disk.V.img",
+    "qemu-img create -f raw trials/out/t8/scratch.img 64M",
+    "./stage8/mkimage.sh", "python3 stage8/mkstick.py", "./stage8/test-8a.sh",
+    "git add trials/TRIALS2.md trials/checktrials2.py", "git commit -F msg.txt",
+]
+WRITE_ALLOW_8T = ["stage8/stage8.asm", "stage8/mkimage.sh", "stage8/mkstick.py", "stage8/seed-record.md",
+                  "trials/HP-8t.md", "trials/plan-8t.md", "trials/glass-8t-section.md", "trials/spec-trial2.md", "HANDOVER.md"]
+ARGV_REFUSED_8T = ("-icount", "-global", "-action", "-watchdog", "-watchdog-action", "-no-reboot", "-accel", "-enable-kvm")
+
+
+def tool_verdict(tool, tool_input):
+    import json
+    payload = json.dumps({"tool_name": tool, "tool_input": tool_input})
+    r = subprocess.run([sys.executable, checkmetal.HOOK], input=payload.encode(), stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE, env=dict(os.environ, CLAUDE_PROJECT_DIR=REPO))
+    return {0: "ALLOW", 2: "DENY"}.get(r.returncode, "EXIT %d" % r.returncode)
+
+
+def check_argv_8t():
+    disk = os.path.join(T8, "disk.V.img")
+    copy = os.path.join(T8, "stick.V1.img")
+    serial = os.path.join(T8, "serial.V1.txt")
+    argv = checkmetal.qemu_argv(SMP, disk, copy, serial)
+    saved = checkmetal.OUT, checkmetal.STICK
+    checkmetal.OUT, checkmetal.STICK = OUT, STICK      # the frozen check's own paths, pointed at this ring's
+    try:
+        problems = checkmetal.check_argv_7c(argv, PORTS[2], checkmetal.MAC)
+    finally:
+        checkmetal.OUT, checkmetal.STICK = saved
+    for flag in ARGV_REFUSED_8T:
+        if flag in argv:
+            problems.append("the command carries %s, which check_argv_7c does not inspect" % flag)
+    if argv[argv.index("-smp") + 1] != str(SMP):
+        problems.append("the boots do not run at -smp %d" % SMP)
+    for path in (disk, copy, serial):
+        if not path.startswith(T8 + os.sep):
+            problems.append("a boot's file is not under trials/out/t8/: %s" % path)
+    import wire
+    if (checkmetal.BROKER_PORT, checkmetal.REHEARSAL_PORT, checkmetal.RELAY_PORT) != PORTS or PORTS != (9999, 9998, 9997):
+        problems.append("the frozen 7c ports are not 9999, 9998 and 9997")
+    if twin.DEFAULT_PORT != 9998 or wire.RELAY_PORT != 9997 or twin.VGA_ARGS != checkmetal.DISPLAY:
+        problems.append("the frozen modules' ports or display are not ring 7c's")
+    return problems
+
+
+def check_bodyguard_8t():
+    problems = []
+    r = subprocess.run([sys.executable, checkmetal.PAYLOADS], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    last = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else ""
+    m = re.fullmatch(r"(\d+) payloads: (\d+) must be denied, (\d+) must be allowed, (\d+) wrong", last)
+    if r.returncode != 0 or not m or m.group(4) != "0":
+        problems.append("the payload table: exit %d, last line %r - want exit 0 and 0 wrong" % (r.returncode, last))
+        problems += ["  " + l.strip() for l in r.stdout.splitlines() if l.startswith("  WRONG")]
+    else:
+        say("the payload table: %s" % last)
+    for p in FROZEN_8T:
+        for path in (p, os.path.join(REPO, p)):
+            for tool, ti in (("Write", {"file_path": path, "content": "x"}),
+                             ("Edit", {"file_path": path, "old_string": "a", "new_string": "b"})):
+                v = tool_verdict(tool, ti)
+                if v != "DENY":
+                    problems.append("the hook %ss %s on %s - every ring 8t frozen path must be frozen" % (v.lower(), tool, path))
+        v = tool_verdict("Read", {"file_path": os.path.join(REPO, p)})
+        if v != "ALLOW":
+            problems.append("the hook %ss Read on %s - a frozen file stays readable" % (v.lower(), p))
+    for p in WRITE_ALLOW_8T:
+        v = tool_verdict("Write", {"file_path": p, "content": "x"})
+        if v != "ALLOW":
+            problems.append("the hook %ss Write on %s - the builder and the records are never frozen" % (v.lower(), p))
+    for c in SPOT_DENY_8T:
+        v = checkmetal.hook_verdict(c)
+        if v != "DENY":
+            problems.append("the hook %ss %r - every mutation of a ring 8t frozen path must be denied" % (v.lower(), c))
+    for c in SPOT_ALLOW_8T:
+        v = checkmetal.hook_verdict(c)
+        if v != "ALLOW":
+            problems.append("the hook %ss %r - running the gate, the checker, the tool and the builders must be allowed"
+                            % (v.lower(), c))
+    return problems
+
+
+def check_both_families():
+    """(d): trial one's HP notes and worked example A's trial-two sitting on one disk,
+    written from the host; the frozen stage7/trials.py prints what it prints for the
+    ring 7d charts alone."""
+    history, _ = hp_history()
+    one = [n for n in history if not n.startswith("molt ")][:len(NOTES_7C) + HISTORY_COUNTS["trial"]]
+    disk = os.path.join(T8, "disk.families.img")
+    write_disk(disk, one + trials2.DOCUMENT["a_notes"], [], host_format=True)
+    joined = os.path.join(T8, "trial-one-charts.log")
+    with open(joined, "wb") as fh:
+        for name, sha in CHARTS_7D:
+            fh.write(chart_stream(name, sha))
+    rc1, out1 = run_tool([os.path.join(REPO, "stage7", "trials.py"), "--disk", disk])
+    rc2, out2 = run_tool([os.path.join(REPO, "stage7", "trials.py"), "--serial", joined])
+    if rc1 != 0 or out1 != out2:
+        return ["the frozen stage7/trials.py on a disk holding both families (exit %d) is not its report on the 7d charts "
+                "(exit %d): %r" % (rc1, rc2, out1[-200:])], out1
+    return [], out1
+
+
+def run_cage():
+    ok = True
+    problems = check_argv_8t()
+    if report("the checker's QEMU command is not the twin of the HP", problems):
+        say("the checker's QEMU command is checkmetal.qemu_argv itself: one restricted cage to 127.0.0.1:%d, the e1000e with "
+            "%s, -cpu IvyBridge, the display, the stick copy over xhci, the SATA disk on ide.1, both under trials/out/t8/, "
+            "no esp.img, -smp %d; none of %s" % (PORTS[2], checkmetal.MAC, SMP, " ".join(ARGV_REFUSED_8T)))
+    else:
+        ok = False
+    problems = check_bodyguard_8t()
+    if report("the bodyguard does not freeze ring 8t's paths", problems):
+        say("the bodyguard: the %d ring 8t frozen paths denied Write and Edit (relative and absolute) and %d spellings, "
+            "readable; trials/ under the owner's directory rule; the builder's %d files writable; %d shapes allowed"
+            % (len(FROZEN_8T), len(SPOT_DENY_8T), len(WRITE_ALLOW_8T), len(SPOT_ALLOW_8T)))
+    else:
+        ok = False
+    try:
+        problems, out = check_both_families()
+    except (ValueError, OSError) as exc:
+        problems, out = ["both families: %s" % exc], ""
+    if report("trial one's record is disturbed by trial two's notes", problems):
+        say("both families on one disk: the frozen stage7/trials.py prints trial one's report unchanged (%s)"
+            % out.strip().splitlines()[-1])
+    else:
+        ok = False
+    say("the cage: %s" % ("held, and the criteria frozen" if ok else "not proven"))
+    return 0 if ok else 1
+
+
+MODES = {"--document": run_document, "--rows": run_rows, "--sittings": run_sittings, "--cage": run_cage}
 
 
 def main(argv):

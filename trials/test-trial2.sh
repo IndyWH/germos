@@ -213,6 +213,79 @@ else
 fi
 echo
 
+# ----------------------------------- test 4: nothing earlier disturbed -------
+# (a) This harness inspects its OWN cage, machine, display, stick and disk
+# strings, its scratch and its log, and that no QEMU line of its own names
+# esp.img; (b)-(d) trials/checktrials2.py --cage: the checker's QEMU command
+# through ring 7c's frozen check_argv_7c; the payload table 0 wrong with the
+# four ring 8t frozen paths denied every mutation, and the spot checks; the
+# frozen stage7/trials.py unchanged on a disk holding both families; (e)
+# ring 8a's gate on this binary, which runs 8a's tests 1-4 - its test 2
+# puts ring 7d's checks on this binary through their seams, '! trial' still
+# trial one's - and inside its test 4 ring 7d's gate with 7c, 7b and 7a.
+# Its output lands in this log and in its own.
+
+echo "Test 4 - Nothing earlier disturbed: the harness's strings, the argv check, the payload table with the four ring 8t paths, trial one's record, ring 8a's gate with 7d, 7c, 7b and 7a inside it"
+cage_probs=()
+case "$CAGE_NETDEV" in
+  user,*) : ;;
+  *) cage_probs+=("the netdev is not slirp user mode: $CAGE_NETDEV") ;;
+esac
+case ",$CAGE_NETDEV," in
+  *,restrict=on,*) : ;;
+  *) cage_probs+=("the netdev lacks restrict=on: $CAGE_NETDEV") ;;
+esac
+n_fwd=$(printf '%s' "$CAGE_NETDEV" | grep -o 'guestfwd=' | wc -l)
+[ "$n_fwd" -eq 1 ] || cage_probs+=("expected exactly one guestfwd, found $n_fwd: $CAGE_NETDEV")
+printf '%s' "$CAGE_NETDEV" | grep -qE "guestfwd=tcp:10\.0\.2\.4:9999-cmd:nc -N 127\.0\.0\.1 ${RELAY_PORT}(,|\$)" || \
+  cage_probs+=("the guestfwd is not tcp:10.0.2.4:9999 via 'nc -N 127.0.0.1 ${RELAY_PORT}': $CAGE_NETDEV")
+case "$CAGE_NETDEV" in
+  *hostfwd*) cage_probs+=("the netdev opens a hostfwd: $CAGE_NETDEV") ;;
+esac
+[ "$BROKER_PORT" = 9999 ] && [ "$REHEARSAL_PORT" = 9998 ] && [ "$RELAY_PORT" = 9997 ] || \
+  cage_probs+=("the ports are not 9999, 9998 and 9997: $BROKER_PORT $REHEARSAL_PORT $RELAY_PORT")
+[ "$CAGE_DEVICE" = "e1000e,netdev=n0,mac=$MAC" ] || cage_probs+=("the device is not an e1000e on netdev n0 with the patient's MAC: $CAGE_DEVICE")
+[ "$MAC" = "6c:3b:e5:3b:86:45" ] || cage_probs+=("the MAC is not the patient's: $MAC")
+[ "$DISPLAY" = "-vga none -device VGA,edid=on,xres=1920,yres=1080" ] || cage_probs+=("the display is not the standard VGA device with the 1920x1080 EDID: $DISPLAY")
+[ "$MACHINE" = "-machine q35 -cpu IvyBridge -m 256M -bios $OVMF" ] || cage_probs+=("the machine is not q35 on the patient's CPU with OVMF: $MACHINE")
+[ "$(sata_drive "$T8/disk.V.img")" = "-drive if=none,id=d0,format=raw,file=$T8/disk.V.img -device ide-hd,drive=d0,bus=ide.1" ] || \
+  cage_probs+=("the disk is not the raw file under trials/out/t8/ on an ide-hd at ide.1")
+[ "$(stick_drive "$T8/stick.V1.img")" = "-device qemu-xhci -drive if=none,id=stick,format=raw,file=$T8/stick.V1.img -device usb-storage,drive=stick" ] || \
+  cage_probs+=("the stick is not a raw copy under trials/out/t8/ on usb-storage behind qemu-xhci")
+[ "$OUT" = "$REPO/trials/out" ] || cage_probs+=("the output directory $OUT is not trials/out/")
+for d in "$T8" "$LOG"; do
+  case "$d" in
+    "$OUT"/*) : ;;
+    *) cage_probs+=("$d is not under trials/out/") ;;
+  esac
+done
+if grep -qE 'qemu-system-x86_64.*esp\.img' "${BASH_SOURCE[0]}"; then
+  cage_probs+=("a QEMU line of this harness names esp.img - the stick is the only boot medium on the twin of the HP")
+fi
+
+t4=0
+if [ "${#cage_probs[@]}" -ne 0 ]; then
+  fail 4 "this harness's own cage, machine, display, stick, disk, scratch or log string is not the twin of the HP"
+  for p in "${cage_probs[@]}"; do echo "    - $p"; done
+else
+  echo "    the harness's own -netdev string carries restrict=on and the single guestfwd to 10.0.2.4:9999 via nc to 127.0.0.1:$RELAY_PORT; the ports 9999, 9998 and 9997; the e1000e with the patient's MAC; q35 on IvyBridge; the VGA device with the 1920x1080 EDID; the stick a copy on usb-storage behind qemu-xhci and the disk a raw file on ide.1, both under trials/out/t8/; the scratch and the log under trials/out/; no QEMU line names esp.img"
+  python3 "$REPO/trials/checktrials2.py" --cage || t4=1
+  echo
+  echo "    --- ./stage8/test-8a.sh on this binary (8a's tests 1-4; 7d's checks through the seams in its test 2; 7d's gate with 7c, 7b and 7a inside its test 4) ---"
+  if "$REPO/stage8/test-8a.sh"; then
+    echo "    --- ./stage8/test-8a.sh: green ---"
+  else
+    echo "    --- ./stage8/test-8a.sh: RED ---"
+    t4=1
+  fi
+  if [ "$t4" -eq 0 ]; then
+    pass 4 "the harness's strings, the argv check, the four ring 8t paths frozen and the payload table 0 wrong, trial one's record unchanged, ring 8a's gate green with 7d, 7c, 7b and 7a inside it"
+  else
+    fail 4 "the cage, the freeze, trial one's record or an earlier gate is not proven (see above)"
+  fi
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 for line in "${summary[@]}"; do
