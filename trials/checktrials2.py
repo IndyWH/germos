@@ -62,7 +62,7 @@ import metal  # noqa: E402  - DISK.md's Python
 import parts  # noqa: E402  - PARTS.md's and SEED.md's Python
 import checktrials  # noqa: E402  - ring 7d's frozen checker: the cell rendering, the boxes' check, the conversation's rows
 import twin  # noqa: E402
-from checkglass import say, report, dump_capture, check_region_rows, check_mode_field, check_counts, PROMPT  # noqa: E402
+from checkglass import say, report, dump_capture, check_region_rows, check_mode_field, check_counts, check_choices, PROMPT  # noqa: E402
 from checkpointer import Pointer, park_cell, CELL  # noqa: E402
 from plans import plan_keyname  # noqa: E402
 from rehearse import KEY_GAP  # noqa: E402
@@ -869,6 +869,31 @@ def hidden_times(reads, secrets, allowed, label):
     return problems
 
 
+def rows_of(reads, name):
+    """A surface's non-blank rows, as text."""
+    C, R = reads["obs"][name]["cols"], reads["obs"][name]["rows"]
+    cells = reads[name]
+    rows = [cells[r * C:(r + 1) * C].decode("ascii", "replace").rstrip() for r in range(R)]
+    return [r for r in rows if r]
+
+
+def tail_upto(rows, last, n):
+    """The n rows ending at the last row equal to last (the prompt may follow it)."""
+    idx = [i for i, r in enumerate(rows) if r == last]
+    return rows[idx[-1] - n + 1:idx[-1] + 1] if idx else rows[-n:]
+
+
+def append_notes(disk, more):
+    """Notes appended from the host after the disk's last note, by the notebook's record."""
+    notes = notes_on_disk(disk)
+    data = bytearray(checkdisk.read_image(disk))
+    first, sectors = metal.parse_gpt(bytes(data))["notes"]
+    lo, hi = first * metal.SECTOR, (first + sectors) * metal.SECTOR
+    data[lo:hi] = write_notes(bytes(data[lo:hi]), notes + more)
+    with open(disk, "wb") as fh:
+        fh.write(bytes(data))
+
+
 def secrets_of(notes):
     out = set()
     for p in map(trials2.parse_note, notes):
@@ -1182,7 +1207,408 @@ def run_rows():
     return 0 if ok else 1
 
 
-MODES = {"--document": run_document, "--rows": run_rows}
+# ------------------------------------------- test 3: the sittings ---------
+# Disk V, blank: four sittings played to a scripted verdict B, sitting 1
+# typed and sittings 2-4 started by Enter at the offer, then the boot after
+# the verdict. Disk H, the HP's history (D3): sitting 1 played on it; the
+# host then appends sittings 2 and 3 and it is disk W: sitting 4 aborted,
+# sitting 5 played to a scripted verdict G over sittings 1, 2, 3 and 5, then
+# the boot after the verdict with a full trial on the disk.
+
+def _script(sitting, g_ms, b_ms, misses=(), wmiss=(), prefer="b", abort=None):
+    blocks = []
+    for b in range(1, trials2.BLOCKS + 1):
+        base = g_ms if trials2.layout(sitting, b) == "G" else b_ms
+        blocks.append({"ms": [base + (c * 37 + b * 11) % 60 - 30 for c in range(trials2.CUES_PER_BLOCK)],
+                       "miss": [c for (bb, c) in misses if bb == b]})
+    warm = {"ms": [300 + (c * 37) % 60 - 30 for c in range(trials2.WARMUP_CUES)], "miss": list(wmiss)}
+    return {"sitting": sitting, "warmup": warm, "blocks": blocks, "abort": abort, "prefer": prefer}
+
+
+# V: B faster by about 130 ms a cue - the verdict B whatever the pointer's own slack.
+SCRIPTS_V = [_script(1, 360, 230, misses=[(1, 7), (3, 12)], wmiss=[4], prefer="b"),
+             _script(2, 360, 230, misses=[(2, 5)], prefer="n"),
+             _script(3, 360, 230, prefer="g"),
+             _script(4, 360, 230, misses=[(8, 16)], prefer="b")]
+# H and W: G faster by about 130 ms a cue - the verdict G.
+SCRIPT_H1 = _script(1, 230, 360, misses=[(2, 9)], prefer="g")
+SCRIPTS_W_HOST = [_script(2, 270, 400, prefer="n"), _script(3, 270, 400, misses=[(5, 3)], prefer="g")]   # written as recorded
+SCRIPT_W4 = _script(4, 230, 360, prefer=None, abort=(3, 4))
+SCRIPT_W5 = _script(5, 230, 360, misses=[(6, 2)], prefer="g")
+ROW_HP = ["? ask", "! grow", "! calculator"]
+
+
+class Sittings:
+    def __init__(self):
+        self.ok = True
+        self.captures = {}
+
+    def fail(self, problems, title, capture=None):
+        if problems:
+            self.ok = False
+        return report(title, problems, capture)
+
+    def play_boot(self, name, disk, script, start, full=False, verdict=False, at_boot=None, after=None):
+        """One boot playing one sitting, with the save rule and A2 checked at the question and at
+        saved, the page at every rest, and the notes compared with the script afterwards."""
+        before_notes = notes_on_disk(disk)
+        s = script["sitting"]
+        results, reads, problems = {}, {}, []
+        t0 = time.time()
+        with Boot(name, disk, full=full) as b:
+            if b.err:
+                return self.fail([b.err], name), None
+            allowed = replay_rows(before_notes, b.regs["conversation"][3])
+            secrets = secrets_of(before_notes)
+            reads["boot"] = b.surfaces()
+            if at_boot:
+                problems += at_boot(b, reads["boot"])
+            if not trials2.concluded(before_notes):
+                problems += hidden_times(reads["boot"], secrets, allowed, "%s's boot" % name)
+
+            def at_rest(blk):
+                try:
+                    obs = b.page()
+                    want = {"mode": trials2.MODE_TRIAL, "trial_number": 2, "trial_sitting": s, "trial_block": blk,
+                            "trial_cue": 0, "zero_8t": [0, 0, 0]}
+                    problems.extend(check_counts(obs, want, "%s at the rest after block %d" % (name, blk)))
+                    if blk in (0, 4):
+                        rd = b.surfaces()
+                        problems.extend(hidden_times(rd, secrets | secrets_of(notes_on_disk(disk)), allowed,
+                                                     "%s at the rest after block %d" % (name, blk)))
+                except ValueError as exc:
+                    problems.append("%s: the page at the rest after block %d: %s" % (name, blk, exc))
+
+            def at_question():
+                on = notes_on_disk(disk)
+                if not any(t == "trial2 sitting %d done" % s for t in on):
+                    problems.append("%s: at the question the done note is not on the disk" % name)
+                if any((trials2.parse_note(t) or {}).get("kind") == "prefer" and t.split()[2] == str(s) for t in on):
+                    problems.append("%s: a prefer note is on the disk before the key" % name)
+                if trials2.SAVED in results["question_rows"]:
+                    problems.append("%s: the saved line shows before the key" % name)
+                if verdict and not trials2.concluded(on):
+                    problems.append("%s: the fourth done sitting's verdict note is not on the disk at the question" % name)
+                if not verdict:
+                    problems.extend(hidden_times(results["question_reads"], secrets_of(on), allowed, "%s at the question" % name))
+                reads["question"] = results["question_reads"]
+
+            def at_saved():
+                on = notes_on_disk(disk)
+                reads["saved_notes"] = on
+                if script.get("prefer") and "trial2 prefer %d %s" % (s, script["prefer"]) not in on:
+                    problems.append("%s: the saved line shows and the prefer note is not on the disk" % name)
+                if not verdict:
+                    problems.extend(hidden_times(results["saved_reads"], secrets_of(on), allowed, "%s at saved" % name))
+
+            err = b.play(script, results, start, {"rest": at_rest, "question": at_question, "saved": at_saved},
+                         prefer_verdict=verdict)
+            if err:
+                return self.fail(problems + [err], name, b.serial()), None
+            if after:
+                problems += after(b)
+            cap = b.serial()
+        wall = time.time() - t0
+        self.captures[name] = cap
+        new = notes_on_disk(disk)
+        if new[:len(before_notes)] != before_notes:
+            problems.append("%s: a note written before the boot changed" % name)
+        added = new[len(before_notes):]
+        judged = [t for t in added if (trials2.parse_note(t) or {}).get("kind") != "verdict"]
+        problems += compare_notes(judged, script, "%s's notes" % name)
+        notes_serial, _ = serial_notes(cap)
+        if notes_serial != added:
+            problems.append("%s: the trial2: lines on serial are not the notes journaled (%d lines, %d notes)"
+                            % (name, len(notes_serial), len(added)))
+        if cap.count(b"S7: alive") != 1:
+            problems.append("%s: %d 'S7: alive' lines in one boot - a reset" % (name, cap.count(b"S7: alive")))
+        if wall > SITTING_S:
+            problems.append("%s: the sitting's boot took %.0f s, more than SITTING_S %.0f s" % (name, wall, SITTING_S))
+        tail = trials2.end_lines(new, s)
+        rows = results.get("saved_rows", [])
+        if (script.get("prefer") is not None or script.get("abort")) and tail_upto(rows, trials2.SAVED, len(tail)) != tail:
+            problems.append("%s: the conversation at saved ends %r, want %r" % (name, tail_upto(rows, trials2.SAVED, len(tail)), tail))
+        if not verdict and "saved_reads" in results:
+            app = rows_of(results["saved_reads"], "app")
+            if app:
+                problems.append("%s: the app panel shows %r before the verdict" % (name, app[:3]))
+        say("(%s: sitting %d, %d notes journaled, %.1f s)" % (name, s, len(added), wall))
+        return problems, (results, reads, cap, new)
+
+    def check_verdict(self, name, notes, results, reads, predicted, layout):
+        problems = []
+        v = trials2.verdict_detail(notes)
+        note = [t for t in notes if (trials2.parse_note(t) or {}).get("kind") == "verdict"]
+        if v is None or note != [trials2.verdict_note(notes)]:
+            problems.append("%s: the verdict note %r is not the rule's %r" % (name, note, trials2.verdict_note(notes)))
+        elif trials2.verdict_of(notes) != layout:
+            problems.append("%s: the verdict is %s, the script gives %s" % (name, trials2.verdict_of(notes), layout))
+        elif abs(v[3] - predicted[3]) > SLACK_MS:
+            problems.append("%s: the mean is %d, the script gives %d +/- %d" % (name, v[3], predicted[3], SLACK_MS))
+        if results.get("verdict") != (trials2.verdict_of(notes), v[3] if v else None):
+            problems.append("%s: the verdict line on serial is %r" % (name, results.get("verdict")))
+        rd = results.get("saved_reads")
+        if rd:
+            app = rows_of(rd, "app")
+            if app != trials2.verdict_panel(notes):
+                problems.append("%s: the app panel at the verdict is %r, want %r" % (name, app[:4], trials2.verdict_panel(notes)[:4]))
+            want_default = trials2.LAYOUT_VALUE[layout]
+            problems += check_counts(rd["obs"], {"layout_default": want_default, "mode": 0}, "%s at saved" % name)
+        return problems
+
+    def boot_after(self, name, disk, layout, labels, full=False):
+        """The boot after the verdict: the concluded line, no offer, the default read at boot,
+        the prompt row drawn in it, an empty Enter plain, '! trial 2' refused, a click."""
+        notes = notes_on_disk(disk)
+        with Boot(name, disk, full=full) as b:
+            if b.err:
+                return [b.err], None, None
+            ready_s = b.ready_s
+            b.park()
+            rd = b.surfaces()
+            shot = b.shot("prompt")
+            b.type("\n")
+            time.sleep(1.0)
+            b.type("! trial 2\n")
+            time.sleep(1.0)
+            rd2 = b.surfaces()
+            z = trials2.zones(b.geometry[2], len(labels))
+            b.moveto(b.crow + 1, (z[1][2] + z[1][3]) // 2)
+            b.press()
+            time.sleep(0.8)
+            rd3 = b.surfaces()
+            b.moveto(b.crow, z[0][1])
+            b.press()
+            time.sleep(0.8)
+            rd4 = b.surfaces()
+            cap = b.serial()
+            geometry = b.geometry
+        problems = []
+        want_line = "trial2: concluded verdict %s default %s" % (layout, layout)
+        if boot_line_of(cap) != [want_line]:
+            problems.append("%s: the boot line is %r, want %r" % (name, boot_line_of(cap), want_line))
+        rows = checktrials.conv_rows(rd["conversation"], rd["obs"])
+        if any("press Enter to start" in r for r in rows):
+            problems.append("%s: an offer after the verdict" % name)
+        problems += check_counts(rd["obs"], {"mode": 0, "layout_default": trials2.LAYOUT_VALUE[layout], "trial_number": 0,
+                                             "notes": len(notes)}, "%s's boot" % name)
+        if layout == "B":
+            problems += checktrials.check_layout_b(shot, rd, geometry, labels, "%s's prompt row" % name)
+        else:
+            problems += check_layout_g(shot, rd, geometry, labels, "%s's prompt row" % name)
+        rows = checktrials.conv_rows(rd2["conversation"], rd2["obs"])
+        if rows[-4:] != [">", "> ! trial 2", "trial 2 concluded", ">"]:
+            problems.append("%s: an empty Enter then '! trial 2': the conversation ends %r" % (name, rows[-4:]))
+        problems += check_counts(rd2["obs"], {"errors": 1}, "%s: the refusal" % name)
+        problems += check_counts(rd3["obs"], {"hits": 1}, "%s: a click on '! grow'" % name)
+        if checktrials.conv_rows(rd3["conversation"], rd3["obs"])[-1:] != ["> !"]:
+            problems.append("%s: a click on '! grow' did not type '!'" % name)
+        problems += check_counts(rd4["obs"], {"hits": 1, "clicks": rd3["obs"]["clicks"] + 1}, "%s: a click on the gap" % name)
+        return problems, cap, (rd, geometry, ready_s)
+
+    # -- disk V ------------------------------------------------------------
+    def disk_v(self):
+        disk, problems = fresh_formatted("V")
+        if disk is None or problems:
+            return self.fail(problems, "disk V")
+        predicted = trials2.verdict_detail(trials2.journal_of([expected_script(s) for s in SCRIPTS_V]))
+        for i, script in enumerate(SCRIPTS_V, 1):
+            name = "V%d" % i
+            start = "type" if i == 1 else "enter"
+
+            def at_boot(b, rd, i=i):
+                p = []
+                cap = b.serial()
+                if i == 1:
+                    if boot_line_of(cap):
+                        p.append("V1: a boot line on a blank disk")
+                else:
+                    if boot_line_of(cap) != [trials2.DUE_LINE % i]:
+                        p.append("%s: the boot line is %r, want %r" % ("V%d" % i, boot_line_of(cap), trials2.DUE_LINE % i))
+                    rows = checktrials.conv_rows(rd["conversation"], rd["obs"])
+                    if trials2.OFFER % i not in rows:
+                        p.append("V%d: no offer %r in the conversation: %r" % (i, trials2.OFFER % i, rows[-3:]))
+                    if any(r.startswith(trials2.NOTE_PREFIX) for r in rows):
+                        p.append("V%d: the replay drew a trial-two note" % i)
+                return p
+
+            problems, got = self.play_boot(name, disk, script, start, verdict=(i == 4), at_boot=at_boot)
+            if got is None:
+                return False
+            results, reads, cap, notes = got
+            if i == 4:
+                problems += self.check_verdict(name, notes, results, reads, predicted, "B")
+            if not self.fail(problems, "%s: sitting %d is not what TRIALS2.md and the script say" % (name, i), cap):
+                continue
+            say("%s: sitting %d %s, started by %s; its notes as scripted, the save rule held, no time or score shown%s"
+                % (name, i, trials2.order(i), "'! trial 2'" if i == 1 else "Enter at the offer",
+                   "; verdict %s %d over sittings 1-4" % results.get("verdict", ("?", 0)) if i == 4 else ""))
+        problems, cap, extra = self.boot_after("V5", disk, "B", ["? ask", "! grow"])
+        notes = notes_on_disk(disk)
+        rc, out = run_tool([os.path.join(HERE, "trials2.py"), "--disk", disk])
+        if rc != 0 or "\n".join(trials2.verdict_panel(notes)[:11]) not in out:
+            problems.append("trials2.py --disk on disk V: exit %d, %r" % (rc, out[-200:]))
+        chart = os.path.join(T8, "chart.V1-3.log")
+        with open(chart, "wb") as fh:
+            for n in ("V1", "V2", "V3"):
+                fh.write(self.captures.get(n, b""))
+        rc, out = run_tool([os.path.join(HERE, "trials2.py"), "--status", chart])
+        leak = sorted(set(re.findall(r"(?<![0-9])[1-9][0-9]*", out)) & secrets_of(notes))
+        if rc != 0 or leak or out.count("preference saved") != 3:
+            problems.append("trials2.py --status on V1-V3's charts: exit %d, shows %r, %r" % (rc, leak, out[-300:]))
+        with open(chart, "ab") as fh:
+            fh.write(self.captures.get("V4", b"") + (cap or b""))
+        rc, out = run_tool([os.path.join(HERE, "trials2.py"), "--status", chart])
+        if "verdict line present" not in out or "verdict B:" not in out:
+            problems.append("trials2.py --status after the verdict: %r" % out[-300:])
+        if self.fail(problems, "V5: the boot after verdict B is not what TRIALS2.md says", cap):
+            say("V5: 'trial2: concluded verdict B default B', no offer, layout_default 1 and the prompt row in B; an empty "
+                "Enter plain, '! trial 2' refused; trials2.py --disk the panel's tables; --status on V1-V3 blind")
+        return True
+
+    # -- disk H, then W ------------------------------------------------------
+    def disk_h(self):
+        disk, problems = fresh_formatted("H")
+        if disk is None or problems:
+            return self.fail(problems, "disk H")
+        history, _ = hp_history()
+        write_disk(disk, history, hp_home())
+        charts = os.path.join(T8, "trial-one-charts.log")
+        with open(charts, "wb") as fh:
+            for n, sha in CHARTS_7D:
+                fh.write(chart_stream(n, sha))
+        t1_before = run_tool([os.path.join(REPO, "stage7", "trials.py"), "--serial", charts])[1]
+        parts_before = run_tool([os.path.join(REPO, "stage8", "parts.py"), "--disk", disk])[1]
+
+        def h_boot(b, rd):
+            p = []
+            cap = b.serial()
+            p += boot_lines(cap, len(history), 1)
+            if s8_lines(cap) != ["S8: sha256 ok"]:
+                p.append("H1: the S8: and molt: lines are %r, want only 'S8: sha256 ok' (no part, no watchdog)" % s8_lines(cap))
+            if boot_line_of(cap):
+                p.append("H1: a boot line with no trial-two note: %r" % boot_line_of(cap))
+            rows = checktrials.conv_rows(rd["conversation"], rd["obs"])
+            if any("press Enter to start" in r or "hold Esc" in r for r in rows):
+                p.append("H1: an offer or the Esc window on the HP's disk: %r" % rows[-3:])
+            p += check_counts(rd["obs"], {"layout_default": 0, "trial_number": 0, "notes": len(history)}, "H1's boot")
+            b.park()
+            shot = b.shot("prompt")
+            p += check_choices(shot, b.geometry, "   ".join(ROW_HP))
+            b.type("! molt\n")
+            time.sleep(1.0)
+            app = rows_of(b.surfaces(), "app")
+            if app != ["i8042 demoted f0668b687c68cab0 unhealthy"]:
+                p.append("H1: '! molt' shows %r" % app)
+            b.type("! trial\n")
+            time.sleep(1.0)
+            rows, _ = b.conv()
+            if rows[-2:] != ["trial concluded", ">"]:
+                p.append("H1: '! trial' ends %r, want trial one's 'trial concluded'" % rows[-2:])
+            return p
+
+        problems, got = self.play_boot("H1", disk, SCRIPT_H1, "type", full=True, at_boot=h_boot)
+        if got is None:
+            return False
+        results, reads, cap, notes = got
+        t1_disk = run_tool([os.path.join(REPO, "stage7", "trials.py"), "--disk", disk])[1]
+        if t1_disk != t1_before or "verdict A:" not in t1_disk:
+            problems.append("H1: the frozen stage7/trials.py --disk changed after a trial-two sitting: %r" % t1_disk[-200:])
+        if run_tool([os.path.join(REPO, "stage8", "parts.py"), "--disk", disk])[1] != parts_before:
+            problems.append("H1: stage8/parts.py --disk changed after a trial-two sitting")
+        if self.fail(problems, "H1: the HP's disk and its first trial-two sitting are not what the documents say", cap):
+            say("H1: the HP's history, 355 notes: 'S8: sha256 ok' alone, no part loaded, no watchdog and no reset through the "
+                "sitting; '! molt' shows the demoted part, '! trial' 'trial concluded', '! trial 2' opened sitting 1; the "
+                "frozen stage7/trials.py and parts.py print the same after it")
+
+        # W: the host appends sittings 2 and 3 as recorded
+        more = []
+        for sc in SCRIPTS_W_HOST:
+            more += trials2.notes_of(sc)
+        append_notes(disk, more)
+        say("W: sittings 2 and 3 appended from the host, %d notes" % len(more))
+
+        def due(n):
+            def at_boot(b, rd):
+                p = []
+                if boot_line_of(b.serial()) != [trials2.DUE_LINE % n]:
+                    p.append("W: the boot line is %r, want %r" % (boot_line_of(b.serial()), trials2.DUE_LINE % n))
+                rows = checktrials.conv_rows(rd["conversation"], rd["obs"])
+                if trials2.OFFER % n not in rows:
+                    p.append("W: no offer %r" % (trials2.OFFER % n))
+                return p
+            return at_boot
+
+        def enter_refused(b):
+            b.type("\n")
+            time.sleep(1.0)
+            rows, rd = b.conv()
+            p = [] if rows[-2:] == ["one sitting a boot", ">"] else ["W1: an empty Enter after the abort ends %r" % rows[-2:]]
+            return p
+
+        problems, got = self.play_boot("W1", disk, SCRIPT_W4, "enter", full=True, at_boot=due(4), after=enter_refused)
+        if got is None:
+            return False
+        if got[0].get("aborted") != 3:
+            problems.append("W1: the abort named block %r, want 3" % got[0].get("aborted"))
+        if self.fail(problems, "W1: sitting 4, aborted, is not what TRIALS2.md says", got[2]):
+            say("W1: 'trial2: due sitting 4' and the offer, Enter started it, Esc in block 3 journaled 'aborted 3' and the "
+                "saved line; an empty Enter then 'one sitting a boot'")
+        predicted = trials2.verdict_detail(trials2.journal_of(
+            [expected_script(SCRIPT_H1)] + SCRIPTS_W_HOST + [expected_script(SCRIPT_W5)]))
+        problems, got = self.play_boot("W2", disk, SCRIPT_W5, "enter", full=True, verdict=True, at_boot=due(5))
+        if got is None:
+            return False
+        results, reads, cap, notes = got
+        problems += self.check_verdict("W2", notes, results, reads, predicted, "G")
+        v = trials2.verdict_detail(notes)
+        if v and v[0] != [1, 2, 3, 5]:
+            problems.append("W2: the verdict judged sittings %r, want [1, 2, 3, 5]" % v[0])
+        if self.fail(problems, "W2: sitting 5 and the verdict G are not what TRIALS2.md says", cap):
+            say("W2: 'trial2: due sitting 5', Enter, the sitting to done, the verdict %s %d over sittings 1, 2, 3 and 5, the "
+                "four tables in the app panel" % results.get("verdict", ("?", 0)))
+        problems, cap, extra = self.boot_after("W3", disk, "G", ROW_HP, full=True)
+        if extra:
+            rd, geometry, ready_s = extra
+            got_g = g_columns_of(rd["choices"], geometry[2])
+            if isinstance(G_ROWS_RUN[3], _Unset) or tuple(G_ROWS_RUN[3]) != got_g:
+                problems.append("W3: the three-item G row reads %r; the run constant is %r" % (got_g, G_ROWS_RUN[3]))
+            say("(W3: %d notes on the disk, ready %.2f s after QEMU's start)" % (len(notes_on_disk(disk)), ready_s))
+        t1_disk = run_tool([os.path.join(REPO, "stage7", "trials.py"), "--disk", disk])[1]
+        if t1_disk != t1_before:
+            problems.append("W3: the frozen stage7/trials.py --disk changed with trial two concluded on the disk")
+        if run_tool([os.path.join(REPO, "stage8", "parts.py"), "--disk", disk])[1] != parts_before:
+            problems.append("W3: stage8/parts.py --disk changed")
+        if self.fail(problems, "W3: the boot after verdict G with a full trial on the disk is not what TRIALS2.md says", cap):
+            say("W3: 'trial2: concluded verdict G default G' with a full trial on the HP's history; layout_default 2 and the "
+                "HP's three-item prompt row in G; the frozen stage7/trials.py still prints trial one's verdict A")
+        return True
+
+
+def run_sittings():
+    if not require(["READY_LIMIT_S", "READY_FULL_S", "SETTLE_S", "OFFSET_MS", "OFFSET_FIRST_MS", "HIT_WINDOW_MS",
+                    "SITTING_S", "G_ROWS_RUN"]):
+        return 1
+    problems = []
+    for sc in SCRIPTS_V + [SCRIPT_H1, SCRIPT_W4, SCRIPT_W5]:
+        problems += check_script_range(sc)
+    for sc in SCRIPTS_W_HOST:
+        problems += check_script_range(sc)
+    pv = trials2.verdict_detail(trials2.journal_of([expected_script(s) for s in SCRIPTS_V]))
+    pw = trials2.verdict_detail(trials2.journal_of([expected_script(SCRIPT_H1)] + SCRIPTS_W_HOST + [expected_script(SCRIPT_W5)]))
+    if pv[2] <= 16 * SLACK_MS or pw[2] >= -16 * SLACK_MS:
+        problems.append("the scripts' margins (S %d for V, %d for W) are inside the slack" % (pv[2], pw[2]))
+    if not report("the sittings' scripts", problems):
+        return 1
+    run = Sittings()
+    for part in (run.disk_v, run.disk_h):
+        t0 = time.time()
+        part()
+        say("(%s: %.1f s)" % (part.__name__, time.time() - t0))
+    return 0 if run.ok else 1
+
+
+MODES = {"--document": run_document, "--rows": run_rows, "--sittings": run_sittings}
 
 
 def main(argv):

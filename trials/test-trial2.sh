@@ -192,6 +192,27 @@ else
 fi
 echo
 
+# ---------------------------------------------- test 3: sittings predicted ---
+# checktrials2.py --sittings, the synthetic human at -smp 4. Disk V, blank:
+# sitting 1 typed, sittings 2-4 by Enter at the offer, each played to its
+# scripted notes with the save rule and the times hidden (A2) checked at the
+# question and at saved; the verdict B at the fourth done; the boot after it
+# in B. Disk H, the HP's history rebuilt from its charts: no part, no
+# watchdog, trial one concluded, '! trial 2' opens sitting 1; the frozen
+# stage7/trials.py unchanged. Disk W, H with sittings 2 and 3 appended from
+# the host: sitting 4 aborted, sitting 5 to the verdict G over 1, 2, 3 and
+# 5, the boot after it in G with a full trial on the disk.
+
+echo "Test 3 - Sittings predicted: four sittings to verdict B; the HP's history to verdict G; the save rule; the times hidden; the offer, Enter and the boot line"
+if [ ! -f "$STICK" ] || [ ! -f "$EFI" ]; then
+  fail 3 "no stick was built"
+elif python3 "$REPO/trials/checktrials2.py" --sittings; then
+  pass 3 "every sitting as scripted and scored by the rule, verdict B on disk V and G on the HP's history, the default read at boot and drawn, the times hidden, trial one's record unchanged"
+else
+  fail 3 "the sittings are not what TRIALS2.md and the scripts say (see above)"
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 for line in "${summary[@]}"; do
