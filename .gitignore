@@ -20,6 +20,7 @@
 # Test artefacts
 stage0/out/
 out/
+trials/out/
 *.ppm
 *.png
 *.log

@@ -155,6 +155,8 @@ Stage 8 is large, and later rings depend on what the earlier ones teach. So this
 | **8f** | **The kernel** | The machine's time is scheduled by code it grew | The main loop and the glass core as one grown part. It beats the seed's on input-to-photon (`ph` and `pt`) while a hog burns every other core — the foundation's §5 budget test. It is live on the HP after a reboot, calls the pet routine, and is witnessed |
 | **8g** | **The week** | The OS is self-hosting | 168 hours on the HP on the brewed system, by the rules below |
 
+**Ring 8t, inserted 28 September 2026 by the owner's decision at trial two's kickoff:** trial two, the choices-row N-of-1 re-run by `trials/spec-trial2.md` (G against B), runs after ring 8a closes and before ring 8b, on the generic `i8042` driver throughout. The letter leaves 8b to 8g as written.
+
 The alternative to 8d and 8e is a shorter path: after the first driver, go straight to the kernel and the week (decision 2). The foundation says drivers first, kernel last, but not that every driver must molt. The recommendation is all three, because a grown kernel on the seed's disk and wire is half a molt.
 
 ## Ring 8a — the floor
