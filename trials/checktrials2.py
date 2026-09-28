@@ -34,9 +34,11 @@ import datetime
 import hashlib
 import os
 import re
+import shutil
 import struct
 import subprocess
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
@@ -58,7 +60,13 @@ import checknotes  # noqa: E402  - Stage 3's NOTEBOOK.md record builder
 import checkplans  # noqa: E402  - HOME.md's parser
 import metal  # noqa: E402  - DISK.md's Python
 import parts  # noqa: E402  - PARTS.md's and SEED.md's Python
-from checkglass import say, report  # noqa: E402
+import checktrials  # noqa: E402  - ring 7d's frozen checker: the cell rendering, the boxes' check, the conversation's rows
+import twin  # noqa: E402
+from checkglass import say, report, dump_capture, check_region_rows, check_mode_field, check_counts, PROMPT  # noqa: E402
+from checkpointer import Pointer, park_cell, CELL  # noqa: E402
+from plans import plan_keyname  # noqa: E402
+from rehearse import KEY_GAP  # noqa: E402
+from glass import regions  # noqa: E402
 
 T1 = trials2.T1                                   # stage7/trials.py, frozen
 
@@ -81,11 +89,51 @@ G_ROWS_RUN = {                 # (label spans, separator columns) read from the 
     3: UNSET,
 }
 TRIAL_NUMBER_AT_RUN = UNSET    # the offset the probe's page read showed trial_number at
+READY_LIMIT_S = UNSET          # QEMU's start to "S7: keyboard ready" on a blank or small disk, with margin
+READY_FULL_S = UNSET           # the same with a full trial on the HP's history (about 1,250 notes)
+SETTLE_S = UNSET               # after ready, before the first key: the replay settled
+OFFSET_MS = UNSET              # recorded ms minus the scripted delay, a cue after a pause
+OFFSET_FIRST_MS = UNSET        # the same for a block's (or the warm-up's) first cue
+HIT_WINDOW_MS = UNSET          # the per-hit sanity window, CC's own, from the run's spread
+SITTING_S = UNSET              # a whole sitting's wall time in the twin, with margin: the play's bound
+
+# By rule, never from a run:
+SLACK_MS = 30                  # a block's score against the script's: ring 7d's window (its A3), never widened
+POLL_S = 0.005                 # the serial file's poll, ring 7d's
+SMP = 4
+OBS_BYTES = 0x368              # the page through molt_overflows: 0x340 trial_number, 0x348-0x358 zero
+REST_S = trials2.REST_MS / 1000.0
+PAUSE_S = trials2.PAUSE_MS / 1000.0
+MS_RANGE = (100, 999)          # every scripted time and score: three digits, so no zero-padded counter of the
+                               # strip can ever read as one (A2's token check)
 
 
 def unset(names):
     return [n for n in names if isinstance(globals()[n], _Unset) or
             (isinstance(globals()[n], dict) and any(isinstance(v, _Unset) for v in globals()[n].values()))]
+
+
+RUN_CONSTANTS = ["G_ROWS_RUN", "TRIAL_NUMBER_AT_RUN", "READY_LIMIT_S", "READY_FULL_S", "SETTLE_S", "OFFSET_MS",
+                 "OFFSET_FIRST_MS", "HIT_WINDOW_MS", "SITTING_S"]
+
+
+def apply_sets(pairs):
+    """Item 8's run only: an unset constant given as NAME=VALUE (a Python literal). A set one never."""
+    for pair in pairs:
+        name, _, value = pair.partition("=")
+        if name not in RUN_CONSTANTS:
+            raise ValueError("--set %s: not a run constant" % name)
+        if not unset([name]):
+            raise ValueError("--set %s: it is set; only an unset constant may be given" % name)
+        globals()[name] = eval(value, {})
+
+
+def require(names):
+    missing = unset(names)
+    if missing:
+        say("the run constants %s are unset - item 8's run supplies them, never a guess" % ", ".join(missing))
+        return False
+    return True
 
 
 # ------------------------------------------------------------- the log ----
@@ -405,17 +453,754 @@ def run_document():
     return 0 if ok else 1
 
 
-MODES = {"--document": run_document}
+# ------------------------------------------------------------ the twin -----
+# One boot of the twin of the HP on a copy of stage8's stick: ring 7c's QEMU
+# command (checkmetal.qemu_argv, the cage to 127.0.0.1:9997 where nothing
+# listens - a trial sends nothing), the guest's own ready line awaited, the
+# monitor and the serial file at hand, the PS/2 mouse driven through the
+# monitor with the pointer model of ring 6c; quit and reaped at the end.
+
+TRIAL2_LINE = re.compile(rb"trial2: [^\r\n]*")
+READY = checkmetal.READY
+
+
+class Boot:
+    def __init__(self, name, disk, full=False):
+        self.name, self.disk = name, disk
+        self.serial_path = os.path.join(T8, "serial.%s.txt" % name)
+        self.copy = os.path.join(T8, "stick.%s.img" % name)
+        self.limit = READY_FULL_S if full else READY_LIMIT_S
+        self.events = []
+        self.offset = 0
+        self.proc = self.drv = self.err = self.obs_addr = self.geometry = None
+        self.ready_s = None
+
+    def __enter__(self):
+        if os.path.exists(self.serial_path):
+            os.remove(self.serial_path)
+        shutil.copyfile(STICK, self.copy)
+        t0 = time.time()
+        self.proc = subprocess.Popen(checkmetal.qemu_argv(SMP, self.disk, self.copy, self.serial_path),
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.drv = twin.Driver(self.proc, self.serial_path, T8)
+        while time.time() - t0 < self.limit:
+            time.sleep(0.02)
+            if self.proc.poll() is not None or READY in self.serial():
+                break
+        if READY not in self.serial():
+            self.err = "%s: the guest never printed %r within %.0f s" % (self.name, READY.decode(), self.limit)
+            errs = re.findall(rb"ERR: [^\r\n]*", self.serial())
+            if errs:
+                self.err += " (the guest said: %s)" % errs[0].decode(errors="replace")
+            return self
+        self.ready_s = time.time() - t0
+        time.sleep(SETTLE_S)
+        w, h = checkmetal.geometry_of(self.serial())
+        self.geometry = (w, h, w // CELL, h // CELL)
+        self.model = Pointer(w, h)
+        self.regs = regions(self.geometry[2], self.geometry[3])
+        self.crow = self.regs["choices"][0]
+        self.offset = self.serial().find(READY)
+        return self
+
+    def __exit__(self, *exc):
+        if self.proc is None:
+            return False
+        self.drv.tell(b"quit\n")
+        try:
+            self.proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        if self.proc.poll() is None:
+            self.proc.kill()
+            self.proc.wait()
+        for f in (self.proc.stdin,):
+            try:
+                f.close()
+            except OSError:
+                pass
+        return False
+
+    def serial(self):
+        return self.drv.serial_bytes()
+
+    def wait_line(self, pattern, limit):
+        """The next match after the last one this boot waited for, by the serial file's poll."""
+        rx = re.compile(pattern)
+        deadline = time.time() + limit
+        while time.time() < deadline:
+            m = rx.search(self.serial(), self.offset)
+            if m:
+                self.offset = m.end()
+                return m, time.time()
+            time.sleep(POLL_S)
+        return None, time.time()
+
+    def type(self, text):
+        for i, ch in enumerate(text):
+            if i:
+                time.sleep(KEY_GAP)
+            if ch in "\n\t\x1b":
+                name = twin.keyname(ch)
+            elif ch == "\b":
+                name = "backspace"
+            else:
+                name = plan_keyname(ch)
+            self.drv.tell(b"sendkey " + name.encode() + b"\n")
+        self.events.append(("type", text))
+
+    def move(self, dx, dy):
+        self.drv.tell(b"mouse_move %d %d\n" % (dx, dy))
+        self.model.move(dx, dy)
+        self.events.append(("mouse", dx, dy))
+        time.sleep(0.02)
+
+    def moveto(self, row, col):
+        for _, dx, dy in self.model.moves_to(row, col):
+            self.move(dx, dy)
+
+    def press(self):
+        self.drv.tell(b"mouse_button 1\n")
+        self.events.append(("button", 1))
+        time.sleep(0.05)
+        self.drv.tell(b"mouse_button 0\n")
+        self.events.append(("button", 0))
+
+    def park(self):
+        self.moveto(*park_cell(self.geometry))
+        time.sleep(0.3)
+
+    def page(self):
+        """The obs page by TRIALS2.md's parse_obs_8t, and the three words it keeps zero."""
+        if self.obs_addr is None:
+            m = re.search(rb"S7: obs page 0x([0-9a-f]+)", self.serial())
+            self.obs_addr = int(m.group(1), 16) if m else 0
+        if not self.obs_addr:
+            raise ValueError("no obs page line on serial")
+        raw = self.drv.xp(self.obs_addr, OBS_BYTES // 8, "g")
+        obs = trials2.parse_obs_8t(raw)
+        obs["zero_8t"] = [struct.unpack_from("<Q", raw, o)[0] for o in range(trials2.OBS_ZERO_8T[0], trials2.OBS_ZERO_8T[1], 8)]
+        return obs
+
+    def surfaces(self):
+        obs = self.page()
+        reads = {name: self.drv.read_surface(obs[name]) for name in ("strip", "choices", "conversation", "app")}
+        reads["obs"] = obs
+        return reads
+
+    def shot(self, label):
+        path = os.path.join(T8, "screen.%s.%s.ppm" % (self.name, label))
+        self.drv.screendump(path)
+        return path
+
+    def conv(self):
+        reads = self.surfaces()
+        return checktrials.conv_rows(reads["conversation"], reads["obs"]), reads
+
+    def wait_conv(self, text, limit=10.0):
+        """Poll the conversation surface until a row equals text; the rows then, or None."""
+        deadline = time.time() + limit
+        while time.time() < deadline:
+            rows, reads = self.conv()
+            if text in rows:
+                return rows, reads
+            time.sleep(0.2)
+        return None, None
+
+    # -- the synthetic human ------------------------------------------------
+    def target(self, idx):
+        """The cell the hand rests on for item idx: the middle of B's filled span on row R-1, G's and B's target alike."""
+        z = trials2.zones(self.geometry[2], len(trials2.ROW_ITEMS))[idx]
+        return self.crow + 1, (z[2] + z[3]) // 2
+
+    def gap(self):
+        """The first zone's gap column: a '|' in G, background in B - a miss in either."""
+        return self.crow, trials2.zones(self.geometry[2], len(trials2.ROW_ITEMS))[0][1]
+
+    def play(self, script, results, start="type", hooks=None, prefer_verdict=False):
+        """Play one scripted sitting (TRIALS2.md's script shape). start: "type" types
+        '! trial 2', "enter" presses Enter on the empty prompt line. hooks: "start",
+        (b, c) before cue c of block b is pressed, "rest" (after block b), "question"
+        (the done note on serial, the key not yet pressed), "saved" (the saved line
+        shown). Fills results; returns None or a problem."""
+        hooks = hooks or {}
+        s = script["sitting"]
+        self.type("! trial 2\n" if start == "type" else "\n")
+        m, t = self.wait_line(rb"trial2: sitting %d ([GB]{4} [GB]{4})" % s, 20.0)
+        if not m:
+            return "%s: no 'trial2: sitting %d' line on serial within 20 s" % (self.name, s)
+        results["order"], results["sitting_at"] = m.group(1).decode(), t
+        if "start" in hooks:
+            hooks["start"]()
+        anchor = t
+        abort = script.get("abort")
+        for b in range(0, trials2.BLOCKS + 1):
+            blk = script["warmup"] if b == 0 else script["blocks"][b - 1]
+            seq = trials2.cue_sequence(b)
+            cue_at = anchor + (REST_S if b else 0.0)
+            for c in range(1, len(seq) + 1):
+                if abort and abort == (b, c - 1):
+                    self.type("\x1b")
+                    m, t = self.wait_line(rb"trial2: sitting %d aborted (\d+)" % s, 10.0)
+                    if not m:
+                        return "%s: no aborted line after Esc in block %d" % (self.name, b)
+                    results["aborted"], results["aborted_at"] = int(m.group(1)), t
+                    rows, reads = self.wait_conv(trials2.SAVED)
+                    if rows is None:
+                        return "%s: no saved line after the abort within 10 s" % self.name
+                    results["saved_rows"], results["saved_reads"] = rows, reads
+                    if "saved" in hooks:
+                        hooks["saved"]()
+                    return None
+                L = trials2.layout(s, b, c)
+                idx = trials2.ITEMS.index(seq[c - 1])
+                d = blk["ms"][c - 1] / 1000.0
+                if (b, c) in hooks:
+                    hooks[(b, c)]()
+                if c in blk.get("miss", ()):
+                    self.moveto(*self.gap())
+                    time.sleep(max(0.0, cue_at + d - time.time()))
+                    self.press()
+                    m, t = self.wait_line(rb"trial2: %d %d %s %d miss" % (s, b, L.encode(), c), 5.0)
+                    if not m:
+                        return "%s: no miss line for sitting %d block %d cue %d" % (self.name, s, b, c)
+                    self.moveto(*self.target(idx))
+                    time.sleep(max(0.0, t + d - time.time()))
+                else:
+                    self.moveto(*self.target(idx))
+                    time.sleep(max(0.0, cue_at + d - time.time()))
+                self.press()
+                m, t = self.wait_line(rb"trial2: %d %d %s %d (\d+)" % (s, b, L.encode(), c), 5.0)
+                if not m:
+                    return "%s: no hit line for sitting %d block %d cue %d" % (self.name, s, b, c)
+                results.setdefault("hits", {})[(b, c)] = int(m.group(1))
+                cue_at = t + PAUSE_S
+            if b == 0:
+                anchor = t + PAUSE_S
+            else:
+                m, t = self.wait_line(rb"trial2: block %d %d [GB] (\d+) (\d+) (\d+)" % (s, b), 5.0)
+                if not m:
+                    return "%s: no block line for sitting %d block %d" % (self.name, s, b)
+                anchor = t
+            if abort and abort == (b + 1, 0):
+                continue
+            if b < trials2.BLOCKS and "rest" in hooks:
+                hooks["rest"](b)
+        if abort:
+            return "%s: the script's abort %r was never played" % (self.name, abort)
+        m, t = self.wait_line(rb"trial2: sitting %d done" % s, 5.0)
+        if not m:
+            return "%s: no done line for sitting %d" % (self.name, s)
+        results["done_at"] = t
+        if prefer_verdict:
+            m, t = self.wait_line(rb"trial2: verdict ([GB]) (-?\d+)", 5.0)
+            if not m:
+                return "%s: no verdict line after sitting %d's done line" % (self.name, s)
+            results["verdict"] = (m.group(1).decode(), int(m.group(2)))
+        rows, reads = self.wait_conv(trials2.QUESTION)
+        if rows is None:
+            return "%s: the question never showed after sitting %d's done line" % (self.name, s)
+        results["question_rows"], results["question_reads"] = rows, reads
+        if "question" in hooks:
+            hooks["question"]()
+        answer = script.get("prefer")
+        if answer is None:
+            return None                               # powered off at the question: the caller quits
+        self.type("\x1b" if answer == "skip" else answer)
+        m, t = self.wait_line(rb"trial2: prefer %d (\w+)" % s, 10.0)
+        if not m:
+            return "%s: no prefer line after the key" % self.name
+        results["prefer"] = m.group(1).decode()
+        rows, reads = self.wait_conv(trials2.SAVED)
+        if rows is None:
+            return "%s: no saved line within 10 s of the preference" % self.name
+        results["saved_rows"], results["saved_reads"] = rows, reads
+        if "saved" in hooks:
+            hooks["saved"]()
+        return None
+
+
+# ------------------------------------------------------ the judgements -----
+
+def expected_script(script):
+    """The script with every delay replaced by the ms the guest should record: d plus
+    OFFSET_FIRST_MS for a block's (or the warm-up's) first cue, d plus OFFSET_MS after a
+    pause; a cue missed first adds a second interval, d plus OFFSET_MS, from the miss."""
+    def one(blk):
+        ms = []
+        for c, d in enumerate(blk["ms"]):
+            v = d + (OFFSET_FIRST_MS if c == 0 else OFFSET_MS)
+            if c + 1 in blk.get("miss", ()):
+                v += d + OFFSET_MS
+            ms.append(v)
+        return {"ms": ms, "miss": list(blk.get("miss", ()))}
+    out = dict(script)
+    out["warmup"] = one(script["warmup"])
+    out["blocks"] = [one(b) for b in script["blocks"]]
+    return out
+
+
+def check_script_range(script):
+    """A2's token check holds only while every time and score is three digits."""
+    want = trials2.notes_of(expected_script(script))
+    bad = []
+    for p in map(trials2.parse_note, want):
+        v = p.get("ms") if p else None
+        v = p.get("score") if p and v is None else v
+        if v is not None and not MS_RANGE[0] <= v <= MS_RANGE[1]:
+            bad.append(v)
+    return ["sitting %d's script gives %r outside %r" % (script["sitting"], bad[:3], MS_RANGE)] if bad else []
+
+
+def compare_notes(actual, script, label):
+    """The notes a played sitting left against its script: every non-hit note byte for
+    byte; every hit note's fields exact and its ms within HIT_WINDOW_MS; every block
+    score within SLACK_MS of the rule over the expected ms; the block notes agreeing
+    with their own hits exactly (check_blocks)."""
+    want = trials2.notes_of(expected_script(script))
+    problems = []
+    if len(actual) != len(want):
+        problems.append("%s: %d notes, want %d" % (label, len(actual), len(want)))
+    exp_ms = {}
+    for i, (a, w) in enumerate(zip(actual, want)):
+        pa, pw = trials2.parse_note(a), trials2.parse_note(w)
+        if pa is None or pa["kind"] != pw["kind"]:
+            problems.append("%s: note %d is %r, want the shape of %r" % (label, i + 1, a, w))
+            break
+        if pw["kind"] == "hit":
+            if (pa["sitting"], pa["block"], pa["layout"], pa["cue"]) != (pw["sitting"], pw["block"], pw["layout"], pw["cue"]):
+                problems.append("%s: note %d is %r, want %r" % (label, i + 1, a, w))
+                break
+            exp_ms.setdefault(pw["block"], []).append(pw["ms"])
+            if abs(pa["ms"] - pw["ms"]) > HIT_WINDOW_MS:
+                problems.append("%s: note %d %r - %d ms is outside %d +/- %d" % (label, i + 1, a, pa["ms"], pw["ms"], HIT_WINDOW_MS))
+        elif pw["kind"] == "block":
+            if (pa["sitting"], pa["block"], pa["layout"], pa["hits"], pa["misses"]) != \
+                    (pw["sitting"], pw["block"], pw["layout"], pw["hits"], pw["misses"]):
+                problems.append("%s: note %d is %r, want %r but for the score" % (label, i + 1, a, w))
+                break
+            if abs(pa["score"] - pw["score"]) > SLACK_MS:
+                problems.append("%s: block %d's score is %d, the script gives %d +/- %d" % (label, pa["block"], pa["score"], pw["score"], SLACK_MS))
+        elif a != w:
+            problems.append("%s: note %d is %r, want %r" % (label, i + 1, a, w))
+            break
+    problems += ["%s: %s" % (label, p) for p in trials2.check_blocks(actual)]
+    return problems
+
+
+def serial_notes(capture):
+    """The trial-two notes on serial (the boot lines left out), and the capture without
+    every trial2: line and the mouse line, for the echo check."""
+    lines = [m.group(0).decode() for m in TRIAL2_LINE.finditer(capture)]
+    notes = trials2.notes_of_chart(lines)
+    stripped = TRIAL2_LINE.sub(b"", capture).replace(checkmetal.MOUSE_LINE_BYTES, b"")
+    stripped = re.sub(rb"(\r\n){2,}", b"\r\n", stripped)
+    return notes, stripped
+
+
+def boot_line_of(capture):
+    m = re.findall(rb"trial2: (?:due|concluded) [^\r\n]*", capture)
+    return [x.decode() for x in m]
+
+
+def g_columns_of(cells, cols):
+    """(label spans, separator columns) of a G row read from the choices surface's two rows."""
+    row0, row1 = cells[:cols], cells[cols:2 * cols]
+    seps = [c for c in range(cols) if row0[c] == trials2.SEPARATOR and row1[c] == trials2.SEPARATOR]
+    spans, lo = [], 0
+    for hi in seps + [cols]:
+        idx = [c for c in range(lo, hi) if row0[c] != 0x20]
+        if idx:
+            spans.append((idx[0], idx[-1]))
+        lo = hi + 1
+    return spans, seps
+
+
+def check_layout_g(shot, reads, geometry, labels, label):
+    """The choices surface is TRIALS2.md's G row for these labels, in normal cells, and
+    the screen shows it cell for cell."""
+    cols = geometry[2]
+    want0, want1 = trials2.grouped_cells(cols, labels)
+    got = reads.get("choices")
+    problems = []
+    if got is None:
+        return ["%s: the choices surface was not read" % label]
+    if got[:cols] != want0 or got[cols:2 * cols] != want1:
+        problems.append("%s: the choices surface is not TRIALS2.md's G row for %r (row 0 %r, want %r)"
+                        % (label, labels, got[:cols], want0))
+    if any(b & 0x80 for b in got[:2 * cols]):
+        problems.append("%s: a G cell carries bit 7" % label)
+    problems += checktrials.check_choices_bytes(shot, geometry, (want0, want1), label)
+    return problems
+
+
+def replay_rows(notes, width):
+    """Every row the replay could draw for the notes that are not trial two's: each note
+    cut at the conversation's width."""
+    rows = set()
+    for n in notes:
+        if n.startswith(trials2.NOTE_PREFIX):
+            continue
+        for i in range(0, max(len(n), 1), width):
+            rows.add(n[i:i + width].rstrip())
+    return rows
+
+
+def hidden_times(reads, secrets, allowed, label):
+    """A2: no row of the strip, the conversation or the app panel holds a recorded time
+    or score of trial two as a token; the conversation's rows that are another note's
+    replay are the only ones passed over."""
+    problems = []
+    if not secrets:
+        return problems
+    obs = reads["obs"]
+    for name in ("strip", "conversation", "app"):
+        C, R = obs[name]["cols"], obs[name]["rows"]
+        cells = reads[name]
+        for r in range(R):
+            row = cells[r * C:(r + 1) * C].decode("ascii", "replace").rstrip()
+            if name == "conversation" and row in allowed:
+                continue
+            if row.startswith(trials2.NOTE_PREFIX):
+                problems.append("%s: the %s shows a trial-two note: %r" % (label, name, row))
+            leak = sorted(set(re.findall(r"(?<![0-9])[1-9][0-9]*", row)) & secrets)
+            if leak:
+                problems.append("%s: the %s's row %r shows %s, a trial-two time or score" % (label, name, row, leak))
+    return problems
+
+
+def secrets_of(notes):
+    out = set()
+    for p in map(trials2.parse_note, notes):
+        if p and p["kind"] == "hit":
+            out.add(str(p["ms"]))
+        elif p and p["kind"] == "block":
+            out.add(str(p["score"]))
+    return out
+
+
+def fresh_formatted(name):
+    """A fresh 64 MB disk booted blank once (nineteen lines): the guest's own table, notebook and home."""
+    disk = os.path.join(T8, "disk.%s.img" % name)
+    checkmetal.fresh_disk(disk)
+    with Boot(name + "0", disk) as b:
+        if b.err:
+            return None, [b.err]
+        cap = b.serial()
+    _, stripped = checkmetal.strip_mouse_line(cap)
+    problems, _ = checkmetal.check_boot_lines(stripped, SMP, True, "formatted", 0, checkmetal.DISK_SECTORS)
+    if notes_on_disk(disk):
+        problems.append("the blank boot left notes")
+    return disk, ["disk %s's blank boot: %s" % (name, p) for p in problems]
+
+
+def boot_lines(capture, notes_n, home_n, part_live=False):
+    """The eighteen S7: lines of a recognising boot; with a live part its part: pair stands
+    where the i8042: pair would, so the pair is checked by name and the lines by 7c's rule."""
+    _, stripped = checkmetal.strip_mouse_line(capture)
+    if part_live:
+        want = [b"part: i8042 self-test ok", b"part: i8042 mouse reset ok"]
+        problems = [] if all(w in stripped for w in want) else ["the part's pair %r is not on serial" % want]
+        stripped = stripped.replace(b"part: i8042 ", b"i8042: ")
+    else:
+        problems = []
+    more, _ = checkmetal.check_boot_lines(stripped, SMP, False, "%d notes" % notes_n, home_n, checkmetal.DISK_SECTORS)
+    return problems + more
+
+
+def s8_lines(capture):
+    return [x.decode() for x in re.findall(rb"(?:S8|molt): [^\r\n]*", capture)]
+
+
+# ----------------------------------------------- test 2: the rows ---------
+
+def _const_blocks(g_ms, b_ms, sitting, misses=()):
+    out = []
+    for b in range(1, trials2.BLOCKS + 1):
+        base = g_ms if trials2.layout(sitting, b) == "G" else b_ms
+        out.append({"ms": [base + (c * 37) % 60 for c in range(trials2.CUES_PER_BLOCK)],
+                    "miss": [c for (bb, c) in misses if bb == b]})
+    return out
+
+
+SCRIPT_R1 = {"sitting": 1, "warmup": {"ms": [300 + (c * 37) % 60 for c in range(10)], "miss": []},
+             "blocks": _const_blocks(320, 260, 1), "abort": (2, 3), "prefer": None}
+
+
+def rows_r1():
+    """R1: a blank disk; no boot line and no offer; '! trial 2' opens sitting 1 with the
+    warm-up's G row, then its B row; block 1; Esc in block 2; the saved line; the refusals."""
+    disk = os.path.join(T8, "disk.R.img")
+    checkmetal.fresh_disk(disk)
+    results, reads = {}, {}
+    with Boot("R1", disk) as b:
+        if b.err:
+            return report("R1", [b.err])
+        reads["boot"] = b.surfaces()
+
+        def at_start():
+            b.park()
+            reads["start"] = b.surfaces()
+            reads["start_shot"] = b.shot("start")
+
+        def at_b_row():
+            b.park()
+            reads["wb"] = b.surfaces()
+            reads["wb_shot"] = b.shot("wb")
+
+        err = b.play(SCRIPT_R1, results, "type", {"start": at_start, (0, 6): at_b_row})
+        if err:
+            return report("R1", [err], b.serial())
+        for line in ("! trial 2\n", "\n", "trial2 x\n", "trial\n", "trial3 y\n", "trials are fun\n"):
+            b.type(line)
+            time.sleep(1.0)
+        reads["after"] = b.surfaces()
+        cap = b.serial()
+        geometry = b.geometry
+    problems = boot_lines_blank(cap)
+    notes_serial, stripped = serial_notes(cap)
+    want_echo = b"! trial 2\r\n! trial 2\r\n\r\ntrial2 x\r\ntrial\r\ntrial3 y\r\ntrials are fun\r\n"
+    problems += checkdisk.check_echo(stripped, want_echo)
+    if boot_line_of(cap):
+        problems.append("a boot line on a disk with no trial-two note: %r" % boot_line_of(cap))
+    boot_rows = checktrials.conv_rows(reads["boot"]["conversation"], reads["boot"]["obs"])
+    if any("press Enter to start" in r for r in boot_rows):
+        problems.append("an offer on a disk with no trial-two note: %r" % boot_rows)
+    ok = report("R1's boot is not the eighteen-line machine with no trial-two line", problems, cap)
+
+    problems = []
+    st = reads["start"]
+    if results.get("order") != trials2.order(1):
+        problems.append("the sitting's order is %r" % results.get("order"))
+    problems += check_mode_field(reads["start_shot"], geometry, "trial2 G 0/8")
+    problems += check_layout_g(reads["start_shot"], st, geometry, trials2.ROW_ITEMS, "the warm-up's G row")
+    got_g = g_columns_of(st["choices"], geometry[2])
+    if isinstance(G_ROWS_RUN[4], _Unset) or tuple(G_ROWS_RUN[4]) != got_g:
+        problems.append("the four-item G row reads %r; the run constant is %r" % (got_g, G_ROWS_RUN[4]))
+    problems += checktrials.check_conv_tail(st["conversation"], st["obs"],
+                                            ["> ! trial 2", "sitting 1 " + trials2.order(1), "click: " + trials2.WARMUP.split()[0]],
+                                            "the sitting's start")
+    problems += check_counts(st["obs"], {"mode": trials2.MODE_TRIAL, "trial_number": 2, "trial_sitting": 1, "trial_block": 0,
+                                         "trial_layout": 2, "trial_cue": 1,
+                                         "trial_target": trials2.ITEMS.index(trials2.WARMUP.split()[0]),
+                                         "cue_pending": 0, "layout_default": 0, "zero_8t": [0, 0, 0]}, "the sitting's start")
+    wb = reads["wb"]
+    problems += check_mode_field(reads["wb_shot"], geometry, "trial2 B 0/8")
+    problems += checktrials.check_layout_b(reads["wb_shot"], wb, geometry, trials2.ROW_ITEMS, "the warm-up's B row")
+    problems += check_counts(wb["obs"], {"trial_block": 0, "trial_layout": 1, "trial_cue": 6,
+                                         "trial_target": trials2.ITEMS.index(trials2.WARMUP.split()[5])}, "the warm-up's cue 6")
+    ok &= report("the sitting's start or the warm-up's rows are not what TRIALS2.md says", problems)
+    if not problems:
+        say("R1: '! trial 2' opened 'sitting 1 GBBG BGGB' with 'trial2 G 0/8' on the strip, the warm-up's G row to the pixel "
+            "(labels %r, '|' at %r), its B row at cue 6 as trial one's boxes, the page in mode 5 with trial_number 2" % got_g)
+
+    problems = compare_notes(notes_serial[:len(trials2.notes_of(SCRIPT_R1))], SCRIPT_R1, "R1's notes on serial")
+    on_disk = notes_on_disk(disk)
+    want_disk = notes_serial[:len(trials2.notes_of(SCRIPT_R1))] + ["trials are fun"]
+    if on_disk != want_disk:
+        problems.append("the notebook holds %d notes, want the %d on serial and 'trials are fun'" % (len(on_disk), len(want_disk) - 1))
+    if results.get("aborted") != 2:
+        problems.append("the abort named block %r, want 2" % results.get("aborted"))
+    tail = trials2.end_lines(on_disk, 1)
+    if results.get("saved_rows", [])[-len(tail):] != tail:
+        problems.append("the conversation at the abort ends %r, want %r" % (results.get("saved_rows", [])[-len(tail):], tail))
+    after = reads["after"]
+    rows = checktrials.conv_rows(after["conversation"], after["obs"])
+    want_rows = ["> ! trial 2", "one sitting a boot", ">", "one sitting a boot", "> trial2 x", trials2.RESERVED,
+                 "> trial", trials2.RESERVED, "> trial3 y", trials2.RESERVED, "> trials are fun", ">"]
+    if rows[-len(want_rows):] != want_rows:
+        problems.append("the refusals: the conversation ends %r, want %r" % (rows[-len(want_rows):], want_rows))
+    problems += check_counts(after["obs"], {"mode": 0, "errors": 5, "trial_number": 2, "notes": len(want_disk)}, "the refusals")
+    ok &= report("R1's sitting, its abort or the refusals are not what TRIALS2.md says", problems)
+    if not problems:
+        say("R1: the warm-up and block 1 journaled as scripted, Esc in block 2 journaled 'aborted 2' and ended in %r; "
+            "'! trial 2' and an empty Enter each refused 'one sitting a boot'; 'trial2 x', 'trial', 'trial3 y' refused "
+            "'trial is reserved'; 'trials are fun' journaled" % trials2.SAVED)
+    return ok
+
+
+def boot_lines_blank(capture):
+    _, stripped = checkmetal.strip_mouse_line(capture)
+    problems, _ = checkmetal.check_boot_lines(stripped, SMP, True, "formatted", 0, checkmetal.DISK_SECTORS)
+    return problems
+
+
+def rows_c():
+    """C: trial two concluded (worked example D's notes, verdict G): the boot line, no
+    offer, the prompt row in G, '! trial 2' refused, an empty Enter plain, the G click."""
+    disk, problems = fresh_formatted("C")
+    if disk is None or problems:
+        return report("disk C", problems)
+    notes = trials2.DOCUMENT["d_notes"]
+    write_disk(disk, notes, [])
+    with Boot("C1", disk) as b:
+        if b.err:
+            return report("C1", [b.err])
+        b.park()
+        reads = {"boot": b.surfaces(), "boot_shot": b.shot("boot")}
+        b.type("! trial 2\n")
+        time.sleep(1.0)
+        b.type("\n")
+        time.sleep(1.0)
+        reads["refused"] = b.surfaces()
+        z = trials2.zones(b.geometry[2], 2)
+        b.moveto(b.crow + 1, (z[1][2] + z[1][3]) // 2)
+        b.press()
+        time.sleep(0.8)
+        reads["grow"] = b.surfaces()
+        b.moveto(b.crow, z[0][1])
+        b.press()
+        time.sleep(0.8)
+        reads["sep"] = b.surfaces()
+        cap = b.serial()
+        geometry = b.geometry
+    problems = boot_lines(cap, len(notes), 0)
+    if boot_line_of(cap) != ["trial2: concluded verdict G default G"]:
+        problems.append("the boot line is %r" % boot_line_of(cap))
+    rows = checktrials.conv_rows(reads["boot"]["conversation"], reads["boot"]["obs"])
+    if any("press Enter to start" in r or r.startswith(trials2.NOTE_PREFIX) for r in rows):
+        problems.append("an offer or a replayed trial-two note after the verdict: %r" % rows)
+    problems += check_counts(reads["boot"]["obs"], {"mode": 0, "layout_default": 2, "trial_number": 0, "notes": len(notes)},
+                             "C1's boot")
+    problems += check_layout_g(reads["boot_shot"], reads["boot"], geometry, ["? ask", "! grow"], "the prompt row in G")
+    got_g = g_columns_of(reads["boot"]["choices"], geometry[2])
+    if isinstance(G_ROWS_RUN[2], _Unset) or tuple(G_ROWS_RUN[2]) != got_g:
+        problems.append("the two-item G row reads %r; the run constant is %r" % (got_g, G_ROWS_RUN[2]))
+    rows = checktrials.conv_rows(reads["refused"]["conversation"], reads["refused"]["obs"])
+    if rows[-4:] != ["> ! trial 2", "trial 2 concluded", ">", ">"]:
+        problems.append("'! trial 2' then an empty Enter: the conversation ends %r" % rows[-4:])
+    problems += check_counts(reads["refused"]["obs"], {"errors": 1}, "the refusal")
+    problems += check_counts(reads["grow"]["obs"], {"hits": 1}, "a click on '! grow' in G")
+    rows = checktrials.conv_rows(reads["grow"]["conversation"], reads["grow"]["obs"])
+    if rows[-1:] != ["> !"]:
+        problems.append("a click on '! grow' in G: the prompt is %r, want '> !'" % rows[-1:])
+    problems += check_counts(reads["sep"]["obs"], {"hits": 1, "clicks": reads["grow"]["obs"]["clicks"] + 1}, "a click on '|'")
+    ok = report("disk C (trial two concluded, verdict G) is not what TRIALS2.md says", problems, cap)
+    if ok:
+        say("C: 'trial2: concluded verdict G default G', no offer, no trial-two note replayed, layout_default 2 and the "
+            "prompt row in G (labels %r, '|' at %r); '! trial 2' refused 'trial 2 concluded', an empty Enter plain; a click on "
+            "'! grow' typed '!', a click on '|' only counted" % got_g)
+    return ok
+
+
+def part_disk(name, live):
+    disk, problems = fresh_formatted(name)
+    if disk is None or problems:
+        return None, None, problems
+    notes = trials2.DOCUMENT["a_notes"] + ["molt i8042 shadow 4fe6beefc4bc57d0 3 1000 5000"]
+    if live:
+        notes = notes + ["molt i8042 live 4fe6beefc4bc57d0"]
+    write_disk(disk, notes, [("calculator", open(CALCULATOR, "rb").read(), None), ("part-i8042", fixture("good"), None)])
+    return disk, notes, []
+
+
+def rows_s():
+    """S: good in shadow, a trial-two sitting done, the calculator: the offer; with the app
+    running '! trial 2' and an empty Enter give 'an app is running'; after Esc, the part refusal."""
+    disk, notes, problems = part_disk("S", False)
+    if disk is None:
+        return report("disk S", problems)
+    with Boot("S1", disk) as b:
+        if b.err:
+            return report("S1", [b.err])
+        reads = {"boot": b.surfaces()}
+        steps = [("! calculator\n", 2.0), ("\t", 1.0), ("! trial 2\n", 1.0), ("\n", 1.0)]
+        for text, wait in steps:
+            b.type(text)
+            time.sleep(wait)
+        reads["app"] = b.surfaces()
+        for text, wait in (("\x1b", 1.5), ("! trial 2\n", 1.0), ("\n", 1.0)):
+            b.type(text)
+            time.sleep(wait)
+        reads["part"] = b.surfaces()
+        cap = b.serial()
+    problems = boot_lines(cap, len(notes), 1)
+    want8 = ["S8: sha256 ok", "S8: part i8042 shadow 4fe6beefc4bc57d0", "molt: boot 1 i8042 shadow", "S8: watchdog tco 30 s"]
+    if s8_lines(cap)[:4] != want8:
+        problems.append("the S8: and molt: lines are %r, want %r first" % (s8_lines(cap), want8))
+    if boot_line_of(cap) != ["trial2: due sitting 2"]:
+        problems.append("the boot line is %r" % boot_line_of(cap))
+    rows = checktrials.conv_rows(reads["boot"]["conversation"], reads["boot"]["obs"])
+    if trials2.OFFER % 2 not in rows:
+        problems.append("no offer at the boot: %r" % rows[-4:])
+    rows = checktrials.conv_rows(reads["app"]["conversation"], reads["app"]["obs"])
+    if rows[-3:] != ["an app is running", ">", "an app is running"] or reads["app"]["obs"]["mode"] != 3:
+        problems.append("with the app running: the conversation ends %r, mode %r" % (rows[-3:], reads["app"]["obs"]["mode"]))
+    rows = checktrials.conv_rows(reads["part"]["conversation"], reads["part"]["obs"])
+    part_line = trials2.REFUSALS[4]
+    if rows[-4:] != ["> ! trial 2", part_line, ">", part_line]:
+        problems.append("with the app closed: the conversation ends %r" % rows[-4:])
+    problems += check_counts(reads["part"]["obs"], {"mode": 0, "errors": 4, "trial_number": 0}, "disk S")
+    if notes_on_disk(disk)[:len(notes)] != notes or trials2.sittings_of(notes_on_disk(disk))[-1:] != trials2.sittings_of(notes):
+        problems.append("disk S: a note was changed, or a trial-two note journaled")
+    ok = report("disk S (good in shadow) is not what TRIALS2.md says", problems, cap)
+    if ok:
+        say("S: good in shadow and the watchdog armed; 'trial2: due sitting 2' and the offer; with the calculator running "
+            "'! trial 2' and an empty Enter each 'an app is running'; with it closed each %r" % part_line)
+    return ok
+
+
+def rows_l():
+    """L: good live: the part's pair; '! trial 2' and an empty Enter give the part refusal."""
+    disk, notes, problems = part_disk("L", True)
+    if disk is None:
+        return report("disk L", problems)
+    with Boot("L1", disk) as b:
+        if b.err:
+            return report("L1", [b.err])
+        for text in ("! trial 2\n", "\n"):
+            b.type(text)
+            time.sleep(1.0)
+        reads = b.surfaces()
+        cap = b.serial()
+    problems = boot_lines(cap, len(notes), 1, part_live=True)
+    want8 = ["S8: sha256 ok", "S8: part i8042 live 4fe6beefc4bc57d0", "molt: boot 1 i8042 live", "S8: watchdog tco 30 s"]
+    if s8_lines(cap)[:4] != want8:
+        problems.append("the S8: and molt: lines are %r, want %r first" % (s8_lines(cap), want8))
+    rows = checktrials.conv_rows(reads["conversation"], reads["obs"])
+    part_line = trials2.REFUSALS[4]
+    if rows[-4:] != ["> ! trial 2", part_line, ">", part_line]:
+        problems.append("the conversation ends %r" % rows[-4:])
+    problems += check_counts(reads["obs"], {"mode": 0, "errors": 2, "trial_number": 0}, "disk L")
+    ok = report("disk L (good live) is not what TRIALS2.md says", problems, cap)
+    if ok:
+        say("L: good live with its part: pair; '! trial 2' and an empty Enter each %r" % part_line)
+    return ok
+
+
+def run_rows():
+    if not require(["READY_LIMIT_S", "SETTLE_S", "OFFSET_MS", "OFFSET_FIRST_MS", "HIT_WINDOW_MS"]):
+        return 1
+    problems = check_script_range(SCRIPT_R1)
+    if not report("the rows' script", problems):
+        return 1
+    ok = True
+    for part in (rows_r1, rows_c, rows_s, rows_l):
+        t0 = time.time()
+        ok &= bool(part())
+        say("(%s: %.1f s)" % (part.__name__, time.time() - t0))
+    return 0 if ok else 1
+
+
+MODES = {"--document": run_document, "--rows": run_rows}
 
 
 def main(argv):
+    sets = []
+    while len(argv) >= 3 and argv[-2] == "--set":
+        sets.insert(0, argv[-1])
+        argv = argv[:-2]
     if len(argv) != 1 or argv[0] not in MODES:
-        print("usage: checktrials2.py %s" % " | ".join(MODES))
+        print("usage: checktrials2.py %s [--set NAME=VALUE ...]" % " | ".join(MODES))
         return 1
     os.makedirs(T8, exist_ok=True)
     tee = tee_log(argv[0])
     try:
+        apply_sets(sets)
         return MODES[argv[0]]()
+    except ValueError as exc:
+        say(str(exc))
+        return 1
     finally:
         untee(tee)
 

@@ -172,6 +172,26 @@ else
 fi
 echo
 
+# ------------------------------------------ test 2: the rows and the refusals -
+# checktrials2.py --rows, four disks at -smp 4. R1, blank: no boot line and
+# no offer; '! trial 2' opens sitting 1 with the warm-up's G row to the
+# pixel, its B row at cue 6, block 1, Esc in block 2 and the saved line;
+# then the refusals and the widened reserved prefix. C: trial two concluded
+# (verdict G): the boot line, no offer, the prompt row in G, the refusal, an
+# empty Enter plain, a click on a G zone and on a '|'. S: good in shadow
+# with a sitting done and the calculator: the offer; 'an app is running' and
+# the part refusal, each by '! trial 2' and by an empty Enter. L: good live.
+
+echo "Test 2 - The rows and the refusals: G and B to the pixel, the five refusals by '! trial 2' and by Enter, the reserved prefix"
+if [ ! -f "$STICK" ] || [ ! -f "$EFI" ]; then
+  fail 2 "no stick was built"
+elif python3 "$REPO/trials/checktrials2.py" --rows; then
+  pass 2 "the G and B rows as TRIALS2.md draws them, every refusal in its order by '! trial 2' and by an empty Enter, the reserved prefix"
+else
+  fail 2 "the rows or the refusals are not what TRIALS2.md says (see above)"
+fi
+echo
+
 # ------------------------------------------------------------- summary -------
 
 for line in "${summary[@]}"; do
