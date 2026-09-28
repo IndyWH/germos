@@ -61,6 +61,12 @@ His word closes the ring.
   `nmcli con mod <name> +ipv4.addresses 10.0.2.4/24` and `nmcli con up
   <name>`. The `ip addr add` fallback, if the port is unmanaged. Check
   with `ip -4 addr show eno2`: both addresses listed.
+- **The firewall** (the day of 28 September 2026). Omarchy runs ufw with
+  incoming connections denied, so the HP's request never reaches the
+  relay and the guest says `no answer from the broker`. One rule lets in
+  the HP alone, and it persists: `sudo ufw allow in on eno2 from
+  10.0.2.15 to 10.0.2.4 port 9999 proto tcp comment germos-hp`. `sudo ufw
+  status numbered` lists it; `sudo ufw delete <n>` removes it.
 
 ## 1. The flash — the owner's hand, once for the whole day
 
@@ -268,7 +274,7 @@ alive`.
 **What the next boot shows decides the rest:**
 
 - **`molt: i8042 demoted f0668b687c68cab0 watchdog` and `S8: recovery i8042 watchdog`** (the twin's path, D1): the HP kept `SECOND_TO_STS` across its reset. The boot loads no part and shows no `hold Esc`. The seed's `i8042:` pair follows, and the keyboard works on the seed's driver. `! molt` shows **`i8042 demoted f0668b687c68cab0 watchdog`**.
-- **No recovery line: the boot loads `hang` live again** (`S8: part i8042 live f0668b687c68cab0`, A4). The HP's firmware cleared the evidence, and with one unhealthy boot behind it the loader tries the part again. **Type `hang` lines again** until the HP stops and resets a second time. The boot after that shows **`molt: i8042 demoted f0668b687c68cab0 unhealthy` and `S8: recovery i8042 unhealthy`**, the keyboard on the seed's driver, and `! molt` showing `i8042 demoted f0668b687c68cab0 unhealthy`.
+- **No recovery line: the boot loads `hang` live again** (`S8: part i8042 live f0668b687c68cab0`, A4). The HP's firmware cleared the evidence, and with one unhealthy boot behind it the loader tries the part again. **Make the HP stop again before this boot's health mark, and again on the boot after it:** a boot whose health mark comes while you are idle is healthy even if it hangs later, and it ends the unhealthy run (28 September 2026). The easy way: **hold one key down straight after the prompt** until its letters stop; the repeats reach the part's 100th byte in about three seconds. Do this on two boots in a row. The boot after that shows **`molt: i8042 demoted f0668b687c68cab0 unhealthy` and `S8: recovery i8042 unhealthy`**, the keyboard on the seed's driver, and `! molt` showing `i8042 demoted f0668b687c68cab0 unhealthy`.
 - **The chart said `S8: watchdog tco locked`, and the HP never resets** (decision 5's fallback): the HP's `NO_REBOOT` would not clear. Wait a full two minutes to be sure, then **use the power button**. The next boot finds no evidence and loads `hang` again. Type until it stops, and power off again. The boot after that is `S8: recovery i8042 unhealthy`. **This is the ring's finding, not a failure of the day.**
 - **The chart said `S8: watchdog tco 30 s`, yet the HP has not reset a minute after it stopped** (Cowork, at the A6 review): the likely cause is that the firmware set `TCO_LOCK`. `TCO_EN` could then not be cleared, and the first expiry went to the firmware's SMM handler instead of counting on to the second. Wait the full two minutes, then take the power-button path above. **It is recorded as the ring's finding**, as decision 5's fallback says.
 

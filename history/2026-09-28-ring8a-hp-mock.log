@@ -1,0 +1,10 @@
+broker: mock mode: canned answers, apps and installs, and i8042-good for '! molt i8042'; no calls of any kind
+broker: germline at /home/indy/Work/germos/germline; plans in /home/indy/Work/germos/plans; the twin boots /home/indy/Work/germos/stage8/out/esp.img at 1920x1080 on IvyBridge with a 64 MB SATA disk and an e1000e (6c:3b:e5:3b:86:45) on a second cage under /home/indy/Work/germos/stage8/out/molt/rehearsal/twin; rehearsal on 127.0.0.1:9998, 19 lines; 2 tries
+listening on 127.0.0.1:9999
+broker: molt 'molt i8042 cpu 000306a9 pci 8086:1e47:04': fixture i8042-good, 1152 bytes, threshold (3, 1000, 5000), key 'molt i8042|abi3|cpu 000306a9 pci 8086:1e47:04'
+broker: grow 'molt i8042 cpu 000306a9 pci 8086:1e47:04' -> part, 1188 bytes in 0.0 s
+broker: mock mode: canned answers, apps and installs, and i8042-hang for '! molt i8042'; no calls of any kind
+broker: germline at /home/indy/Work/germos/germline; plans in /home/indy/Work/germos/plans; the twin boots /home/indy/Work/germos/stage8/out/esp.img at 1920x1080 on IvyBridge with a 64 MB SATA disk and an e1000e (6c:3b:e5:3b:86:45) on a second cage under /home/indy/Work/germos/stage8/out/molt/rehearsal/twin; rehearsal on 127.0.0.1:9998, 19 lines; 2 tries
+listening on 127.0.0.1:9999
+broker: molt 'molt i8042 cpu 000306a9 pci 8086:1e47:04': fixture i8042-hang, 1176 bytes, threshold (1, 100, 100), key 'molt i8042|abi3|cpu 000306a9 pci 8086:1e47:04'
+broker: grow 'molt i8042 cpu 000306a9 pci 8086:1e47:04' -> part, 1212 bytes in 0.0 s

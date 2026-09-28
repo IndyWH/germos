@@ -1,0 +1,49 @@
+i8042 demoted f0668b687c68cab0 unhealthy
+
+molt notes 41; next boot 12; unhealthy run 0; if the evidence were set: no recovery
+S8: lines 45
+  S8: sha256 ok
+  S8: part i8042 shadow 4fe6beefc4bc57d0
+  S8: watchdog tco 30 s
+  S8: healthy 1
+  S8: sha256 ok
+  S8: part i8042 shadow 4fe6beefc4bc57d0
+  S8: watchdog tco 30 s
+  S8: healthy 2
+  S8: sha256 ok
+  S8: part i8042 shadow 4fe6beefc4bc57d0
+  S8: watchdog tco 30 s
+  S8: healthy 3
+  S8: sha256 ok
+  S8: part i8042 live 4fe6beefc4bc57d0
+  S8: watchdog tco 30 s
+  S8: healthy 4
+  S8: sha256 ok
+  S8: recovery owner
+  S8: sha256 ok
+  S8: part i8042 live 4fe6beefc4bc57d0
+  S8: watchdog tco 30 s
+  S8: healthy 5
+  S8: sha256 ok
+  S8: part i8042 shadow f0668b687c68cab0
+  S8: watchdog tco 30 s
+  S8: healthy 6
+  S8: sha256 ok
+  S8: part i8042 live f0668b687c68cab0
+  S8: watchdog tco 30 s
+  S8: sha256 ok
+  S8: part i8042 live f0668b687c68cab0
+  S8: watchdog tco 30 s
+  S8: healthy 8
+  S8: sha256 ok
+  S8: part i8042 live f0668b687c68cab0
+  S8: watchdog tco 30 s
+  S8: healthy 9
+  S8: sha256 ok
+  S8: part i8042 live f0668b687c68cab0
+  S8: watchdog tco 30 s
+  S8: sha256 ok
+  S8: part i8042 live f0668b687c68cab0
+  S8: watchdog tco 30 s
+  S8: sha256 ok
+  S8: recovery i8042 unhealthy

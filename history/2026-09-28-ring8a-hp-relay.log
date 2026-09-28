@@ -1,0 +1,3 @@
+relay listening on 10.0.2.4:9999 -> 127.0.0.1:9999
+relay: 10.0.2.15:49153: 45 bytes up, 1188 bytes down in 0.0 s
+relay: 10.0.2.15:49152: 45 bytes up, 1212 bytes down in 0.0 s
