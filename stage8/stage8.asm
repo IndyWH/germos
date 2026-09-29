@@ -505,6 +505,13 @@ org 0                           ; file offsets == RVAs
 %define OBS_HIT_LAST        0x328
 %define OBS_HIT_WORST       0x330
 %define OBS_LAYOUT_DEFAULT  0x338
+; Ring 8t (trials/TRIALS2.md, "The obs page"): one word of trial one's four
+; reserved words - 2 from a trial-two sitting's start to the boot's end.
+%define OBS_TRIAL_NUMBER    0x340
+%define T2_CUES             20          ; TRIALS2.md, "The design": twenty cues a block
+%define T2_WARMUP           10          ; block 0, the warm-up
+%define T2_REST_MS          5000
+%define TS_QUESTION         4           ; ring 8t: the preference asked, the sitting done
 %define TRIAL_CUES          10          ; TRIALS.md, "The design"
 %define TRIAL_BLOCKS        8
 %define TRIAL_PAUSE_MS      500
@@ -996,6 +1003,11 @@ handle_key:
         ; aborts the sitting.
         cmp     dword [trial_active], 0
         je      .not_trial
+        cmp     dword [trial_state], TS_QUESTION    ; ring 8t: the preference key
+        jne     .trial_key                          ; (TRIALS2.md, the sitting's end)
+        call    trial2_answer
+        ret
+.trial_key:
         cmp     bl, 0x1B
         jne     .done
         call    trial_abort
@@ -3043,6 +3055,18 @@ bang_line:
         pop     rsi
         je      trial_start
 .not_trial:
+        cmp     ecx, 7                          ; ring 8t: "trial 2", trial two's word
+        jne     .not_trial2                     ; (TRIALS2.md, "A sitting, step by step")
+        push    rsi
+        push    rcx
+        push    rdi
+        lea     rdi, [msg_trial2_word]
+        repe    cmpsb
+        pop     rdi
+        pop     rcx
+        pop     rsi
+        je      trial2_start
+.not_trial2:
         cmp     ecx, 13
         jbe     .not_undo                       ; "undo install " and a name
         push    rsi
@@ -5788,15 +5812,19 @@ choices_update:
         sub     rcx, rsi
         call    choices_set
 .layout:                                ; ring 7d (TRIALS.md, "Layout B - the boxes"):
-        cmp     dword [trial_active], 0 ; in a B block, or at the prompt when the
-        je      .default                ; verdict said B, the items become boxes
-        cmp     qword [obs_page + OBS_TRIAL_LAYOUT], 0
-        je      .done
-        jmp     .boxes
-.default:
-        cmp     qword [obs_page + OBS_LAYOUT_DEFAULT], 0
-        je      .done
-.boxes:
+        mov     rax, [obs_page + OBS_TRIAL_LAYOUT]      ; in a B block, or at the prompt when
+        cmp     dword [trial_active], 0                 ; the verdict said B, the items become
+        jne     .styled                                 ; boxes; ring 8t (TRIALS2.md, "Layout
+        mov     rax, [obs_page + OBS_LAYOUT_DEFAULT]    ; G"): in a G block or cue, or by the
+.styled:                                                ; default 2, B's zones as plain text
+        test    rax, rax
+        jz      .done
+        xor     edx, edx
+        cmp     rax, 2
+        jne     .style
+        mov     edx, 1
+.style:
+        mov     [row_style], edx
         call    row_to_boxes
 .done:
         ret
@@ -5807,6 +5835,18 @@ choices_update:
 ; the label centred on row 0 inverse; the hit table's spans become the
 ; filled spans. Clobbers registers freely.
 row_to_boxes:
+        push    r13                     ; ring 8t: the style's three bytes
+        push    r14
+        push    r15
+        mov     r13d, ' '               ; B: the gap background, the fill solid,
+        mov     r14d, 0xA0              ; the label inverse
+        mov     r15d, 0x80
+        cmp     dword [row_style], 1
+        jne     .styled
+        mov     r13d, '|'               ; G: the gap a separator on both rows,
+        mov     r14d, ' '               ; the zone plain, the label in normal
+        xor     r15d, r15d              ; cells (TRIALS2.md, "Layout G")
+.styled:
         mov     ecx, [hit_count]
         test    ecx, ecx
         jz      .out
@@ -5840,22 +5880,22 @@ row_to_boxes:
         mov     r12d, r11d              ; the filled last: the same
         jmp     .fill
 .not_last:
-        lea     r12d, [r11 - 1]         ; the gap: the box's last column, blank
+        lea     r12d, [r11 - 1]         ; the gap: the box's last column, blank (B) or '|' (G)
         lea     rdi, [choices_cells]
-        mov     byte [rdi + r11], ' '
+        mov     [rdi + r11], r13b
         mov     eax, [scr_cols]
         add     eax, r11d
-        mov     byte [rdi + rax], ' '
+        mov     [rdi + rax], r13b
 .fill:
         lea     rdi, [choices_cells]
         mov     ecx, r10d
 .cell:
         cmp     ecx, r12d
         ja      .filled
-        mov     byte [rdi + rcx], 0xA0
+        mov     [rdi + rcx], r14b
         mov     eax, [scr_cols]
         add     eax, ecx
-        mov     byte [rdi + rax], 0xA0  ; row 1
+        mov     [rdi + rax], r14b       ; row 1
         inc     ecx
         jmp     .cell
 .filled:
@@ -5886,7 +5926,7 @@ row_to_boxes:
         add     rsi, rax
 .label:
         lodsb
-        or      al, 0x80
+        or      al, r15b
         mov     [rdi + rdx], al
         inc     edx
         dec     ecx
@@ -5896,6 +5936,9 @@ row_to_boxes:
 .dirty:
         mov     word [choices_dirty], 0x0101
 .out:
+        pop     r15
+        pop     r14
+        pop     r13
         ret
 
 ; draw_answer - RSI = bytes, ECX = how many: drawn through console_putc from
@@ -5975,24 +6018,46 @@ finish_line:
 ; runs all of it from the main loop; the glass core only stamps the cue.
 ; ---------------------------------------------------------------------------
 
-; line_is_reserved - EAX = 1 if the line buffer begins with the six bytes
-; "trial " (A1). Preserves everything else.
+; line_is_reserved - EAX = 1 if the line's first word is "trial", or
+; "trial" followed only by digits (TRIALS2.md, superseded sentence 1: it
+; widens ring 7d's six bytes "trial "). The first word is the bytes before
+; the first space, or the whole line. Preserves everything else.
 line_is_reserved:
         xor     eax, eax
-        cmp     dword [line_len], 6
+        cmp     dword [line_len], 5
         jb      .no
         push    rsi
         push    rdi
         push    rcx
+        push    rdx
         lea     rsi, [line_buf]
-        lea     rdi, [msg_trial_prefix]
-        mov     ecx, 6
+        lea     rdi, [msg_trial_word]
+        mov     ecx, 5
         repe    cmpsb
+        jne     .not
+        lea     rdx, [line_buf]         ; [label + reg] is never RIP-relative
+        mov     ecx, 5
+.digit:
+        cmp     ecx, [line_len]
+        jae     .yes                    ; the word ends the line
+        movzx   eax, byte [rdx + rcx]
+        cmp     al, ' '
+        je      .yes                    ; the word ends at a space
+        sub     al, '0'
+        cmp     al, 9
+        ja      .not                    ; "trials": not the word
+        inc     ecx
+        jmp     .digit
+.yes:
+        mov     eax, 1
+        jmp     .out
+.not:
+        xor     eax, eax
+.out:
+        pop     rdx
         pop     rcx
         pop     rdi
         pop     rsi
-        jne     .no
-        mov     eax, 1
 .no:
         ret
 
@@ -6025,6 +6090,7 @@ trial_start:
         inc     qword [obs_page + OBS_ERRORS]
         jmp     finish_line
 .open:
+        mov     dword [trial_kind], 1   ; ring 8t: the notes' family for this sitting
         mov     eax, [scan_sittings]
         inc     eax
         mov     [obs_page + OBS_TRIAL_SITTING], rax
@@ -6065,6 +6131,10 @@ console_note_line:
         push    rax
         push    rsi
         lea     rsi, [note_buf + 6]
+        cmp     dword [trial_kind], 2   ; ring 8t: "trial2 ..." from its eighth byte
+        jne     .put
+        lea     rsi, [note_buf + 7]
+.put:
         call    console_puts
         mov     al, 10
         call    console_putc
@@ -6151,6 +6221,10 @@ trial_press:
         mov     [rsi + rcx*4 - 4], eax
         mov     [trial_cur_ms], eax
         inc     qword [obs_page + OBS_TRIAL_HITS]
+        cmp     qword [obs_page + OBS_TRIAL_BLOCK], 0
+        je      .hit_counted            ; ring 8t: the sitting's hits over blocks 1-8
+        inc     dword [t2_hits]
+.hit_counted:
         mov     eax, 1
         call    note_cue
         mov     rax, [mse_cur + ME_STAMP]       ; the pause, from the press
@@ -6162,6 +6236,10 @@ trial_press:
         ret
 .miss:
         inc     qword [obs_page + OBS_TRIAL_MISSES]
+        cmp     qword [obs_page + OBS_TRIAL_BLOCK], 0
+        je      .miss_counted           ; ring 8t: and its misses
+        inc     dword [t2_misses]
+.miss_counted:
         xor     eax, eax
         call    note_cue
 .ret:
@@ -6171,6 +6249,8 @@ trial_press:
 ; pause's end (the next cue, or the block's end), the rest's end (the next
 ; block). Clobbers registers freely.
 trial_step:
+        cmp     dword [trial_kind], 2   ; ring 8t: trial two's sitting
+        je      trial2_step
         mov     eax, [trial_state]
         cmp     eax, TS_PAUSE
         je      .timed
@@ -6344,6 +6424,8 @@ trial_sitting_done:
 ; trial_abort - Esc in mode 5: the aborted note and line, the table of the
 ; completed blocks, the close. Clobbers registers freely.
 trial_abort:
+        cmp     dword [trial_kind], 2   ; ring 8t: trial two's abort
+        je      trial2_abort
         mov     eax, [obs_page + OBS_TRIAL_BLOCK]
         cmp     dword [trial_state], TS_REST
         jne     .block
@@ -6489,6 +6571,10 @@ note_cue:
         push    rax
         lea     rdi, [note_buf]
         lea     rsi, [msg_note_trial]
+        cmp     dword [trial_kind], 2   ; ring 8t: "trial2 s b L c ms|miss"
+        jne     .prefix
+        lea     rsi, [msg_note2_trial]
+.prefix:
         call    str_copy
         call    put_sbl
         mov     rax, [obs_page + OBS_TRIAL_CUE]
@@ -6519,8 +6605,9 @@ put_sbl:
         call    put_dec
         mov     al, ' '
         stosb
-        mov     al, 'A'
-        add     al, [obs_page + OBS_TRIAL_LAYOUT]
+        mov     rax, [obs_page + OBS_TRIAL_LAYOUT]
+        lea     rdx, [layout_letters]   ; ring 8t: 0 A, 1 B, 2 G
+        mov     al, [rdx + rax]
         stosb
         mov     al, ' '
         stosb
@@ -6546,9 +6633,18 @@ note_emit:
         call    notebook_append         ; empties line_len
         lea     rdi, [serial_buf]
         mov     dword [rdi], 'tria'
+        cmp     dword [trial_kind], 2   ; ring 8t: "trial2:" and the note from its seventh byte
+        je      .two
         mov     word [rdi + 4], 'l:'
         add     rdi, 6
         lea     rsi, [note_buf + 5]
+        jmp     .line
+.two:
+        mov     word [rdi + 4], 'l2'
+        mov     byte [rdi + 6], ':'
+        add     rdi, 7
+        lea     rsi, [note_buf + 6]
+.line:
         call    str_copy
         mov     al, 13
         stosb
@@ -6713,6 +6809,817 @@ trial_verdict:
         ja      .out
         mov     eax, 1
 .out:
+        ret
+
+
+; ---------------------------------------------------------------------------
+; Ring 8t - trial two (trials/TRIALS2.md): layout G against layout B. A
+; sitting: the warm-up (block 0, ten cues, the order's first letter's layout
+; for cues 1-5 and the other for 6-10) and eight blocks of twenty cues; the
+; cue, its stamp, the press and the pause are trial one's; 5000 ms between
+; blocks; each block's score (the middle sixteen of its twenty hits summed,
+; over sixteen, plus 100 a miss); the notes "trial2 ..." and their raw lines
+; "trial2: ..."; at the end the done note, the verdict note at the fourth
+; done sitting, the question, the preference, the counts - never a time or
+; a score before the verdict - the flush and the saved line.
+; ---------------------------------------------------------------------------
+
+; trial2_start - "! trial 2", or Enter on an empty line while trial two is
+; in progress (TRIALS2.md, "A sitting, step by step"): the five refusals in
+; order, else the sitting begins. Ends in finish_line on a refusal, returns
+; otherwise (no prompt during a sitting).
+trial2_start:
+        cmp     qword [obs_page + OBS_MOUSE_ID], 0
+        jne     .has_mouse
+        cmp     dword [part_state], ST_LIVE     ; a live part reset the mouse itself: the
+        je      .has_mouse                      ; seed's mouse_id stays 0 (TRIALS2.md)
+        lea     rsi, [msg_no_mouse]
+        jmp     .refuse
+.has_mouse:
+        cmp     dword [app_running], 0
+        je      .no_app
+        lea     rsi, [msg_app_running]
+        jmp     .refuse
+.no_app:
+        cmp     dword [trial_ended], 0  ; either trial's sitting ended this boot
+        je      .none_yet
+        lea     rsi, [msg_one_sitting]
+        jmp     .refuse
+.none_yet:
+        call    journal_scan2           ; the verdict, the count, the slot, from disk
+        cmp     dword [scan2_verdict], 0
+        je      .not_concluded
+        lea     rsi, [msg_concluded2]
+        jmp     .refuse
+.not_concluded:
+        mov     eax, [scan2_slot]       ; the i8042 slot by its notes (PARTS.md)
+        cmp     eax, ST_SHADOW
+        je      .part
+        cmp     eax, ST_LIVE
+        jne     .open
+.part:
+        lea     rsi, [msg_part_slot]
+.refuse:
+        call    console_puts
+        inc     qword [obs_page + OBS_ERRORS]
+        jmp     finish_line
+.open:
+        mov     dword [trial_kind], 2
+        mov     qword [obs_page + OBS_TRIAL_NUMBER], 2
+        mov     eax, [scan2_sittings]
+        inc     eax
+        mov     [obs_page + OBS_TRIAL_SITTING], rax
+        mov     [t2_sittings], eax      ; its note is about to be on the notebook
+        lea     rsi, [msg_order2_even]  ; the order by parity
+        test    al, 1
+        jz      .order
+        lea     rsi, [msg_order2_odd]
+.order:
+        mov     [trial_order], rsi
+        lea     rdi, [note_buf]         ; "trial2 sitting n ORDER"
+        lea     rsi, [msg_note2_sitting]
+        call    str_copy
+        mov     rax, [obs_page + OBS_TRIAL_SITTING]
+        call    put_dec
+        mov     al, ' '
+        stosb
+        mov     rsi, [trial_order]
+        call    str_copy
+        mov     byte [rdi], 0
+        call    note_emit
+        call    app_clear
+        call    console_note_line       ; "sitting n ORDER" on the console
+        mov     qword [obs_page + OBS_MODE], MODE_TRIAL
+        mov     dword [trial_active], 1
+        mov     dword [trial_state], TS_NONE
+        mov     dword [t2_hits], 0
+        mov     dword [t2_misses], 0
+        mov     dword [t2_vnow], 0
+        mov     qword [obs_page + OBS_TRIAL_HITS], 0
+        mov     qword [obs_page + OBS_TRIAL_MISSES], 0
+        mov     qword [obs_page + OBS_TRIAL_BLOCK], 0
+        mov     qword [obs_page + OBS_TRIAL_CUE], 1
+        call    trial2_cue_layout
+        call    choices_update          ; the four items in the warm-up's first layout
+        call    trial2_cue_show
+        ret
+
+; trial2_cue_layout - OBS_TRIAL_LAYOUT for the cue at OBS_TRIAL_CUE of
+; OBS_TRIAL_BLOCK: in a block, the order's b-th letter with the space
+; skipped; in the warm-up, the first letter for cues 1-5 and the other for
+; 6-10. G is 2, B is 1. Clobbers RAX, RDX, RSI.
+trial2_cue_layout:
+        mov     rsi, [trial_order]
+        mov     eax, [obs_page + OBS_TRIAL_BLOCK]
+        test    eax, eax
+        jnz     .block
+        movzx   eax, byte [rsi]
+        cmp     qword [obs_page + OBS_TRIAL_CUE], T2_WARMUP / 2
+        jbe     .letter
+        xor     al, 'G' ^ 'B'           ; the other letter
+        jmp     .letter
+.block:
+        cmp     eax, 4
+        jbe     .index
+        inc     eax                     ; past the space: blocks 5-8 at bytes 5-8
+.index:
+        movzx   eax, byte [rsi + rax - 1]
+.letter:
+        mov     edx, 2
+        cmp     al, 'G'
+        je      .set
+        mov     edx, 1
+.set:
+        mov     [obs_page + OBS_TRIAL_LAYOUT], rdx
+        ret
+
+; trial2_cue_show - the cue at OBS_TRIAL_CUE of OBS_TRIAL_BLOCK from
+; cue_table2 (the warm-up's ten, then twenty a block): the target, the
+; console line, then cue_pending for the glass core. Clobbers RAX, RSI.
+trial2_cue_show:
+        mov     eax, [obs_page + OBS_TRIAL_BLOCK]
+        test    eax, eax
+        jz      .warm
+        dec     eax
+        imul    eax, eax, T2_CUES
+        add     eax, T2_WARMUP
+.warm:
+        add     eax, [obs_page + OBS_TRIAL_CUE]
+        dec     eax
+        lea     rsi, [cue_table2]
+        movzx   eax, byte [rsi + rax]
+        mov     [obs_page + OBS_TRIAL_TARGET], rax
+        lea     rsi, [msg_click]
+        call    console_puts
+        imul    eax, eax, 5
+        lea     rsi, [item_words]
+        add     rsi, rax
+        call    console_puts
+        mov     al, 10
+        call    console_putc
+        mov     dword [trial_state], TS_CUE
+        mov     qword [obs_page + OBS_CUE_PENDING], 1
+        ret
+
+; trial2_step - trial_step for trial two: the pause's end (the next cue, the
+; warm-up's second half in the other layout, or the block's end), the
+; rest's end (the next block). Nothing in the question. Clobbers registers.
+trial2_step:
+        mov     eax, [trial_state]
+        cmp     eax, TS_PAUSE
+        je      .timed
+        cmp     eax, TS_REST
+        jne     .ret
+.timed:
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        cmp     rax, [trial_until]
+        jb      .ret
+        cmp     dword [trial_state], TS_REST
+        je      .rest_over
+        mov     ecx, T2_CUES            ; the pause's end
+        cmp     qword [obs_page + OBS_TRIAL_BLOCK], 0
+        jne     .count
+        mov     ecx, T2_WARMUP
+.count:
+        cmp     [obs_page + OBS_TRIAL_CUE], rcx
+        jae     .block_end
+        inc     qword [obs_page + OBS_TRIAL_CUE]
+        cmp     qword [obs_page + OBS_TRIAL_BLOCK], 0
+        jne     .show
+        cmp     qword [obs_page + OBS_TRIAL_CUE], T2_WARMUP / 2 + 1
+        jne     .show
+        call    trial2_cue_layout       ; the warm-up's second half: the other layout
+        call    choices_update
+.show:
+        call    trial2_cue_show
+        ret
+.block_end:
+        cmp     qword [obs_page + OBS_TRIAL_BLOCK], 0
+        jne     .scored
+        mov     qword [obs_page + OBS_TRIAL_CUE], 0     ; the warm-up's end: no note,
+        mov     dword [trial_state], TS_NONE            ; the row blank, the rest
+        call    hit_reset
+        xor     ecx, ecx
+        call    choices_set
+        lea     rsi, [msg_warmup_rest]
+        call    console_puts
+        mov     al, 10
+        call    console_putc
+        jmp     .rest
+.scored:
+        call    trial2_block_note       ; the score, the note, the row blank
+        cmp     qword [obs_page + OBS_TRIAL_BLOCK], TRIAL_BLOCKS
+        jae     .sitting_end
+        lea     rdi, [note_buf]         ; "block b of 8 - rest" on the console
+        lea     rsi, [msg_block_w]
+        call    str_copy
+        mov     rax, [obs_page + OBS_TRIAL_BLOCK]
+        call    put_dec
+        lea     rsi, [msg_of8_rest]
+        call    str_copy
+        mov     byte [rdi], 0
+        lea     rsi, [note_buf]
+        call    console_puts
+        mov     al, 10
+        call    console_putc
+.rest:
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        mov     rcx, [tsc_per_ms]
+        imul    rcx, rcx, T2_REST_MS
+        add     rax, rcx
+        mov     [trial_until], rax
+        mov     dword [trial_state], TS_REST
+        ret
+.sitting_end:
+        call    trial2_sitting_done
+        ret
+.rest_over:
+        inc     qword [obs_page + OBS_TRIAL_BLOCK]
+        mov     qword [obs_page + OBS_TRIAL_CUE], 1
+        call    trial2_cue_layout
+        mov     qword [obs_page + OBS_TRIAL_HITS], 0
+        mov     qword [obs_page + OBS_TRIAL_MISSES], 0
+        call    choices_update
+        call    trial2_cue_show
+.ret:
+        ret
+
+; trial2_block_note - a block's end: the score of its twenty hits, the note
+; "trial2 block s b L 20 m score" and its line, the cue cleared, the row
+; blank with no targets. Clobbers registers freely.
+trial2_block_note:
+        call    trial2_score
+        mov     [trial_med], eax
+        lea     rdi, [note_buf]
+        lea     rsi, [msg_note2_block]
+        call    str_copy
+        call    put_sbl
+        mov     eax, T2_CUES
+        call    put_dec
+        mov     al, ' '
+        stosb
+        mov     rax, [obs_page + OBS_TRIAL_MISSES]
+        call    put_dec
+        mov     al, ' '
+        stosb
+        mov     eax, [trial_med]
+        call    put_dec
+        mov     byte [rdi], 0
+        call    note_emit
+        mov     qword [obs_page + OBS_TRIAL_CUE], 0
+        mov     dword [trial_state], TS_NONE
+        call    hit_reset
+        xor     ecx, ecx
+        call    choices_set             ; both rows blank
+        ret
+
+; trial2_score - EAX = the block score of trial_ms (TRIALS2.md, "The block
+; score"): the twenty sorted, the fastest two and the slowest two dropped,
+; the middle sixteen summed and divided by sixteen, plus 100 a miss.
+; Clobbers RCX, RDX, RSI, RDI.
+trial2_score:
+        lea     rsi, [trial_ms]
+        lea     rdi, [sort_buf]
+        mov     ecx, T2_CUES
+        rep     movsd
+        lea     rsi, [sort_buf]
+        mov     ecx, 1                  ; insertion sort
+.outer:
+        cmp     ecx, T2_CUES
+        jae     .sorted
+        mov     eax, [rsi + rcx*4]
+        mov     edx, ecx
+.inner:
+        test    edx, edx
+        jz      .place
+        cmp     [rsi + rdx*4 - 4], eax
+        jbe     .place
+        push    rax
+        mov     eax, [rsi + rdx*4 - 4]
+        mov     [rsi + rdx*4], eax
+        pop     rax
+        dec     edx
+        jmp     .inner
+.place:
+        mov     [rsi + rdx*4], eax
+        inc     ecx
+        jmp     .outer
+.sorted:
+        xor     eax, eax
+        mov     ecx, 2
+.sum:
+        cmp     ecx, T2_CUES - 2
+        jae     .mean
+        add     eax, [rsi + rcx*4]
+        inc     ecx
+        jmp     .sum
+.mean:
+        shr     eax, 4                  ; / 16, integer division
+        mov     ecx, [obs_page + OBS_TRIAL_MISSES]
+        imul    ecx, ecx, 100
+        add     eax, ecx
+        ret
+
+; trial2_sitting_done - after block 8: the done note; the fourth done
+; sitting's verdict note before the question (so a machine powered off at
+; the question holds it); then the question. The sitting stays in mode 5
+; until the key. Clobbers registers freely.
+trial2_sitting_done:
+        lea     rdi, [note_buf]         ; "trial2 sitting n done"
+        lea     rsi, [msg_note2_sitting]
+        call    str_copy
+        mov     rax, [obs_page + OBS_TRIAL_SITTING]
+        call    put_dec
+        lea     rsi, [msg_done_w]
+        call    str_copy
+        mov     byte [rdi], 0
+        call    note_emit
+        call    journal_scan2
+        cmp     dword [scan2_verdict], 0
+        jne     .ask
+        cmp     dword [scan2_done], 4
+        jb      .ask
+        call    trial2_verdict          ; EAX = 1 B or 2 G, RDX = the mean
+        mov     [obs_page + OBS_LAYOUT_DEFAULT], rax
+        mov     [t2_mean], rdx
+        mov     dword [t2_vnow], 1
+        mov     dword [t2_verdict], 1
+        lea     rdi, [note_buf]         ; "trial2 verdict L mean"
+        lea     rsi, [msg_note2_verdict]
+        call    str_copy
+        mov     rax, [obs_page + OBS_LAYOUT_DEFAULT]
+        lea     rsi, [layout_letters]
+        mov     al, [rsi + rax]
+        stosb
+        mov     al, ' '
+        stosb
+        mov     rax, [t2_mean]
+        call    put_sdec
+        mov     byte [rdi], 0
+        call    note_emit
+.ask:
+        lea     rsi, [msg_question]     ; before anything else is shown
+        call    console_puts
+        mov     al, 10
+        call    console_putc
+        mov     dword [trial_state], TS_QUESTION
+        ret
+
+; trial2_verdict - EAX = 1 (B) or 2 (G), RDX = the mean, over done2_blocks:
+; S the sum of the sixteen d = score(G) - score(B); B if S > 0, else G (A1);
+; the mean S / 16 truncated toward zero. Clobbers RCX, RSI, R8.
+trial2_verdict:
+        xor     r8, r8
+        lea     rsi, [done2_blocks]
+        mov     ecx, 4 * 4
+.pair:
+        mov     eax, [rsi + BLK_MED]                ; the pair's first block
+        mov     edx, [rsi + BLK_ENTRY + BLK_MED]    ; and its second
+        cmp     byte [rsi + BLK_LAYOUT], 2
+        je      .g_first
+        xchg    eax, edx
+.g_first:                               ; EAX = G's score, EDX = B's
+        sub     rax, rdx
+        add     r8, rax
+        add     rsi, 2 * BLK_ENTRY
+        dec     ecx
+        jnz     .pair
+        mov     rax, r8
+        cqo
+        mov     rcx, 16
+        idiv    rcx                     ; toward zero
+        mov     rdx, rax
+        mov     eax, 2
+        test    r8, r8
+        jle     .out
+        mov     eax, 1
+.out:
+        ret
+
+; trial2_answer - EBX = a key at the question: g, b or n (either case) or Esc
+; journals "trial2 prefer n x" (Esc: "skip"), then the sitting's end; any
+; other key is dropped. Clobbers registers freely.
+trial2_answer:
+        mov     eax, ebx
+        cmp     al, 0x1B
+        je      .skip
+        or      al, 0x20
+        cmp     al, 'g'
+        je      .key
+        cmp     al, 'b'
+        je      .key
+        cmp     al, 'n'
+        je      .key
+        ret
+.skip:
+        mov     al, 's'
+.key:
+        mov     [t2_answer], al
+        lea     rdi, [note_buf]
+        lea     rsi, [msg_note2_prefer]
+        call    str_copy
+        mov     rax, [obs_page + OBS_TRIAL_SITTING]
+        call    put_dec
+        mov     al, ' '
+        stosb
+        mov     al, [t2_answer]
+        cmp     al, 's'
+        jne     .letter
+        lea     rsi, [msg_skip]
+        call    str_copy
+        jmp     .made
+.letter:
+        stosb
+.made:
+        mov     byte [rdi], 0
+        call    note_emit
+        jmp     trial2_wrapup
+
+; trial2_wrapup - the console lines after the answer: "sitting n done", the
+; counts, and at the verdict "verdict L mean" with the four judged tables in
+; the app panel; then the flush and the saved line.
+trial2_wrapup:
+        lea     rdi, [t2_line]
+        lea     rsi, [msg_sitting_row]
+        call    str_copy
+        mov     rax, [obs_page + OBS_TRIAL_SITTING]
+        call    put_dec
+        lea     rsi, [msg_done_w]
+        call    str_copy
+        mov     byte [rdi], 0
+        lea     rsi, [t2_line]
+        call    console_puts
+        mov     al, 10
+        call    console_putc
+        call    t2_counts_line
+        cmp     dword [t2_vnow], 0
+        je      trial2_saved
+        lea     rdi, [t2_line]
+        call    t2_put_verdict
+        mov     byte [rdi], 0
+        lea     rsi, [t2_line]
+        call    console_puts
+        mov     al, 10
+        call    console_putc
+        call    journal_scan2           ; the prefer note is on the disk now
+        call    trial2_tables
+        jmp     trial2_saved
+
+; trial2_abort - Esc before the question: the aborted note, its line, the
+; counts, the flush and the saved line. No table and no score.
+trial2_abort:
+        mov     eax, [obs_page + OBS_TRIAL_BLOCK]
+        cmp     dword [trial_state], TS_REST
+        jne     .block
+        inc     eax                     ; during a rest: the block that would follow
+.block:
+        mov     [abort_block], eax
+        lea     rdi, [note_buf]         ; "trial2 sitting n aborted b"
+        lea     rsi, [msg_note2_sitting]
+        call    str_copy
+        mov     rax, [obs_page + OBS_TRIAL_SITTING]
+        call    put_dec
+        lea     rsi, [msg_aborted_w]
+        call    str_copy
+        mov     eax, [abort_block]
+        call    put_dec
+        mov     byte [rdi], 0
+        call    note_emit
+        call    console_note_line       ; "sitting n aborted b"
+        call    t2_counts_line
+        ; falls through
+
+; trial2_saved - every note of the sitting is written; the disk's cache
+; flushed (ATA FLUSH CACHE EXT through the loader's ahci_cmd, which returns
+; only on success and halts on a named ERR: line); then the saved line and
+; the close.
+trial2_saved:
+        push    rax
+        push    rbx
+        push    rdx
+        push    rdi
+        mov     al, 0xEA
+        xor     ebx, ebx
+        xor     edx, edx
+        lea     rdi, [flush_buf]
+        call    ahci_cmd
+        pop     rdi
+        pop     rdx
+        pop     rbx
+        pop     rax
+        lea     rsi, [msg_saved]
+        call    console_puts
+        mov     al, 10
+        call    console_putc
+        jmp     trial_close
+
+; t2_counts_line - "hits h misses m" over blocks 1-8, a console line.
+t2_counts_line:
+        lea     rdi, [t2_line]
+        lea     rsi, [msg_hits_w]
+        call    str_copy
+        mov     eax, [t2_hits]
+        call    put_dec
+        lea     rsi, [msg_misses_w]
+        call    str_copy
+        mov     eax, [t2_misses]
+        call    put_dec
+        mov     byte [rdi], 0
+        lea     rsi, [t2_line]
+        call    console_puts
+        mov     al, 10
+        call    console_putc
+        ret
+
+; t2_put_verdict - RDI = destination: "verdict L mean"; RDI advanced.
+t2_put_verdict:
+        lea     rsi, [msg_verdict_w]
+        call    str_copy
+        mov     rax, [obs_page + OBS_LAYOUT_DEFAULT]
+        lea     rsi, [layout_letters]
+        mov     al, [rsi + rax]
+        stosb
+        mov     al, ' '
+        stosb
+        mov     rax, [t2_mean]
+        call    put_sdec
+        ret
+
+; trial2_tables - the app panel at the verdict: the four judged sittings'
+; tables stacked from row 0 ("sitting n ORDER", eight "b L 20 m score",
+; "done", "prefer x" when there is one), then "verdict L mean". Clobbers
+; registers freely.
+trial2_tables:
+        call    app_clear
+        xor     r13d, r13d              ; the panel row
+        xor     r14d, r14d              ; the judged sitting
+.sitting:
+        cmp     r14d, 4
+        jae     .verdict
+        lea     rdi, [row_buf]
+        lea     rsi, [msg_sitting_row]
+        call    str_copy
+        lea     rdx, [done2_num]
+        mov     eax, [rdx + r14*4]
+        call    put_dec
+        mov     al, ' '
+        stosb
+        lea     rsi, [msg_order2_even]
+        lea     rdx, [done2_par]
+        cmp     dword [rdx + r14*4], 0
+        je      .ord
+        lea     rsi, [msg_order2_odd]
+.ord:
+        call    str_copy
+        mov     byte [rdi], 0
+        call    .emit
+        xor     r15d, r15d              ; the block
+.blk:
+        cmp     r15d, TRIAL_BLOCKS
+        jae     .rows_done
+        lea     rdi, [row_buf]
+        lea     eax, [r15 + 1]
+        call    put_dec
+        mov     al, ' '
+        stosb
+        mov     eax, r14d
+        imul    eax, eax, TRIAL_BLOCKS * BLK_ENTRY
+        mov     ecx, r15d
+        imul    ecx, ecx, BLK_ENTRY
+        add     eax, ecx
+        lea     rsi, [done2_blocks]
+        add     rsi, rax
+        movzx   eax, byte [rsi + BLK_LAYOUT]
+        lea     rdx, [layout_letters]
+        mov     al, [rdx + rax]
+        stosb
+        mov     al, ' '
+        stosb
+        push    rsi
+        mov     eax, T2_CUES
+        call    put_dec
+        mov     al, ' '
+        stosb
+        pop     rsi
+        push    rsi
+        movzx   eax, byte [rsi + BLK_MISSES]
+        call    put_dec
+        mov     al, ' '
+        stosb
+        pop     rsi
+        mov     eax, [rsi + BLK_MED]
+        call    put_dec
+        mov     byte [rdi], 0
+        call    .emit
+        inc     r15d
+        jmp     .blk
+.rows_done:
+        lea     rsi, [msg_done_row]
+        call    .emit_rsi
+        lea     rdx, [done2_pref]
+        movzx   eax, byte [rdx + r14]
+        test    al, al
+        jz      .next_sitting
+        lea     rdi, [row_buf]
+        lea     rsi, [msg_prefer_row]
+        call    str_copy
+        lea     rdx, [done2_pref]
+        movzx   eax, byte [rdx + r14]
+        cmp     al, 's'
+        jne     .letter
+        lea     rsi, [msg_skip]
+        call    str_copy
+        jmp     .pref_done
+.letter:
+        stosb
+.pref_done:
+        mov     byte [rdi], 0
+        call    .emit
+.next_sitting:
+        inc     r14d
+        jmp     .sitting
+.verdict:
+        lea     rdi, [row_buf]
+        call    t2_put_verdict
+        mov     byte [rdi], 0
+        call    .emit
+        ret
+.emit:
+        lea     rsi, [row_buf]
+.emit_rsi:
+        mov     ebx, r13d
+        call    panel_line
+        inc     r13d
+        ret
+
+; journal_scan2 - one walk of the journal from disk: scan2_sittings (the
+; trial-two sitting-start notes), scan2_verdict, the first four done
+; sittings' numbers, orders, preferences and block records, and scan2_slot,
+; the i8042 slot's state as its molt notes give it (PARTS.md, "The states
+; and the undo": an install shadow, a take live, a demotion demoted, an undo
+; the state it names). Clobbers registers freely.
+journal_scan2:
+        xor     eax, eax
+        mov     [scan2_sittings], eax
+        mov     [scan2_verdict], eax
+        mov     [scan2_done], eax
+        mov     [scan2_slot], eax       ; ST_GENERIC
+        mov     [done2_pref], rax
+        mov     dword [scan2_cur], -1
+        mov     ebx, 1
+.note:
+        cmp     ebx, [nb_count]
+        ja      .walked
+        mov     eax, VBLK_T_IN
+        lea     rdi, [sector_buf]
+        call    disk_rw
+        lea     rsi, [sector_buf + NB_TEXT_OFF]
+        movzx   ecx, word [sector_buf + 8]
+        cmp     ecx, 10
+        jb      .next
+        cmp     dword [rsi], 'molt'
+        je      .molt
+        cmp     dword [rsi], 'tria'
+        jne     .next
+        cmp     word [rsi + 4], 'l2'
+        jne     .next
+        cmp     byte [rsi + 6], ' '
+        jne     .next
+        cmp     dword [rsi + 7], 'sitt'
+        je      .sitting
+        cmp     dword [rsi + 7], 'bloc'
+        je      .block
+        cmp     dword [rsi + 7], 'pref'
+        je      .prefer
+        cmp     dword [rsi + 7], 'verd'
+        jne     .next
+        mov     dword [scan2_verdict], 1
+        jmp     .next
+.molt:                                  ; "molt i8042 <state word> ..."
+        cmp     byte [rsi + 4], ' '
+        jne     .next
+        cmp     dword [rsi + 5], 'i804'
+        jne     .next
+        cmp     word [rsi + 9], '2 '
+        jne     .next
+        add     rsi, 11
+        cmp     dword [rsi], 'undo'
+        jne     .word
+        add     rsi, 5                  ; the state the undo lands in
+.word:
+        mov     eax, ST_SHADOW
+        cmp     dword [rsi], 'shad'
+        je      .state
+        mov     eax, ST_LIVE
+        cmp     dword [rsi], 'live'
+        je      .state
+        mov     eax, ST_DEMOTED
+        cmp     dword [rsi], 'demo'
+        je      .state
+        mov     eax, ST_GENERIC
+        cmp     dword [rsi], 'gene'
+        jne     .next                   ; count, disagree: no change
+.state:
+        mov     [scan2_slot], eax
+        jmp     .next
+.sitting:                               ; "trial2 sitting n ORDER|done|aborted b"
+        add     rsi, 15
+        call    parse_dec
+        mov     r10d, eax
+        inc     rsi
+        cmp     dword [rsi], 'done'
+        je      .done_note
+        cmp     dword [rsi], 'abor'
+        je      .aborted
+        mov     dword [scan2_par], 1
+        cmp     dword [rsi], 'GBBG'
+        je      .start
+        mov     dword [scan2_par], 0
+        cmp     dword [rsi], 'BGGB'
+        jne     .next
+.start:
+        inc     dword [scan2_sittings]
+        mov     [scan2_num], r10d
+        mov     dword [scan2_cur], -1
+        lea     rdi, [cur2_blocks]
+        mov     ecx, TRIAL_BLOCKS * BLK_ENTRY / 8
+        xor     eax, eax
+        rep     stosq
+        jmp     .next
+.aborted:
+        mov     dword [scan2_cur], -1
+        jmp     .next
+.done_note:
+        mov     dword [scan2_cur], -1
+        mov     eax, [scan2_done]
+        cmp     eax, 4
+        jae     .next
+        mov     [scan2_cur], eax
+        lea     rdx, [done2_num]
+        mov     [rdx + rax*4], r10d
+        mov     ecx, [scan2_par]
+        lea     rdx, [done2_par]
+        mov     [rdx + rax*4], ecx
+        imul    eax, eax, TRIAL_BLOCKS * BLK_ENTRY
+        lea     rdi, [done2_blocks]
+        add     rdi, rax
+        lea     rsi, [cur2_blocks]
+        mov     ecx, TRIAL_BLOCKS * BLK_ENTRY / 8
+        rep     movsq
+        inc     dword [scan2_done]
+        jmp     .next
+.prefer:                                ; "trial2 prefer n x": the done sitting just recorded
+        cmp     dword [scan2_cur], -1
+        je      .next
+        add     rsi, 14
+        call    parse_dec
+        mov     edx, [scan2_cur]
+        lea     rdi, [done2_num]
+        cmp     eax, [rdi + rdx*4]
+        jne     .next
+        inc     rsi
+        mov     al, [rsi]
+        lea     rdi, [done2_pref]
+        mov     [rdi + rdx], al
+        jmp     .next
+.block:                                 ; "trial2 block s b L 20 m score"
+        add     rsi, 13
+        call    parse_dec               ; s
+        inc     rsi
+        call    parse_dec               ; b
+        mov     r10d, eax
+        inc     rsi
+        mov     r11d, 2
+        cmp     byte [rsi], 'G'
+        je      .layout
+        mov     r11d, 1
+.layout:
+        add     rsi, 2
+        call    parse_dec               ; hits
+        inc     rsi
+        call    parse_dec               ; misses
+        mov     r12d, eax
+        inc     rsi
+        call    parse_dec               ; the score
+        cmp     r10d, 1
+        jb      .next
+        cmp     r10d, TRIAL_BLOCKS
+        ja      .next
+        dec     r10d
+        imul    r10d, r10d, BLK_ENTRY
+        lea     rdi, [cur2_blocks]
+        add     rdi, r10
+        mov     [rdi + BLK_MED], eax
+        mov     [rdi + BLK_MISSES], r12b
+        mov     [rdi + BLK_LAYOUT], r11b
+.next:
+        inc     ebx
+        jmp     .note
+.walked:
         ret
 
 ; parse_dec - RSI at a decimal number: EAX = its value, RSI past its digits.
@@ -8132,11 +9039,31 @@ strip_format:
         jnz     .name
         jmp     .mode_done
 .mode_trial:                            ; "trial A 3/8" (TRIALS.md, "The strip")
+        cmp     qword [obs_page + OBS_TRIAL_NUMBER], 2
+        je      .mode_trial2
         lea     rsi, [msg_trial_prefix]
         mov     ecx, 6
         rep     movsb
         mov     al, 'A'
         add     al, [obs_page + OBS_TRIAL_LAYOUT]
+        stosb
+        mov     al, ' '
+        stosb
+        mov     al, '0'
+        add     al, [obs_page + OBS_TRIAL_BLOCK]
+        stosb
+        mov     al, '/'
+        stosb
+        mov     al, '0' + TRIAL_BLOCKS
+        stosb
+        jmp     .mode_done
+.mode_trial2:                           ; ring 8t: "trial2 G 3/8" (TRIALS2.md, "The strip")
+        lea     rsi, [msg_trial2_mode]
+        mov     ecx, 7
+        rep     movsb
+        mov     rax, [obs_page + OBS_TRIAL_LAYOUT]
+        lea     rsi, [layout_letters]
+        mov     al, [rsi + rax]
         stosb
         mov     al, ' '
         stosb
@@ -10538,6 +11465,32 @@ msg_done_row:   db      'done', 0
 msg_aborted_row: db     'aborted ', 0
 item_words:     db      'ask', 0, 0, 'grow', 0, 'app', 0, 0, 'exit', 0     ; five bytes each
 target_args:    db      '?', '!', 9, 0x1B               ; the item's key, as choices_hit reports it
+msg_trial2_word: db     'trial 2'                       ; 7 bytes, compared (ring 8t)
+msg_trial2_mode: db     'trial2 '                       ; 7 bytes: the strip's word
+msg_note2_trial: db     'trial2 ', 0
+msg_note2_sitting: db   'trial2 sitting ', 0
+msg_note2_block: db     'trial2 block ', 0
+msg_note2_verdict: db   'trial2 verdict ', 0
+msg_note2_prefer: db    'trial2 prefer ', 0
+msg_concluded2: db      'trial 2 concluded', 0
+msg_part_slot:  db      "a part is in the pointer's slot", 0
+msg_order2_odd: db      'GBBG BGGB', 0
+msg_order2_even: db     'BGGB GBBG', 0
+msg_warmup_rest: db     'warm-up done - rest', 0
+msg_question:   db      'easier? g, b or n', 0
+msg_saved:      db      'saved - power off when you like', 0
+msg_hits_w:     db      'hits ', 0
+msg_misses_w:   db      ' misses ', 0
+msg_verdict_w:  db      'verdict ', 0
+msg_prefer_row: db      'prefer ', 0
+msg_skip:       db      'skip', 0
+layout_letters: db      'ABG'
+msg_due:        db      'trial2: due sitting ', 0
+msg_concl:      db      'trial2: concluded verdict ', 0
+msg_default_w:  db      ' default ', 0
+msg_offer_a:    db      'trial 2 sitting ', 0
+msg_offer_b:    db      ': press Enter to start', 0
+cue_table2:     db      0, 2, 1, 3, 2, 1, 0, 2, 0, 3, 2, 3, 0, 1, 2, 1, 3, 2, 3, 2, 0, 1, 3, 2, 0, 1, 0, 3, 1, 0, 2, 3, 1, 2, 3, 0, 1, 0, 1, 2, 0, 3, 2, 0, 1, 3, 0, 3, 2, 1, 1, 0, 3, 0, 3, 1, 3, 1, 3, 2, 0, 2, 1, 2, 3, 2, 0, 2, 0, 1, 0, 3, 0, 3, 0, 1, 3, 1, 2, 0, 2, 1, 3, 2, 1, 2, 3, 2, 1, 0, 3, 1, 0, 2, 3, 1, 2, 1, 0, 1, 2, 0, 3, 1, 3, 2, 0, 2, 3, 0, 1, 0, 2, 3, 0, 2, 1, 0, 3, 2, 1, 0, 3, 2, 3, 1, 0, 3, 1, 2, 0, 3, 0, 3, 2, 0, 1, 0, 1, 2, 0, 1, 3, 1, 2, 3, 2, 1, 2, 3, 3, 0, 1, 2, 1, 0, 3, 1, 2, 0, 2, 3, 0, 2, 0, 3, 1, 2, 3, 1   ; TRIALS2.md: the warm-up, then blocks 1-8
 cue_table:      db      1, 0, 3, 2, 1, 3, 0, 2, 3, 0, 2, 3, 1, 0, 2, 1, 3, 0, 1, 3, 3, 2, 0, 1, 3, 0, 2, 1, 0, 1, 0, 1, 2, 3, 0, 2, 1, 3, 2, 3, 1, 3, 0, 2, 1, 0, 3, 2, 0, 2, 2, 0, 1, 3, 2, 3, 0, 1, 3, 1, 3, 1, 2, 0, 3, 2, 1, 0, 1, 0, 0, 2, 3, 1, 0, 3, 2, 1, 3, 2   ; TRIALS.md's table, block by block
 strip_tmpl0:    db      'up 000000 core 00 fr 000000 00.0/00.0 ph 00.0/00.0 k 0000 hw 000 err 000 step 00.0/00.0'
 strip_tmpl1:    db      'prompt             q 000 n 000 g 000/000 disk 0000 000000 w 000 000000 io 000000/000000'
@@ -10952,8 +11905,8 @@ cell_inverse:   resd    1               ; draw_cell: the colours swapped for thi
 trial_until:    resq    1               ; the pause's or the rest's end, TSC
 trial_order:    resq    1               ; the order string
 cue_pend_snap:  resq    1
-trial_ms:       resd    TRIAL_CUES      ; the block's hits, ms
-sort_buf:       resd    TRIAL_CUES
+trial_ms:       resd    T2_CUES         ; the block's hits, ms (ring 8t: twenty)
+sort_buf:       resd    T2_CUES
 blk_this:       resb    TRIAL_BLOCKS * BLK_ENTRY    ; this sitting's blocks, for the table
 cur_blocks:     resb    TRIAL_BLOCKS * BLK_ENTRY    ; journal_scan's current sitting
 done_blocks:    resb    3 * TRIAL_BLOCKS * BLK_ENTRY
@@ -10961,6 +11914,35 @@ note_buf:       resb    64
 serial_buf:     resb    72
 row_buf:        resb    64
 last_buf:       resb    32              ; the table's last row (an abort)
+
+; Ring 8t - trial two's state (trials/TRIALS2.md).
+        alignb  8
+trial_kind:     resd    1               ; 1 trial one, 2 trial two: the sitting's family
+row_style:      resd    1               ; row_to_boxes: 0 B's boxes, 1 G's grouped text
+t2_hits:        resd    1               ; the sitting's hits and misses over blocks 1-8
+t2_misses:      resd    1
+t2_sittings:    resd    1               ; the trial-two sitting notes on the notebook
+t2_any:         resd    1               ; a trial2 note on the notebook (the boot's)
+t2_verdict:     resd    1               ; a trial2 verdict note on the notebook
+t2_vnow:        resd    1               ; this sitting's end journaled the verdict
+t2_vletter:     resd    1               ; the boot's last trial2 verdict letter
+t2_answer:      resd    1
+t2_mean:        resq    1               ; the verdict's mean, signed
+scan2_sittings: resd    1               ; journal_scan2: the sitting-start notes
+scan2_verdict:  resd    1               ; a trial2 verdict note
+scan2_done:     resd    1               ; done sittings recorded, at most four
+scan2_cur:      resd    1               ; the done slot the last done note filled, -1 none
+scan2_slot:     resd    1               ; the i8042 slot's state by its molt notes
+scan2_num:      resd    1
+scan2_par:      resd    1               ; the current sitting's order: 1 odd, 0 even
+done2_num:      resd    4
+done2_par:      resd    4
+done2_pref:     resb    8               ; 'g', 'b', 'n', 's' (skip), 0 none
+cur2_blocks:    resb    TRIAL_BLOCKS * BLK_ENTRY
+done2_blocks:   resb    4 * TRIAL_BLOCKS * BLK_ENTRY
+t2_line:        resb    80
+        alignb  16
+flush_buf:      resb    512             ; FLUSH CACHE EXT's buffer: never filled
 
 ; The display's EDID (GLASS.md, "The screen").
         alignb  16
