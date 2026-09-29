@@ -29,10 +29,10 @@ in the guest at the fourth `done`. Then one more boot shows the machine
 drawing its choices row in the verdict's layout. His word on each sitting
 and on the verdict closes the ring.
 
-## 0. Before sitting 1 — Cowork's, not the owner's
+## 0. Before sitting 1 — written by Cowork, run once by the owner
 
-- **The flash, once for the whole trial:** Cowork's `trials/hp-stick.sh`, which is `stage7/METAL.md` steps 1–3 as one checked script, run once at the repo root on mlrig. It rebuilds the stick and checks the build is the seed in the record. **`BOOTX64.EFI`'s SHA-256 must begin `c221feca2508f7b6`**, seed 2's line; any other hash is not the seed the gate judged. It writes, compares and powers the stick off. Nothing is changed on the stick between sittings.
-- **The chart, for the whole trial:** Cowork's `trials/hp-chart.service`, a user service installed once, runs `broker/chart.py` and appends every boot to `trials/out/hp-8t.log`. It is running before the first power-on and until the verdict boot.
+- **The flash, once for the whole trial:** Cowork's `trials/hp-stick.sh`, which is `stage7/METAL.md` steps 1–3 as one checked script. The owner plugs the stick into mlrig, runs `./trials/hp-stick.sh` at the repo root, gives his sudo password, presses `y` when it names the stick, and moves the stick to the HP when it says `DONE`. Its output goes to `trials/out/hp-stick.log`, which Cowork reads. It rebuilds the stick and checks the build is the seed in the record. **`BOOTX64.EFI`'s SHA-256 must begin `c221feca2508f7b6`**, seed 2's line; any other hash is not the seed the gate judged. It writes, compares and powers the stick off. Nothing is changed on the stick between sittings.
+- **The chart, for the whole trial:** Cowork's `trials/hp-chart.service`, a user service the owner installs once with `systemctl --user enable --now ~/Work/germos/trials/hp-chart.service`. It runs `broker/chart.py` whenever he is logged in to Omarchy, appends every boot to `trials/out/hp-8t.log`, and writes `trials/out/hp-chart.started` when it starts, so Cowork can see it is up. It is running before the first power-on and until the verdict boot.
 - **The Ethernet stays in the home switch.** The boot waits for the link and halts without it. **No broker, no relay, no second address and no firewall rule are needed**: a trial sends nothing over the wire.
 
 ## 1. What every boot shows before a sitting
@@ -78,12 +78,12 @@ procedure facts:
 
 ## 3. After sitting 4 — the verdict, then one boot
 
-- **At sitting 4's end**, after the preference key, the conversation panel says `verdict G <mean>` or `verdict B <mean>`. The app panel shows the four sittings' tables and the verdict row. Then comes `saved - power off when you like`: **photograph the app panel**, then power off.
+- **At sitting 4's end**, after the preference key, the conversation panel says `verdict G <mean>` or `verdict B <mean>`. The app panel shows the four sittings' tables and the verdict row. Then comes `saved - power off when you like`. A photograph of the app panel for `history/` is welcome but optional; the chart holds the record. Then power off.
 - **One more boot**, with nothing typed. The chart's line after ready is `trial2: concluded verdict <L> default <L>`, and there is no offer. **The choices row at the prompt is drawn in the verdict's layout:**
   - **G** is the items as text with `|` between their zones;
   - **B** is the boxes.
 
-  Photograph it, and power off.
+  A photograph is optional, as above. Power off.
 
 ## 4. If something goes other than planned
 

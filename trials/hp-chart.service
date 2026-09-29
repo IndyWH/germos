@@ -1,0 +1,24 @@
+# trials/hp-chart.service - the HP's serial chart as a user service (ring 8t).
+# Cowork's, installed once by the owner. It runs broker/chart.py whenever the
+# owner is logged in to Omarchy, appending every HP boot to
+# trials/out/hp-8t.log, and starts again by itself if the adapter is
+# unplugged or not yet there. Nothing to start or stop by hand.
+#
+# Install:  systemctl --user enable --now ~/Work/germos/trials/hp-chart.service
+# Remove:   systemctl --user disable --now hp-chart.service
+
+[Unit]
+Description=GermOS chart - the HP's serial lines to trials/out/hp-8t.log
+StartLimitIntervalSec=0
+
+[Service]
+WorkingDirectory=%h/Work/germos
+ExecStartPre=/usr/bin/mkdir -p %h/Work/germos/trials/out
+ExecStart=/usr/bin/python3 broker/chart.py /dev/ttyUSB0 trials/out/hp-8t.log
+ExecStartPost=/usr/bin/sh -c 'date -Iseconds > %h/Work/germos/trials/out/hp-chart.started'
+StandardOutput=null
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
