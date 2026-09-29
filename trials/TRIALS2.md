@@ -116,7 +116,7 @@ order:
 
 | Line | When |
 |---|---|
-| `no mouse` | `mouse_id` is 0 |
+| `no mouse` | `mouse_id` is 0 and no part is live in the `i8042` slot this boot. A live part resets the mouse itself, so the seed's `mouse_id` stays 0 on such a boot, and the part refusal below is the answer there |
 | `an app is running` | `mode` is 3 |
 | `one sitting a boot` | a sitting of either trial ended in this boot |
 | `trial 2 concluded` | a `trial2 verdict` note is on the notebook |

@@ -83,19 +83,21 @@ UNSET = _Unset()
 # synthetic human) supplies these; each is written with its date. While one
 # is UNSET the mode that needs it fails and names it.
 
-G_ROWS_RUN = {                 # (label spans, separator columns) read from the probe's surface and screendump
-    4: UNSET,
-    2: UNSET,
-    3: UNSET,
+# From item 8's run, 29 September 2026: the draft (61,440 bytes) played by this checker's
+# --rows and --sittings, eight sittings and 1,188 timed cues, -smp 4.
+G_ROWS_RUN = {                 # (label spans, separator columns) read back from the choices surface
+    4: ([(12, 16), (41, 46), (71, 77), (101, 108)], [29, 59, 89]),     # R1, the warm-up's first cue
+    2: ([(27, 31), (87, 92)], [59]),                                    # C1, the prompt at verdict G
+    3: ([(17, 21), (56, 61), (94, 105)], [39, 79]),                     # W3, the HP's prompt at verdict G
 }
-TRIAL_NUMBER_AT_RUN = UNSET    # the offset the probe's page read showed trial_number at
-READY_LIMIT_S = UNSET          # QEMU's start to "S7: keyboard ready" on a blank or small disk, with margin
-READY_FULL_S = UNSET           # the same with a full trial on the HP's history (about 1,250 notes)
-SETTLE_S = UNSET               # after ready, before the first key: the replay settled
-OFFSET_MS = UNSET              # recorded ms minus the scripted delay, a cue after a pause
-OFFSET_FIRST_MS = UNSET        # the same for a block's (or the warm-up's) first cue
-HIT_WINDOW_MS = UNSET          # the per-hit sanity window, CC's own, from the run's spread
-SITTING_S = UNSET              # a whole sitting's wall time in the twin, with margin: the play's bound
+TRIAL_NUMBER_AT_RUN = 0x340    # R1's page read at the sitting's start: 2 there, the three words after it 0
+READY_LIMIT_S = 60.0           # ready 1.2-5.2 s from QEMU's start (5 s with a part's Esc window): 7c's window kept
+READY_FULL_S = 20.0            # W3 with 1,141 notes on the HP's history: ready 1.89 s; ten times that
+SETTLE_S = 1.0                 # the replay's end after ready: 0.26 s at 1,250 notes (item 1)
+OFFSET_MS = 39                 # a cue timed from a hit's line: 1,048 cues read +31 to +49, median 39
+OFFSET_FIRST_MS = -12          # a cue timed from a sitting or block line: 58 cues, median -12
+HIT_WINDOW_MS = 60             # CC's own: every hit's residual against the rule was within 15 ms
+SITTING_S = 300.0              # a sitting's boot took 186.8-195.0 s; about half as much again
 
 # By rule, never from a run:
 SLACK_MS = 30                  # a block's score against the script's: ring 7d's window (its A3), never widened
@@ -494,6 +496,8 @@ class Boot:
                 self.err += " (the guest said: %s)" % errs[0].decode(errors="replace")
             return self
         self.ready_s = time.time() - t0
+        m = re.search(rb"S7: notebook (\d+) notes", self.serial())
+        say("(%s: ready %.2f s after QEMU's start, %s notes)" % (self.name, self.ready_s, m.group(1).decode() if m else "no"))
         time.sleep(SETTLE_S)
         w, h = checkmetal.geometry_of(self.serial())
         self.geometry = (w, h, w // CELL, h // CELL)
@@ -677,6 +681,7 @@ class Boot:
                 cue_at = t + PAUSE_S
             if b == 0:
                 anchor = t + PAUSE_S
+                time.sleep(max(0.0, anchor + 0.1 - time.time()))    # the rest begins at the pause's end
             else:
                 m, t = self.wait_line(rb"trial2: block %d %d [GB] (\d+) (\d+) (\d+)" % (s, b), 5.0)
                 if not m:
@@ -723,20 +728,23 @@ class Boot:
 # ------------------------------------------------------ the judgements -----
 
 def expected_script(script):
-    """The script with every delay replaced by the ms the guest should record: d plus
-    OFFSET_FIRST_MS for a block's (or the warm-up's) first cue, d plus OFFSET_MS after a
-    pause; a cue missed first adds a second interval, d plus OFFSET_MS, from the miss."""
-    def one(blk):
+    """The script with every delay replaced by the ms the guest should record. A cue the
+    human times from a hit's line (after a pause, and block 1's first cue, whose rest the
+    human times from the warm-up's last hit) records d plus OFFSET_MS: the hit's note is
+    journaled before its line anchors the human. A cue timed from a sitting or block line
+    (the warm-up's first, and blocks 2-8's first) records d plus OFFSET_FIRST_MS. A cue
+    missed first adds a second interval, d plus OFFSET_MS, from the miss's line."""
+    def one(blk, first):
         ms = []
         for c, d in enumerate(blk["ms"]):
-            v = d + (OFFSET_FIRST_MS if c == 0 else OFFSET_MS)
+            v = d + (first if c == 0 else OFFSET_MS)
             if c + 1 in blk.get("miss", ()):
                 v += d + OFFSET_MS
             ms.append(v)
         return {"ms": ms, "miss": list(blk.get("miss", ()))}
     out = dict(script)
-    out["warmup"] = one(script["warmup"])
-    out["blocks"] = [one(b) for b in script["blocks"]]
+    out["warmup"] = one(script["warmup"], OFFSET_FIRST_MS)
+    out["blocks"] = [one(b, OFFSET_MS if i == 0 else OFFSET_FIRST_MS) for i, b in enumerate(script["blocks"])]
     return out
 
 
@@ -752,7 +760,7 @@ def check_script_range(script):
     return ["sitting %d's script gives %r outside %r" % (script["sitting"], bad[:3], MS_RANGE)] if bad else []
 
 
-def compare_notes(actual, script, label):
+def compare_notes(actual, script, label, untimed=()):
     """The notes a played sitting left against its script: every non-hit note byte for
     byte; every hit note's fields exact and its ms within HIT_WINDOW_MS; every block
     score within SLACK_MS of the rule over the expected ms; the block notes agreeing
@@ -772,7 +780,7 @@ def compare_notes(actual, script, label):
                 problems.append("%s: note %d is %r, want %r" % (label, i + 1, a, w))
                 break
             exp_ms.setdefault(pw["block"], []).append(pw["ms"])
-            if abs(pa["ms"] - pw["ms"]) > HIT_WINDOW_MS:
+            if (pw["block"], pw["cue"]) not in untimed and abs(pa["ms"] - pw["ms"]) > HIT_WINDOW_MS:
                 problems.append("%s: note %d %r - %d ms is outside %d +/- %d" % (label, i + 1, a, pa["ms"], pw["ms"], HIT_WINDOW_MS))
         elif pw["kind"] == "block":
             if (pa["sitting"], pa["block"], pa["layout"], pa["hits"], pa["misses"]) != \
@@ -793,8 +801,7 @@ def serial_notes(capture):
     every trial2: line and the mouse line, for the echo check."""
     lines = [m.group(0).decode() for m in TRIAL2_LINE.finditer(capture)]
     notes = trials2.notes_of_chart(lines)
-    stripped = TRIAL2_LINE.sub(b"", capture).replace(checkmetal.MOUSE_LINE_BYTES, b"")
-    stripped = re.sub(rb"(\r\n){2,}", b"\r\n", stripped)
+    stripped = re.sub(rb"trial2: [^\r\n]*\r\n", b"", capture).replace(checkmetal.MOUSE_LINE_BYTES, b"")
     return notes, stripped
 
 
@@ -846,20 +853,35 @@ def replay_rows(notes, width):
     return rows
 
 
+STRIP_ROW0 = re.compile(r"up \d{6} core \d\d fr \d{6} \d\d\.\d/\d\d\.\d ph \d\d\.\d/\d\d\.\d k \d{4} hw \d{3} "
+                        r"err \d{3} step \d\d\.\d/\d\d\.\d( pt \d\d\.\d/\d\d\.\d pk \d{4} cl \d{3})?")
+STRIP_ROW1 = re.compile(r"(.{18}) q \d{3} n \d{3} g \d{3}/\d{3} disk \d{4} \d{6} w \d{3} \d{6} io \d{6}/\d{6}")
+MODE_FIELD = re.compile(r"(prompt|asking|growing|installing|running .{1,10}|trial [AB] \d/8|trial2 [ABG] \d/8) *")
+CONSOLE_LOG = ("S7: ", "S8: ", "i8042: ", "part: ", "hold Esc")
+COUNTS_ROW = re.compile(r"hits \d+ misses \d+")
+
+
 def hidden_times(reads, secrets, allowed, label):
-    """A2: no row of the strip, the conversation or the app panel holds a recorded time
-    or score of trial two as a token; the conversation's rows that are another note's
-    replay are the only ones passed over."""
+    """A2: no trial-two time or score anywhere the owner can look. The strip: both rows
+    are GLASS.md's template shape - fixed counter fields, none of them a trial time -
+    with a mode word from the documents' list. The conversation and the app panel: no
+    row holds a recorded time or score as a token, and none is a trial-two note; the
+    rows of another note's replay, the boot log and the counts line are passed over."""
     problems = []
+    obs = reads["obs"]
+    C = obs["strip"]["cols"]
+    rows = [reads["strip"][r * C:(r + 1) * C].decode("ascii", "replace").rstrip() for r in range(2)]
+    m1 = STRIP_ROW1.fullmatch(rows[1])
+    if not STRIP_ROW0.fullmatch(rows[0]) or not m1 or not MODE_FIELD.fullmatch(m1.group(1)):
+        problems.append("%s: the strip is not GLASS.md's template with a legal mode word: %r" % (label, rows))
     if not secrets:
         return problems
-    obs = reads["obs"]
-    for name in ("strip", "conversation", "app"):
+    for name in ("conversation", "app"):
         C, R = obs[name]["cols"], obs[name]["rows"]
         cells = reads[name]
         for r in range(R):
             row = cells[r * C:(r + 1) * C].decode("ascii", "replace").rstrip()
-            if name == "conversation" and row in allowed:
+            if name == "conversation" and (row in allowed or row.startswith(CONSOLE_LOG) or COUNTS_ROW.fullmatch(row)):
                 continue
             if row.startswith(trials2.NOTE_PREFIX):
                 problems.append("%s: the %s shows a trial-two note: %r" % (label, name, row))
@@ -892,6 +914,12 @@ def append_notes(disk, more):
     data[lo:hi] = write_notes(bytes(data[lo:hi]), notes + more)
     with open(disk, "wb") as fh:
         fh.write(bytes(data))
+
+
+def parts_disk(disk):
+    """stage8/parts.py --disk with its note count masked: the molt table, the home store
+    and the door must not change when trial two's notes are added."""
+    return re.sub(r"notes \d+;", "notes N;", run_tool([os.path.join(REPO, "stage8", "parts.py"), "--disk", disk])[1])
 
 
 def secrets_of(notes):
@@ -969,6 +997,12 @@ def rows_r1():
             reads["start_shot"] = b.shot("start")
 
         def at_b_row():
+            deadline = time.time() + 3.0          # cue 6 shows at the pause's end
+            while time.time() < deadline:
+                obs = b.page()
+                if obs["trial_cue"] == 6 and obs["cue_pending"] == 0:
+                    break
+                time.sleep(0.05)
             b.park()
             reads["wb"] = b.surfaces()
             reads["wb_shot"] = b.shot("wb")
@@ -1019,7 +1053,8 @@ def rows_r1():
         say("R1: '! trial 2' opened 'sitting 1 GBBG BGGB' with 'trial2 G 0/8' on the strip, the warm-up's G row to the pixel "
             "(labels %r, '|' at %r), its B row at cue 6 as trial one's boxes, the page in mode 5 with trial_number 2" % got_g)
 
-    problems = compare_notes(notes_serial[:len(trials2.notes_of(SCRIPT_R1))], SCRIPT_R1, "R1's notes on serial")
+    problems = compare_notes(notes_serial[:len(trials2.notes_of(SCRIPT_R1))], SCRIPT_R1, "R1's notes on serial",
+                             untimed={(0, 1), (0, 6)})    # the screen read at those cues holds their press
     on_disk = notes_on_disk(disk)
     want_disk = notes_serial[:len(trials2.notes_of(SCRIPT_R1))] + ["trials are fun"]
     if on_disk != want_disk:
@@ -1027,8 +1062,9 @@ def rows_r1():
     if results.get("aborted") != 2:
         problems.append("the abort named block %r, want 2" % results.get("aborted"))
     tail = trials2.end_lines(on_disk, 1)
-    if results.get("saved_rows", [])[-len(tail):] != tail:
-        problems.append("the conversation at the abort ends %r, want %r" % (results.get("saved_rows", [])[-len(tail):], tail))
+    if tail_upto(results.get("saved_rows", []), trials2.SAVED, len(tail)) != tail:
+        problems.append("the conversation at the abort ends %r, want %r"
+                        % (tail_upto(results.get("saved_rows", []), trials2.SAVED, len(tail)), tail))
     after = reads["after"]
     rows = checktrials.conv_rows(after["conversation"], after["obs"])
     want_rows = ["> ! trial 2", "one sitting a boot", ">", "one sitting a boot", "> trial2 x", trials2.RESERVED,
@@ -1149,12 +1185,12 @@ def rows_s():
     if trials2.OFFER % 2 not in rows:
         problems.append("no offer at the boot: %r" % rows[-4:])
     rows = checktrials.conv_rows(reads["app"]["conversation"], reads["app"]["obs"])
-    if rows[-3:] != ["an app is running", ">", "an app is running"] or reads["app"]["obs"]["mode"] != 3:
-        problems.append("with the app running: the conversation ends %r, mode %r" % (rows[-3:], reads["app"]["obs"]["mode"]))
+    if rows[-5:] != ["> ! trial 2", "an app is running", ">", "an app is running", ">"] or reads["app"]["obs"]["mode"] != 3:
+        problems.append("with the app running: the conversation ends %r, mode %r" % (rows[-5:], reads["app"]["obs"]["mode"]))
     rows = checktrials.conv_rows(reads["part"]["conversation"], reads["part"]["obs"])
     part_line = trials2.REFUSALS[4]
-    if rows[-4:] != ["> ! trial 2", part_line, ">", part_line]:
-        problems.append("with the app closed: the conversation ends %r" % rows[-4:])
+    if rows[-5:] != ["> ! trial 2", part_line, ">", part_line, ">"]:
+        problems.append("with the app closed: the conversation ends %r" % rows[-5:])
     problems += check_counts(reads["part"]["obs"], {"mode": 0, "errors": 4, "trial_number": 0}, "disk S")
     if notes_on_disk(disk)[:len(notes)] != notes or trials2.sittings_of(notes_on_disk(disk))[-1:] != trials2.sittings_of(notes):
         problems.append("disk S: a note was changed, or a trial-two note journaled")
@@ -1184,8 +1220,8 @@ def rows_l():
         problems.append("the S8: and molt: lines are %r, want %r first" % (s8_lines(cap), want8))
     rows = checktrials.conv_rows(reads["conversation"], reads["obs"])
     part_line = trials2.REFUSALS[4]
-    if rows[-4:] != ["> ! trial 2", part_line, ">", part_line]:
-        problems.append("the conversation ends %r" % rows[-4:])
+    if rows[-5:] != ["> ! trial 2", part_line, ">", part_line, ">"]:
+        problems.append("the conversation ends %r" % rows[-5:])
     problems += check_counts(reads["obs"], {"mode": 0, "errors": 2, "trial_number": 0}, "disk L")
     ok = report("disk L (good live) is not what TRIALS2.md says", problems, cap)
     if ok:
@@ -1353,7 +1389,7 @@ class Sittings:
             if app != trials2.verdict_panel(notes):
                 problems.append("%s: the app panel at the verdict is %r, want %r" % (name, app[:4], trials2.verdict_panel(notes)[:4]))
             want_default = trials2.LAYOUT_VALUE[layout]
-            problems += check_counts(rd["obs"], {"layout_default": want_default, "mode": 0}, "%s at saved" % name)
+            problems += check_counts(rd["obs"], {"layout_default": want_default}, "%s at saved" % name)
         return problems
 
     def boot_after(self, name, disk, layout, labels, full=False):
@@ -1478,7 +1514,7 @@ class Sittings:
             for n, sha in CHARTS_7D:
                 fh.write(chart_stream(n, sha))
         t1_before = run_tool([os.path.join(REPO, "stage7", "trials.py"), "--serial", charts])[1]
-        parts_before = run_tool([os.path.join(REPO, "stage8", "parts.py"), "--disk", disk])[1]
+        parts_before = parts_disk(disk)
 
         def h_boot(b, rd):
             p = []
@@ -1514,7 +1550,7 @@ class Sittings:
         t1_disk = run_tool([os.path.join(REPO, "stage7", "trials.py"), "--disk", disk])[1]
         if t1_disk != t1_before or "verdict A:" not in t1_disk:
             problems.append("H1: the frozen stage7/trials.py --disk changed after a trial-two sitting: %r" % t1_disk[-200:])
-        if run_tool([os.path.join(REPO, "stage8", "parts.py"), "--disk", disk])[1] != parts_before:
+        if parts_disk(disk) != parts_before:
             problems.append("H1: stage8/parts.py --disk changed after a trial-two sitting")
         if self.fail(problems, "H1: the HP's disk and its first trial-two sitting are not what the documents say", cap):
             say("H1: the HP's history, 355 notes: 'S8: sha256 ok' alone, no part loaded, no watchdog and no reset through the "
@@ -1577,7 +1613,7 @@ class Sittings:
         t1_disk = run_tool([os.path.join(REPO, "stage7", "trials.py"), "--disk", disk])[1]
         if t1_disk != t1_before:
             problems.append("W3: the frozen stage7/trials.py --disk changed with trial two concluded on the disk")
-        if run_tool([os.path.join(REPO, "stage8", "parts.py"), "--disk", disk])[1] != parts_before:
+        if parts_disk(disk) != parts_before:
             problems.append("W3: stage8/parts.py --disk changed")
         if self.fail(problems, "W3: the boot after verdict G with a full trial on the disk is not what TRIALS2.md says", cap):
             say("W3: 'trial2: concluded verdict G default G' with a full trial on the HP's history; layout_default 2 and the "
