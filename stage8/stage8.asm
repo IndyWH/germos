@@ -1084,6 +1084,14 @@ handle_key:
         je      .question
         cmp     eax, '!'
         je      .request
+        cmp     dword [line_len], 0     ; ring 8t (TRIALS2.md, Amendment 1): Enter on an
+        jne     .not_empty              ; empty prompt line while trial two is in
+        call    t2_in_progress          ; progress is "! trial 2", its refusals included
+        test    eax, eax
+        jz      .not_empty
+        call    trial2_start
+        ret
+.not_empty:
         call    line_is_reserved        ; A1: a line beginning "trial " is never a
         test    eax, eax                ; note - the journal's prefix is the machine's
         jnz     .reserved
@@ -7622,6 +7630,144 @@ journal_scan2:
 .walked:
         ret
 
+
+; ---------------------------------------------------------------------------
+; Ring 8t - trial two at boot (trials/TRIALS2.md, Amendment 1): the replay
+; counts a trial2 note and never draws it; after the replay one raw serial
+; line names the sitting due, or the verdict and the default; and while the
+; trial is in progress the conversation offers the next sitting, and Enter
+; on an empty prompt line is "! trial 2".
+; ---------------------------------------------------------------------------
+
+; note2_boot_check - sector_buf holds a record (notebook_replay's walk): EAX
+; = 1 for a trial2 note, which the replay does not draw, else 0. A sitting-
+; start note counts in t2_sittings; a verdict note sets t2_verdict and, as
+; the last verdict of either family, layout_default (1 B, 2 G). Preserves
+; every other register.
+note2_boot_check:
+        push    rcx
+        push    rdx
+        push    rsi
+        xor     eax, eax
+        movzx   ecx, word [sector_buf + 8]
+        cmp     ecx, 7
+        jb      .out
+        lea     rsi, [sector_buf + NB_TEXT_OFF]
+        cmp     dword [rsi], 'tria'
+        jne     .out
+        cmp     word [rsi + 4], 'l2'
+        jne     .out
+        cmp     byte [rsi + 6], ' '
+        jne     .out
+        mov     dword [t2_any], 1
+        cmp     ecx, 16                 ; "trial2 verdict L" at the least
+        jb      .sitting
+        cmp     dword [rsi + 7], 'verd'
+        jne     .sitting
+        cmp     dword [rsi + 11], 'ict '
+        jne     .yes
+        mov     dword [t2_verdict], 1
+        movzx   eax, byte [rsi + 15]
+        mov     [t2_vletter], eax
+        mov     edx, 2
+        cmp     al, 'G'
+        je      .default
+        mov     edx, 1
+.default:
+        mov     [obs_page + OBS_LAYOUT_DEFAULT], rdx
+        jmp     .yes
+.sitting:
+        cmp     ecx, 19                 ; "trial2 sitting n GBBG" at the least
+        jb      .yes
+        cmp     dword [rsi + 7], 'sitt'
+        jne     .yes
+        add     rsi, 15
+        call    parse_dec               ; n
+        inc     rsi
+        cmp     dword [rsi], 'GBBG'
+        je      .start
+        cmp     dword [rsi], 'BGGB'
+        jne     .yes
+.start:
+        inc     dword [t2_sittings]
+.yes:
+        mov     eax, 1
+.out:
+        pop     rsi
+        pop     rdx
+        pop     rcx
+        ret
+
+; t2_in_progress - EAX = 1 while trial two is in progress: a trial2 sitting
+; note on the notebook and no trial2 verdict note.
+t2_in_progress:
+        xor     eax, eax
+        cmp     dword [t2_sittings], 0
+        je      .out
+        cmp     dword [t2_verdict], 0
+        jne     .out
+        mov     eax, 1
+.out:
+        ret
+
+; t2_boot_lines - after the replay, on a notebook holding a trial2 note: the
+; raw line "trial2: due sitting N" and the offer "trial 2 sitting N: press
+; Enter to start" while in progress, or "trial2: concluded verdict L default
+; L" once concluded. Nothing on any other notebook. Clobbers registers.
+t2_boot_lines:
+        cmp     dword [t2_any], 0
+        je      .ret
+        cmp     dword [t2_verdict], 0
+        jne     .concluded
+        lea     rdi, [t2_line]
+        lea     rsi, [msg_due]
+        call    str_copy
+        mov     eax, [t2_sittings]
+        inc     eax
+        call    put_dec
+        mov     al, 13
+        stosb
+        mov     al, 10
+        stosb
+        mov     byte [rdi], 0
+        lea     rsi, [t2_line]
+        call    serial_raw_puts
+        lea     rdi, [t2_line]
+        lea     rsi, [msg_offer_a]
+        call    str_copy
+        mov     eax, [t2_sittings]
+        inc     eax
+        call    put_dec
+        lea     rsi, [msg_offer_b]
+        call    str_copy
+        mov     byte [rdi], 0
+        lea     rsi, [t2_line]
+        call    console_puts
+        mov     al, 10
+        call    console_putc
+        ret
+.concluded:
+        lea     rdi, [t2_line]
+        lea     rsi, [msg_concl]
+        call    str_copy
+        mov     eax, [t2_vletter]
+        stosb
+        lea     rsi, [msg_default_w]
+        call    str_copy
+        mov     rax, [obs_page + OBS_LAYOUT_DEFAULT]
+        lea     rsi, [layout_letters]
+        mov     al, [rsi + rax]
+        stosb
+        mov     al, 13
+        stosb
+        mov     al, 10
+        stosb
+        mov     byte [rdi], 0
+        lea     rsi, [t2_line]
+        call    serial_raw_puts
+.ret:
+        ret
+
 ; parse_dec - RSI at a decimal number: EAX = its value, RSI past its digits.
 parse_dec:
         xor     eax, eax
@@ -7861,6 +8007,9 @@ notebook_replay:
         lea     rdi, [sector_buf]
         call    disk_rw
         call    note_verdict_check      ; ring 7d: the last "trial verdict" sets the default
+        call    note2_boot_check        ; ring 8t: a trial2 note is counted, never drawn
+        test    eax, eax
+        jnz     .next
         movzx   ecx, word [sector_buf + 8]
         lea     rsi, [sector_buf + NB_TEXT_OFF]
 .char:
@@ -7870,6 +8019,7 @@ notebook_replay:
         jnz     .char
         mov     al, 10
         call    console_putc
+.next:
         inc     ebx
         jmp     .note
 .done:
@@ -7877,6 +8027,7 @@ notebook_replay:
         je      .ret
         call    choices_update          ; ring 7d: the row in the verdict's layout
 .ret:
+        call    t2_boot_lines           ; ring 8t: the boot line and the offer
         ret
 
 ; notebook_append - the line buffer becomes the next record on disk, written
