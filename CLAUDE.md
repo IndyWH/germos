@@ -162,6 +162,21 @@ python3 stage8/parts.py --disk stage8/out/molt/disk.G.img   # the molt table and
                        # the HP's chart; --seed the record rebuilt; --example
                        # PARTS.md's and SEED.md's worked examples
 
+# Ring 8t - trial two (G against B), between rings 8a and 8b; the build is seed 2
+./trials/test-trial2.sh   # acceptance tests 1-4 on the 7c twin, every run appended
+                       # to trials/out/gate-8t.log with "8t test <n>: PASS|FAIL"
+                       # lines and a last "8t gate: PASS|FAIL": TRIALS2.md read
+                       # cold, the HP's history rebuilt from the pinned charts;
+                       # the G and B rows and the five refusals by '! trial 2' and
+                       # by Enter; four sittings to verdict B, the HP's history
+                       # to verdict G, the save rule, the times hidden, the boot
+                       # line; the payload table and ring 8a's whole gate with
+                       # 7d, 7c, 7b and 7a inside it. Starts no broker; needs
+                       # 9999, 9998 and 9997 free for 8a's gate. About 66 min.
+python3 trials/trials2.py --status trials/out/hp-8t.log   # the blind read of the HP's
+                       # chart: procedure facts only, no time or score before a
+                       # verdict line; --disk IMG, --serial LOG, --example
+
 # The mock brokers (what the gates talk to; never spend a token)
 python3 broker/broker.py --mock --port 9999     # Stage 4
 python3 broker/plans.py --mock                  # Stage 6 (answers, apps, installs)
