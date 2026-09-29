@@ -322,6 +322,11 @@ PROTECTED = (
     "stage8/fixtures/i8042-liar.asm",
     "stage8/fixtures/i8042-liar.bin",
     "stage8/loader.asm",
+    # Ring 8t (trials/plan-8t.md item 9): trial two's document, tool, checker and gate.
+    "trials/TRIALS2.md",
+    "trials/trials2.py",
+    "trials/checktrials2.py",
+    "trials/test-trial2.sh",
 )
 
 BASENAMES = sorted({os.path.basename(p) for p in PROTECTED})

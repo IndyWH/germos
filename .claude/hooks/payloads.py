@@ -1011,6 +1011,45 @@ CASES += [(bash(c), DENY, "ring 8a directory rule: " + w) for c, w in [
     ("rm -rf -- stage3", "after --"),
     ("mv stage8/HP-8a.md stage8", "a file moved into a directory holding frozen files: any argument counts"),
 ]]
+# Ring 8t, item 9 (trials/plan-8t.md): trial two's four files frozen; the
+# directory rule covers trials/; the scratch under trials/out/ stays free.
+FROZEN_8T = ["trials/TRIALS2.md", "trials/trials2.py", "trials/checktrials2.py", "trials/test-trial2.sh"]
+STICK8T = "-device qemu-xhci -drive if=none,id=stick,format=raw,file=trials/out/t8/stick.V1.img -device usb-storage,drive=stick "
+DISK8T = "-drive if=none,id=d0,format=raw,file=trials/out/t8/disk.V.img -device ide-hd,drive=d0,bus=ide.1 "
+CASES += [(c, v, "ring 8t freeze: " + w) for c, v, w in freeze_cases(FROZEN_8T)]
+CASES += [
+    (write("trials/TRIALS2.md"), DENY, "ring 8t freeze: the document"),
+    (edit("trials/trials2.py"), DENY, "ring 8t freeze: Edit on the tool"),
+    (write("trials/checktrials2.py"), DENY, "ring 8t freeze: the checker"),
+    (edit("trials/test-trial2.sh"), DENY, "ring 8t freeze: Edit on the gate"),
+    (bash("sed -i 's/OFFSET_MS = 39/OFFSET_MS = 45/' trials/checktrials2.py"), DENY, "ring 8t freeze: sed -i on a run constant"),
+    (bash("sed -i 's/SLACK_MS = 30/SLACK_MS = 60/' trials/checktrials2.py"), DENY, "ring 8t freeze: sed -i widening the slack"),
+    (bash("echo x >> trials/TRIALS2.md"), DENY, "ring 8t freeze: appending to the document"),
+    (bash("python3 - <<'EOF'\nopen('trials/trials2.py','w').write('x')\nEOF"), DENY, "ring 8t freeze: python writing the tool"),
+    (bash("rm -rf trials"), DENY, "ring 8t directory rule: trials/ holds frozen files"),
+    (bash("mv trials old-trials"), DENY, "ring 8t directory rule: trials/ moved"),
+    (bash("rm -f trials/*.py"), DENY, "ring 8t directory rule: a glob covering the tool and the checker"),
+    (bash("git rm -r trials"), DENY, "ring 8t directory rule: git rm"),
+    (write("stage8/stage8.asm"), ALLOW, "ring 8t freeze allows: the guest is not frozen"),
+    (write("trials/HP-8t.md"), ALLOW, "ring 8t freeze allows: the owner's procedure is paperwork"),
+    (write("trials/glass-8t-section.md"), ALLOW, "ring 8t freeze allows: the section for the owner's hand"),
+    (write("trials/plan-8t.md"), ALLOW, "ring 8t freeze allows: the plan is paperwork"),
+    (write("trials/spec-trial2.md"), ALLOW, "ring 8t freeze allows: the pre-registration takes dated amendments"),
+    (write("trials/out/probe8t/i8/patch8t.py"), ALLOW, "ring 8t freeze allows: the draft under out/"),
+    (bash("./trials/test-trial2.sh"), ALLOW, "ring 8t freeze allows: running the gate"),
+    (bash("./trials/test-trial2.sh 2>&1 | tail -20"), ALLOW, "ring 8t freeze allows: the gate piped"),
+    (bash("tail -5 trials/out/gate-8t.log"), ALLOW, "ring 8t freeze allows: reading the gate's log"),
+    (bash("python3 trials/checktrials2.py --sittings"), ALLOW, "ring 8t freeze allows: the checker"),
+    (bash("python3 trials/trials2.py --status trials/out/hp-8t.log"), ALLOW, "ring 8t freeze allows: the blind read"),
+    (bash("python3 trials/trials2.py --disk trials/out/t8/disk.V.img"), ALLOW, "ring 8t freeze allows: the tool on a disk image"),
+    (bash("rm -rf trials/out/t8 trials/out/probe8t"), ALLOW, "ring 8t freeze allows: the gate's and the probes' scratch"),
+    (bash("git add trials/TRIALS2.md trials/trials2.py trials/checktrials2.py trials/test-trial2.sh .claude/hooks/protect-tests.py .claude/hooks/payloads.py"),
+     ALLOW, "ring 8t freeze allows: git add"),
+    (bash(QEMU7 + DISPLAY6B + STICK8T + DISK8T + CAGE7B + "-display none -serial file:trials/out/t8/serial.V1.txt -monitor stdio"),
+     ALLOW, "bodyguard allows: a trial-two boot under trials/out/"),
+    (bash(QEMU7 + DISPLAY6B + STICK8T + "-drive if=none,id=d0,format=raw,file=trials/disk.img -device ide-hd,drive=d0,bus=ide.1 " + CAGE7B),
+     DENY, "bodyguard: a disk under trials/ but outside out/ is denied"),
+]
 CASES += [(bash(c), ALLOW, "ring 8a directory rule allows: " + w) for c, w in [
     ("rm -f stage8/HP-8a.md", "an ordinary file beside frozen files"),
     ("git mv stage8/HP-8a.md stage8/HP-8a.old.md", "git mv of an ordinary file beside frozen files"),
