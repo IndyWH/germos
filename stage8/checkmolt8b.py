@@ -837,9 +837,57 @@ def run_shadow():
     return 0
 
 
+# ---------------------------------------------- test 4: the cage -----------
+
+FROZEN_8B = ["plans/parts/i8042.md", "stage8/bench.asm", "stage8/bench.py", "stage8/rehearse8b.py", "stage8/test-8b.sh", "stage8/checkmolt8b.py"] + \
+    ["stage8/fixtures/i8042-%s.%s" % (n, e) for n in CANNED for e in ("asm", "bin")]
+ALLOWED_8B = ["python3 broker/molt.py --grow i8042 --model claude-opus-5-5 2>&1 | tee stage8/out/grow-8b.log",
+              "python3 stage8/hp-day.py", "python3 broker/molt.py --collect",
+              "PATH=stage8/out/toolchain/nasm-3.02/bin:$PATH python3 stage8/parts.py --seed",
+              "python3 stage8/bench.py --plan plans/parts/i8042.md --candidate stage8/fixtures/i8042-fast.bin"]
+
+
 def run_cage():
-    say("test 4 is not written yet")
-    return 1
+    import bench
+    cm = seams(os.path.join(WORK, "cage"))
+    problems = []
+    for rel in FROZEN_8B:
+        path = os.path.join(REPO, rel)
+        if cm.tool_verdict("Write", {"file_path": path, "content": "x"}) != "DENY":
+            problems.append("the hook lets Write reach %s" % rel)
+        if cm.tool_verdict("Edit", {"file_path": path, "old_string": "a", "new_string": "b"}) != "DENY":
+            problems.append("the hook lets Edit reach %s" % rel)
+    for cmd in ALLOWED_8B:
+        if cm.tool_verdict("Bash", {"command": cmd}) != "ALLOW":
+            problems.append("the hook denies %r" % cmd)
+    r = subprocess.run([sys.executable, os.path.join(REPO, ".claude", "hooks", "payloads.py")], capture_output=True, text=True)
+    last = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else ""
+    if r.returncode or " 0 wrong" not in last:
+        problems.append("the payload table: %s" % last)
+    else:
+        say(last)
+    if not report(problems, "the new paths frozen against Write and Edit; the day's commands allowed"):
+        return 1
+    chardev(cm)
+    d = os.path.join("stage8", "out", "molt8b", "cage")
+    disk, copy, serial = (os.path.join(REPO, d, n) for n in ("disk.c.img", "stick.c.img", "serial.c.txt"))
+    argv = cm.boot_argv(cm.FATES_SMP, disk, copy, serial, "600")
+    qemu = argv[4:]
+    problems += cm.checkmetal.check_argv_7c(qemu, cm.RELAY_PORT_8A, cm.checkmetal.MAC)
+    for flag in cm.ARGV_REFUSED_8A:
+        if flag in qemu:
+            problems.append("a gate boot carries %s" % flag)
+    if qemu.count("-serial") != 1 or qemu[qemu.index("-serial") + 1] != "chardev:s0" or qemu.count("-chardev") != 1:
+        problems.append("the serial is not one chardev: %r" % qemu)
+    ch = qemu[qemu.index("-chardev") + 1]
+    if not ch.startswith("socket,id=s0,path=") or ",server=on,wait=off,logfile=" not in ch or "host=" in ch or "port=" in ch:
+        problems.append("the chardev is not a unix socket with a log: %s" % ch)
+    b = bench.qemu_argv(os.path.join(REPO, d, "esp.img"), os.path.join(REPO, d, "bench.log"))
+    if "-icount" not in b or b[b.index("-smp") + 1] != "1" or "-netdev" in b or "-nic" in b:
+        problems.append("the bench's command is not -icount at -smp 1 with no network: %r" % b)
+    if not report(problems, "the order line's command passes ring 7c's argv check; -icount is the bench's alone, with no network"):
+        return 1
+    return 0
 
 
 def main(argv):
