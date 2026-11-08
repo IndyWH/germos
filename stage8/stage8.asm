@@ -10055,8 +10055,19 @@ part_service:
         push    rax
         mov     eax, [mse_head]
         push    rax
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        push    rax
         mov     eax, r13d
         call    mouse_byte
+        pop     rcx
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        sub     rax, rcx
+        lea     rcx, [tsc_gen]
+        call    tsc_tally
         pop     rcx                     ; the ring's head before
         pop     rdx                     ; the packets before
         cmp     rdx, [obs_page + OBS_PACKETS]
@@ -10207,7 +10218,20 @@ part_loop:
 kbd_next_shadow:
         push    r12
         mov     r12d, [kbd_tail]
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        push    rax
         call    kbd_next
+        pop     rcx
+        push    rax                     ; AL, the key
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        sub     rax, rcx
+        lea     rcx, [tsc_gen]
+        call    tsc_tally
+        pop     rax
         mov     ecx, [kbd_tail]
         cmp     ecx, r12d
         je      .out
@@ -10276,6 +10300,10 @@ feed_raw:
         jz      .call
         inc     dword [cnt_pk]
 .call:
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        mov     [tsc_t0], rax
         mov     edi, r12d
         mov     esi, r13d
         mov     rdx, rbx
@@ -10286,6 +10314,15 @@ feed_raw:
 .table:
         mov     eax, PH_BYTE
         call    part_call
+        cmp     dword [part_state], ST_SHADOW
+        jne     .fed
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        sub     rax, [tsc_t0]
+        lea     rcx, [tsc_part]
+        call    tsc_tally
+.fed:
         lea     eax, [r15 + 1]
         mov     [fed_seq], eax
         inc     dword [raw_tail]
@@ -10813,7 +10850,8 @@ order_count:
         mov     word [rdi], 0x0A0D
         mov     byte [rdi + 2], 0
         lea     rsi, [order_out]
-        jmp     serial_raw_puts
+        call    serial_raw_puts
+        jmp     tsc_line
 
 ; order_restart - the line on serial, the notice on the console, and the
 ; reset order_poll makes when ORDER_NOTICE_MS have passed.
@@ -10850,6 +10888,81 @@ order_restart:
         mov     dword [restart_pending], 1
 .ret:   ret
 
+; tsc_tally - RAX = cycles, RCX = a histogram of TSC_BUCKETS dwords: one
+; more in the bucket of cycles / TSC_SHIFT's width, the last bucket catching
+; the rest. Preserves every other register.
+%define TSC_BUCKETS     1024
+%define TSC_SHIFT       2
+tsc_tally:
+        shr     rax, TSC_SHIFT
+        cmp     rax, TSC_BUCKETS - 1
+        jbe     .in
+        mov     eax, TSC_BUCKETS - 1
+.in:    lock inc dword [rcx + rax * 4]
+        ret
+
+; tsc_median - RSI = a histogram: EAX = its median in cycles, EDX = its count.
+tsc_median:
+        xor     edx, edx
+        xor     ecx, ecx
+.sum:   add     edx, [rsi + rcx * 4]
+        inc     ecx
+        cmp     ecx, TSC_BUCKETS
+        jb      .sum
+        mov     r8d, edx
+        shr     r8d, 1
+        xor     ecx, ecx
+        xor     eax, eax
+.walk:  add     eax, [rsi + rcx * 4]
+        cmp     eax, r8d
+        ja      .got
+        inc     ecx
+        cmp     ecx, TSC_BUCKETS - 1
+        jb      .walk
+.got:   mov     eax, ecx
+        shl     eax, TSC_SHIFT
+        ret
+
+; tsc_line - a shadow boot's count point: "tsc: i8042 <boot> generic <median>
+; part <median> bytes <n>", raw and never on the notebook.
+tsc_line:
+        cmp     dword [part_state], ST_SHADOW
+        jne     .ret
+        lea     rdi, [order_out]
+        lea     rsi, [msg_tsc_a]
+        call    str_copy
+        mov     eax, [boot_n]
+        call    put_dec
+        lea     rsi, [msg_tsc_b]
+        call    str_copy
+        push    rdi
+        lea     rsi, [tsc_gen]
+        call    tsc_median
+        pop     rdi
+        call    put_dec
+        lea     rsi, [msg_tsc_c]
+        call    str_copy
+        push    rdi
+        lea     rsi, [tsc_part]
+        call    tsc_median
+        pop     rdi
+        push    rdx
+        call    put_dec
+        lea     rsi, [msg_tsc_d]
+        call    str_copy
+        pop     rax
+        call    put_dec
+        mov     word [rdi], 0x0A0D
+        mov     byte [rdi + 2], 0
+        lea     rsi, [order_out]
+        jmp     serial_raw_puts
+.ret:   ret
+
+msg_tsc_a:              db 'tsc: i8042 ', 0
+msg_tsc_b:              db ' generic ', 0
+msg_tsc_c:              db ' part ', 0
+msg_tsc_d:              db ' bytes ', 0
+
 order_busy:
         lea     rsi, [msg_order_busy]
         jmp     serial_raw_puts
@@ -10878,6 +10991,7 @@ order_do_reset:
         cmp     dword [part_loaded], 0
         je      .flush
         call    count_point
+        call    tsc_line
 .flush:
         mov     al, 0xEA
         xor     ebx, ebx
@@ -12584,6 +12698,10 @@ order_last_key: resq    1               ; the TSC of the last key handle_key too
 order_buf:      resb    48
 order_body:     resb    48
 order_out:      resb    80
+tsc_t0:         resq    1
+                alignb  4
+tsc_gen:        resd    1024            ; the generic's cycles per byte, this boot
+tsc_part:       resd    1024            ; the part's
 gen_events:     resd    1               ; the generic's events this boot
 cmp_ended:      resd    1               ; shadow: the raw ring overflowed, the comparison is over
 cmp_end:        resd    1               ; ... at this sequence number, the first byte not given to the part
