@@ -543,8 +543,10 @@ test in the twin.
   gitignored, and the frozen checkers assume they exist (test 3 of the 7c
   gate assembles `stage6/app.asm` into `stage6/out/app.check.bin` and fails
   "the app fixture is not what the repository says" when the directory is
-  missing). Before the first gate on a new machine: `mkdir -p stage{0..7}/out`
-  (Omarchy on mlrig, 22 September 2026).
+  missing). Before the first gate on a new machine:
+  `mkdir -p stage{0..8}/out trials/out stage7/out/metal` (Omarchy on mlrig,
+  22 September 2026; the second correction on Ubuntu 26.10, 8 November
+  2026, when the 8t gate's first run failed on `stage7/out/metal` alone).
 - **QEMU 11 prints `xp` addresses as eight hex digits, QEMU 10 as sixteen.**
   The monitor parser `XP_LINE` in `broker/twin.py` demanded exactly sixteen,
   so under QEMU 11.1.1 every obs-page and surface read returned "xp read 0
