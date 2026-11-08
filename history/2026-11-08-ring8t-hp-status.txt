@@ -1,0 +1,57 @@
+boot 1: trial2: due sitting 2
+boot 2: trial2: due sitting 2
+sitting 2 opened BGGB GBBG
+warm-up hits 10 misses 2
+sitting 2 done: hits 160 misses 1
+preference saved
+boot 3: trial2: due sitting 3
+sitting 3 opened GBBG BGGB
+warm-up hits 10 misses 0
+sitting 3 done: hits 160 misses 1
+preference saved
+boot 4: trial2: due sitting 4
+sitting 4 opened BGGB GBBG
+warm-up hits 10 misses 0
+sitting 4 done: hits 160 misses 0
+preference saved
+verdict line present
+boot 5: trial2: concluded verdict B default B
+
+sitting 2 BGGB GBBG
+1 B 20 0 1598
+2 G 20 0 1557
+3 G 20 0 1468
+4 B 20 1 1522
+5 G 20 0 1552
+6 B 20 0 1394
+7 B 20 0 1300
+8 G 20 0 1517
+done
+prefer b
+
+sitting 3 GBBG BGGB
+1 G 20 0 1429
+2 B 20 0 1354
+3 B 20 0 1371
+4 G 20 0 1273
+5 B 20 0 1416
+6 G 20 0 1409
+7 G 20 1 1483
+8 B 20 0 1260
+done
+prefer b
+
+sitting 4 BGGB GBBG
+1 B 20 0 1211
+2 G 20 0 1193
+3 G 20 0 1200
+4 B 20 0 1215
+5 G 20 0 1314
+6 B 20 0 1179
+7 B 20 0 1274
+8 G 20 0 1395
+done
+prefer b
+
+no verdict: 3 done sitting(s), 4 needed
+boot line: trial2: concluded verdict B default B

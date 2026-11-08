@@ -1,0 +1,23 @@
+=== hp-stick 2026-11-08T17:42:53+00:00 at 054a8cf ===
+mkstick: stick.img 69206016 bytes (135168 sectors); the ESP at LBA 2048..133119 holds EFI/BOOT/BOOTX64.EFI, 61440 bytes
+build: seed 2 (c221feca2508f7b6), stick image 69206016 bytes
+NAME   SIZE MODEL          TRAN MOUNTPOINTS
+sdc    7.4G Storage Device usb  
+└─sdc1 7.4G                     /run/media/indy/BIOS
+This erases Storage Device, 7 GB: /dev/disk/by-id/usb-USB_Mass_Storage_Device_812320090519-0:0
+Press y to write the stick, any other key to stop: 
+Unmounted /dev/sdc1.
+sudo: Authentication failed, try again.
+/dev/sdc1: 8 bytes were erased at offset 0x00000052 (vfat): 46 41 54 33 32 20 20 20
+/dev/sdc1: 1 byte was erased at offset 0x00000000 (vfat): eb
+/dev/sdc1: 2 bytes were erased at offset 0x000001fe (vfat): 55 aa
+/dev/disk/by-id/usb-USB_Mass_Storage_Device_812320090519-0:0: 2 bytes were erased at offset 0x000001fe (dos): 55 aa
+/dev/disk/by-id/usb-USB_Mass_Storage_Device_812320090519-0:0: calling ioctl to re-read partition table: Success
+16+1 records in
+16+1 records out
+69206016 bytes (69 MB, 66 MiB) copied, 9.46247 s, 7.3 MB/s
+NAME   SIZE FSTYPE MOUNTPOINTS
+sdc    7.4G        
+└─sdc1  64M vfat   
+cmp: the stick matches the image byte for byte; the partition is vfat
+DONE: seed 2 is on the stick. Unplug it and put it in the HP.
