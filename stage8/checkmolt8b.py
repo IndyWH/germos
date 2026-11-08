@@ -511,9 +511,330 @@ def run_pipeline():
     return 0 if ok else 1
 
 
+# ------------------------------------------------ test 3: the orders ------
+
+ORDER_S = 5.0           # an order's answer on serial
+GAP_S = 6.0             # longer than the guest's 5 s since the last key
+NOTICE_S = 3.0          # order: restart to the firmware's first byte, at least
+NOTICE_LIMIT_S = 15.0   # and at most, from the runs of items 3 and 12
+SICK_RESET_S = 35.0     # the sick part's ready line to the next boot's first OVMF byte
+CHAIN_T_S = 1200        # one QEMU carries six boots
+NOTE_A = "this line crosses a reboot"
+NOTE_B = "more words through the part so that it decodes well past a hundred bytes"
+RX_COUNT = rb"order: count (\d+) (\d+) (\d+)\r\n"
+RX_TSC = rb"tsc: i8042 (\d+) generic (\d+) part (\d+) bytes (\d+)\r\n"
+
+
+def chardev(cm):
+    """Serial through a socket and its log, so the human can send orders.
+    The drain thread matters: a client that does not read stops the UART."""
+    real = cm.boot_argv
+
+    def argv(smp, disk, stick_copy, serial_path, t):
+        a = real(smp, disk, stick_copy, serial_path, t)
+        i = a.index("-serial")
+        sock = serial_path + ".sock"
+        if os.path.exists(sock):
+            os.remove(sock)
+        a[i:i + 2] = ["-chardev", "socket,id=s0,path=%s,server=on,wait=off,logfile=%s" % (sock, serial_path),
+                      "-serial", "chardev:s0"]
+        Human.sock_path = sock
+        return a
+
+    class Human(cm.Human8a):
+        sock_path = None
+        sk = None
+
+        def step(self, s):
+            if s[0] != "order":
+                return super().step(s)
+            if self.sk is None:
+                self.sk = socket.socket(socket.AF_UNIX)
+                self.sk.connect(self.sock_path)
+                threading.Thread(target=self.drain, args=(self.sk,), daemon=True).start()
+            for b in s[1].encode() + b"\n":
+                self.sk.send(bytes([b]))
+                time.sleep(0.005)
+            return None
+
+        @staticmethod
+        def drain(sk):
+            try:
+                while sk.recv(65536):
+                    pass
+            except OSError:
+                pass
+
+        def run(self, *a, **k):
+            try:
+                return super().run(*a, **k)
+            finally:
+                if self.sk is not None:
+                    self.sk.close()
+
+    cm.boot_argv = argv
+    cm.Human8a = Human
+
+
+def order(text, rx, label):
+    return [("order", text), ("await", rx, ORDER_S, label, None)]
+
+
+def restart(i, wiggles=0):
+    """The order, the notice on the console, the firmware's first byte."""
+    steps = order("germos restart", rb"order: restart\r\n", "rs%d" % i) + [("surfaces", "notice%d" % i)]
+    if wiggles:
+        steps.append(("wiggle", wiggles))
+    return steps + [("banner", NOTICE_LIMIT_S, "reset%d" % i, "rs%d" % i)]
+
+
+def even(n):
+    return n + (n % 2)
+
+
+def table_of(disk):
+    r = subprocess.run([sys.executable, os.path.join(HERE, "parts.py"), "--disk", disk], capture_output=True, text=True)
+    return r.stdout
+
+
+def count_notes(notes, boot=None):
+    out = []
+    for n in notes:
+        m = re.fullmatch(r"molt i8042 count (\d+) (\d+) (\d+) (\d+)", n)
+        if m and (boot is None or int(m.group(1)) == boot):
+            out.append(tuple(int(x) for x in m.groups()))
+    return out
+
+
+def run_inert(cm, f, problems):
+    disk = blank_disk(cm, f, "inert")
+    before = f.notes(disk)
+    steps = [("ready", "ready"), ("order", "germos count"), ("order", "germos restart"), ("order", "germos molt i8042"),
+             ("order", "banana"), ("sleep", GAP_S), ("keys", "hello there\n"), ("sleep", cm.WORD_S), ("surfaces", "w")]
+    reads, p = f.boot(disk, "inert", steps)
+    problems += p
+    if reads:
+        if b"order:" in reads["capture"] or b"tsc:" in reads["capture"]:
+            problems.append("inert: an order was answered on a boot with no molt note")
+        if reads["capture"].count(b"S7: keyboard ready") != 1:
+            problems.append("inert: the machine restarted, or never came up")
+        if f.notes(disk) != before + ["hello there"]:
+            problems.append("inert: the notes are %r" % f.notes(disk)[len(before):])
+    return not problems
+
+
+def run_chain(cm, f, parts, problems):
+    """Fetch, undo, fetch by order; three shadow boots; the take; three live."""
+    import molt
+    import rehearse8b
+    work = cm.MOLT_OUT
+    fast = open(fixture("fast"), "rb").read()
+    sha = parts.sha16(hashlib.sha256(fast).hexdigest())
+    germline = os.path.join(work, "germline.fast")
+    key = parts.molt_key(SLOT, f.identity)
+    molt.part_write(germline, key, {"key": key, "verdict": "beats", "sha256": hashlib.sha256(fast).hexdigest(), "name": "fast",
+                                    "threshold": {"boots": 3, "keyboard bytes": 1000, "mouse packets": 5000}}, fast)
+    disk = blank_disk(cm, f, "chain")
+    shadow_rx = rb"molt: i8042 shadow %s 3 1000 5000\r\n" % sha.encode()
+
+    reads, p = serve_boot(cm, f, disk, "c-fetch", germline, fetch_steps(cm, [("await", shadow_rx, cm.ANSWER_S, "fetched", None)]))
+    problems += p
+    if not reads:
+        return None
+
+    # A shadow boot: every refusal, and the undo by order.
+    steps = [("ready", "ready")] + order("germos banana", rb"order: \?\r\n", "q1") + order("germos", rb"order: \?\r\n", "q2") + \
+        order("germos restart", rb"order: not healthy yet\r\n", "nh") + [("sleep", GAP_S)] + \
+        order("germos molt undo", rb"molt: i8042 undo generic\r\n", "undone") + [("await", rb"order: done\r\n", ORDER_S, "d0", None), ("sleep", cm.WORD_S)]
+    reads, p = f.boot(disk, "c-undo", steps)
+    problems += p
+    if not reads:
+        return None
+
+    # A boot with a molt note and no part: the main loop's orders.
+    steps = [("ready", "ready"), ("sleep", GAP_S)] + \
+        order("germos molt i8042", shadow_rx, "refetched") + [("await", rb"order: done\r\n", ORDER_S, "d1", None), ("keys", "half a line")] + \
+        order("germos molt", rb"order: busy\r\n", "busy") + [("sleep", GAP_S)] + \
+        order("germos molt", rb"order: done\r\n", "d2") + [("sleep", cm.WORD_S), ("surfaces", "t")]
+    reads, p = serve_boot(cm, f, disk, "c-refetch", germline, steps)
+    problems += p
+    if not reads:
+        return None
+    rows = conv(reads, "t")
+    if any("half a line" in r for r in rows) or rows[-2:] != ["> ! molt", ">"]:
+        problems.append("c-refetch: the half line was not rubbed out: %r" % rows[-4:])
+    if any("order:" in r for r in rows):
+        problems.append("c-refetch: an order line reached the conversation")
+
+    # Three shadow boots and three live boots, each by restart, in one QEMU.
+    steps, start, kb_each, pk_each = [], 0, 334, even(1667)
+    for i in (1, 2, 3):
+        notes, start = cm.typed_notes(kb_each, start, parts)
+        steps += [("ready", "r%d" % i), ("mark", "a%d" % i)]
+        if i == 1:
+            steps += [("sleep", GAP_S)] + order("germos molt take i8042", rb"order: done\r\n", "early") + [("sleep", cm.WORD_S), ("surfaces", "early")]
+        steps += [("keys", t + "\n") for t in notes] + [("wiggle", pk_each),
+                  ("await", rb"S8: healthy \d+\r\n", parts.HEALTH_S + cm.HEALTH_SLACK_S, "h%d" % i, "r%d" % i),
+                  ("sleep", 1.0), ("mark", "b%d" % i)] + order("germos count", RX_COUNT, "c%d" % i) + \
+            [("await", RX_TSC, ORDER_S, "t%d" % i, None)]
+        if i < 3:
+            steps += restart(i, wiggles=40 if i == 2 else 0)
+    steps += [("sleep", GAP_S)] + order("germos molt take i8042", rb"molt: i8042 live %s\r\n" % sha.encode(), "taken") + \
+        [("await", rb"order: done\r\n", ORDER_S, "d3", None), ("sleep", cm.WORD_S)] + restart(3)
+    for i in (4, 5, 6):
+        steps += [("ready", "r%d" % i)]
+        if i == 4:
+            steps += [("keys", NOTE_A + "\n"), ("keys", NOTE_B + "\n"), ("wiggle", 60), ("click", "key", ord("!")), ("keys", " molt\n"),
+                      ("sleep", cm.WORD_S), ("surfaces", "w4")]
+        else:
+            steps += [("surfaces", "w%d" % i), ("keys", "another line on boot %d\n" % i), ("wiggle", 20)]
+        steps += [("await", rb"S8: healthy \d+\r\n", parts.HEALTH_S + cm.HEALTH_SLACK_S, "h%d" % i, "r%d" % i), ("sleep", 1.0)]
+        steps += order("germos count", RX_COUNT, "c%d" % i)
+        if i < 6:
+            steps += restart(i)
+    before = f.notes(disk)
+    t_saved = cm.BOOT_T_S
+    cm.BOOT_T_S = CHAIN_T_S
+    try:
+        reads, p = f.boot(disk, "c-chain", steps)
+    finally:
+        cm.BOOT_T_S = t_saved
+    problems += p
+    if not reads:
+        return None
+    problems += judge_chain(cm, f, parts, reads, disk, before, sha)
+    if problems:
+        return None
+    # A sitting through the live part, by ring 7d's own human.
+    rehearse8b.point_seams(work, STICK)
+    r = rehearse8b.Rehearsal(fixture("fast"), work, say)
+    _, p = r.sitting(disk, NOTE_A)
+    problems += p
+    return disk
+
+
+def judge_chain(cm, f, parts, reads, disk, before, sha):
+    """Everything the chain's one serial capture and one notebook must show."""
+    p = []
+    cap, at, found, marks = reads["capture"], reads["at"], reads["found"], reads["marks"]
+    if re.search(rb"ERR:|S8: recovery|exception", cap):
+        p.append("the chain: the guest said an error or a recovery")
+    got = conv(reads, "early")
+    if got[-2:-1] != ["below threshold: boots 0/3 keys 0/1000 mouse 0/5000"]:
+        p.append("the take below threshold left %r" % got[-3:])
+    notes = f.notes(disk)
+    new = notes[len(before):]
+    if [n for n in new if " disagree " in n]:
+        p.append("a disagreement was journaled: %r" % [n for n in new if " disagree " in n][:3])
+    loaded = [re.fullmatch(r"molt boot (\d+) i8042 (shadow|live)", n) for n in new if n.startswith("molt boot ")]
+    states = [m.group(2) for m in loaded]
+    boots = [int(m.group(1)) for m in loaded]
+    if states != ["shadow"] * 3 + ["live"] * 3:
+        p.append("the six boots loaded %r" % states)
+    if len(boots) != 6:
+        return p + ["the chain's boots are %r" % boots]
+    for i in (1, 2, 3, 4, 5):
+        rows = conv(reads, "notice%d" % i)
+        if "restarting in 3 s" not in rows:
+            p.append("boot %d: 'restarting in 3 s' is not on the conversation: %r" % (i, rows[-3:]))
+        if any("order:" in r for r in rows):
+            p.append("boot %d: an order line reached the conversation" % i)
+        gap = at["reset%d" % i] - at["rs%d" % i]
+        if gap < NOTICE_S - cm.POLL_S or gap > NOTICE_LIMIT_S:
+            p.append("boot %d: %.2f s from 'order: restart' to the firmware's first byte" % (i, gap))
+    # Each germos count against the human's counts and against the disk's note.
+    for i in (1, 2, 3, 4, 5, 6):
+        m = re.fullmatch(RX_COUNT, found["c%d" % i][1])
+        k, pk, d = (int(x) for x in m.groups())
+        if i <= 3:
+            a, b = marks["a%d" % i], marks["b%d" % i]
+            if (k, pk, d) != (b["kb"] - a["kb"], b["packets"] - a["packets"], 0):
+                p.append("boot %d: germos count said %d %d %d, the human sent %d %d" % (i, k, pk, d, b["kb"] - a["kb"], b["packets"] - a["packets"]))
+            t = re.fullmatch(RX_TSC, found["t%d" % i][1])
+            if int(t.group(1)) != boots[i - 1] or int(t.group(2)) <= 0 or int(t.group(3)) <= 0 or int(t.group(4)) <= 0:
+                p.append("boot %d: the tsc line is %r" % (i, found["t%d" % i][1]))
+        cn = count_notes(new, boots[i - 1])
+        if i in (1, 2, 4, 5):
+            extra = 40 if i == 2 else 0
+            if not cn or cn[-1] != (boots[i - 1], k, pk + extra, d):
+                p.append("boot %d: the disk's last count note is %r, the order said %d %d %d (+%d in the notice)" % (i, cn[-1:], k, pk, d, extra))
+    live_segment = cap[reads["segments"][3]:]
+    if b"tsc:" in live_segment:
+        p.append("a tsc: line on a live boot")
+    table = table_of(disk)
+    if "i8042 live " + sha not in table or "probation 3/3" not in table:
+        p.append("the disk's table does not say live and probation 3/3: %s" % table[:300])
+    rows = conv(reads, "w5")
+    if not [r for r in rows if NOTE_A in r]:
+        p.append("the note did not come back across the reboot: %r" % rows[-4:])
+    if NOTE_A not in new or NOTE_B not in new:
+        p.append("the notes typed through the part are not on the disk")
+    rows = conv(reads, "w4")
+    if rows[-2:] != ["> ! molt", ">"]:
+        p.append("the click on the choices row left %r" % rows[-3:])
+    return p
+
+
+def run_sick(cm, f, parts, problems):
+    """A part whose health fails: the pets stop, the watchdog, the recovery."""
+    import molt
+    work = cm.MOLT_OUT
+    sick = open(fixture("sick"), "rb").read()
+    sha = parts.sha16(hashlib.sha256(sick).hexdigest())
+    germline = os.path.join(work, "germline.sick")
+    key = parts.molt_key(SLOT, f.identity)
+    molt.part_write(germline, key, {"key": key, "verdict": "beats", "sha256": hashlib.sha256(sick).hexdigest(), "name": "sick",
+                                    "threshold": {"boots": 1, "keyboard bytes": 100, "mouse packets": 100}}, sick)
+    disk = blank_disk(cm, f, "sick")
+    rx = rb"molt: i8042 shadow %s 1 100 100\r\n" % sha.encode()
+    reads, p = serve_boot(cm, f, disk, "s-fetch", germline, fetch_steps(cm, [("await", rx, cm.ANSWER_S, "fetched", None)]))
+    problems += p
+    if not reads:
+        return
+    notes, _ = cm.typed_notes(100, 0, parts)
+    steps = [("ready", "ready")] + [("keys", t + "\n") for t in notes] + [("wiggle", 100),
+             ("await", rb"S8: healthy \d+\r\n", parts.HEALTH_S + cm.HEALTH_SLACK_S, "h", "ready"), ("sleep", GAP_S)] + \
+        order("germos molt take i8042", rb"molt: i8042 live %s\r\n" % sha.encode(), "taken") + [("sleep", cm.WORD_S)] + restart(1)
+    steps += [("ready", "r2"), ("banner", SICK_RESET_S, "wd", "r2"),
+              ("await", rb"S8: recovery i8042 watchdog\r\n", cm.RECOVER_S, "rec", "wd"),
+              ("ready", "r3"), ("keys", "typed after the recovery\n"), ("sleep", cm.WORD_S)]
+    before = f.notes(disk)
+    reads, p = f.boot(disk, "s-chain", steps)
+    problems += p
+    if not reads:
+        return
+    new = f.notes(disk)[len(before):]
+    if ("molt i8042 demoted %s watchdog" % sha) not in new:
+        problems.append("sick: no demoted note: %r" % new[-6:])
+    if "typed after the recovery" not in new:
+        problems.append("sick: the generic did not serve after the recovery")
+    if "i8042 demoted %s watchdog" % sha not in table_of(disk):
+        problems.append("sick: the disk's table does not say demoted")
+
+
 def run_shadow():
-    say("test 3 is not written yet")
-    return 1
+    import parts
+    work = os.path.join(WORK, "shadow")
+    shutil.rmtree(work, ignore_errors=True)
+    cm = seams(work)
+    chardev(cm)
+    f = cm.Fates(parts)
+    problems = []
+    ok = run_inert(cm, f, problems)
+    ok = report(problems, "with no molt note the machine reads no order: ring 7d's machine") and ok
+    if not ok:
+        return 1
+    run_chain(cm, f, parts, problems)
+    ok = report(problems, "a fetch typed, an undo and a fetch by order, every refusal; three shadow boots by restart with 'restarting in 3 s' "
+                "and at least 3 s to the firmware; germos count against the human and the disk; the tsc lines; the take; three live boots "
+                "to probation 3/3; a note across a reboot, a click, a sitting through the part")
+    if not ok:
+        return 1
+    run_sick(cm, f, parts, problems)
+    if not report(problems, "sick: taken, live, health fails, the pets stop, the watchdog resets, recovery, demoted; the generic serves"):
+        return 1
+    say("shadow to live: as the plan says")
+    return 0
 
 
 def run_cage():
