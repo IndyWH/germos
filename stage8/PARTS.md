@@ -1571,3 +1571,80 @@ def blame_line(vector, slot=None, offset=None):
         return "ERR: exception %d in seed" % vector
     return "ERR: exception %d in part %s +0x%08x" % (vector, slot, offset)
 ```
+
+## Ring 8b: the corpus, the order line, the restart and the medians
+
+Added at ring 8b by the planned freeze opening, by the owner's hand. No line
+above this section changed.
+
+**The corpus.** This section supersedes "The corpus" above: the corpus for
+`i8042` does not enter this document. It lives in the part's plan,
+`plans/parts/i8042.md`, in that plan's Corpus section, as a Python block
+yielding `(status, byte)` pairs. Its SHA-256, over the bytes `bench.py`
+hands the bench, is:
+
+    26895e47a12d3cf5880d35f63caa80605a953502c3e193f61a0c35e2f5d20499
+
+One text, pinned from the other. The plan, the corpus and the verdict rule
+are frozen at ring 8b's freeze, before the first grow.
+
+**The order line.** On a boot whose notebook holds a `molt ` note, the main
+loop and the part loop poll COM1 for a line. On any other boot the machine
+reads no serial byte, and is ring 7d's. A line ends at CR or LF. It is at most
+40 bytes, and a longer one is answered `order: ?`. There are six orders, and
+each must match exactly:
+
+| The line | What it does |
+|---|---|
+| `germos molt` | types `! molt` |
+| `germos molt i8042` | types `! molt i8042` |
+| `germos molt take i8042` | types `! molt take i8042` |
+| `germos molt undo` | types `! molt undo` |
+| `germos count` | answers with this boot's counts; read-only, never busy |
+| `germos restart` | the warm restart, below |
+
+Anything else is answered `order: ?`.
+
+A `molt` order goes through the handler a key takes, so a click and an order
+and a typed line do the same work and journal the same notes. It first closes
+any running app and rubs out an unfinished line, and then types the words. It
+answers **`order: done`** once the word has finished. If a key arrived in the
+last 5 s, or a sitting is running, the answer is **`order: busy`** and nothing
+happens.
+
+These answers are raw serial lines. They never reach the conversation and they
+are never notes.
+
+**`germos count`** answers one line:
+
+    order: count <keys> <packets> <d>
+
+`<keys>`, `<packets>` and `<d>` are the numbers the slot's count note would
+carry if it were journaled now, for this boot. It journals nothing, it touches
+no panel, and a sitting does not make it busy.
+
+**`germos restart`.** It is refused with **`order: not healthy yet`** on a boot
+that loaded a part and has not reached its health mark, and with `order: busy`
+during a sitting. Otherwise, in this order:
+
+1. The guest prints `order: restart` on serial and draws **`restarting in 3 s`** on the console.
+2. The main loop keeps running for 3 s, so input is still fed and compared.
+3. On a boot that loaded a part it journals the slot's count note, then flushes the disk and halts the TCO timer.
+4. It writes `0x06` to port `0xCF9`. If the machine is still running after a short wait it writes `0x0E`, then pulses the 8042's reset line, and if it is still running it prints **`order: reset failed`**.
+
+A restart is a full firmware reboot from the stick. It is no reset by the
+watchdog: the second-timeout status is clear, so no part is blamed and the
+recovery table reads "no change".
+
+**The medians.** On a shadow boot the guest times both decoders with the TSC on
+every real byte. They are printed only in answer to `germos count`, and at
+`germos restart`'s reset, as one raw line after the order's own line:
+
+    tsc: i8042 <boot> generic <median> part <median> bytes <n>
+
+They are printed nowhere else, because ring 8a's frozen check compares every
+line after the ready line with the expected echo and allows only `S8:` and
+`molt:` lines in it. The two columns are measured around different code, the
+generic in `mouse_byte` and `kbd_next` and the part through `part_call`, so the
+two medians are **not comparable with each other**. They confirm that both
+paths ran on the metal, and they decide nothing. The verdict is the bench's.
