@@ -5368,9 +5368,11 @@ The plan is `stage8/plan-8b.md`, approved at the plan gate with Cowork's amendme
 
 **Item 1** — `gcc` 15.3.0, `make` and `xz` present, no sudo block needed. `stage8/mknasm.sh` built NASM 3.02 under `stage8/out/toolchain/nasm-3.02/` from `nasm.us` (tarball sha256 `87336eba53b4acfe917424ab5d500d2b0054d9f5148d35c2273ccf2cfb712f0d`). `PATH=stage8/out/toolchain/nasm-3.02/bin:$PATH python3 stage8/parts.py --seed`: seeds 0, 1 and 2 rebuilt and agreeing, exit 0, the witness naming the 3.01 build in `stage8/out/` seed 2.
 
+**Item 2** — the bench probes, private under `stage8/out/probe8b/`, on QEMU 11.0.3 with `-icount shift=0,sleep=off`, ten blocks a boot (null, then ABBA twice, then null) through a draft of the bench EFI. A part of 1,000 `nop`s costs exactly the null decoder plus 1,000 on every one of 864 bytes, at `-smp 1`, 2 and 4. Five boots each: every cost identical, block to block and boot to boot. The generic against itself: every block equal, costs and events, so order has no effect. The null decoder's raw cost is 13 instructions. Wall time 3.2 s at `-smp 1`. Deviation 5 stands: the bench runs at `-smp 1`, as the fastest of three that are all exact. One finding for the recipe: the bench's FAT32 ESP must be at least about 33 MB or OVMF does not see it (`Not Found`); 48 MB as `mkimage.sh` does.
+
 ## Next action
 
-**Ring 8b is OPEN (8 November 2026).** Item 1 is done; the next item is item 2 of `stage8/plan-8b.md`.
+**Ring 8b is OPEN (8 November 2026).** Items 0 to 2 are done; the next item is item 3 of `stage8/plan-8b.md`.
 
 Earlier — **Ring 8t is CLOSED (8 November 2026), by the owner's word: verdict B.** Four sittings on the HP gave `verdict B 77`: sitting 1 on 29 September, and sittings 2–4 with the verdict boot on 8 November. The verdict boot draws the choices row as boxes (`trial2: concluded verdict B default B`). The record is under ring 8t's closure section, and the chart and the photographs are in `history/`.
 
