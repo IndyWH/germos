@@ -5370,9 +5370,20 @@ The plan is `stage8/plan-8b.md`, approved at the plan gate with Cowork's amendme
 
 **Item 2** — the bench probes, private under `stage8/out/probe8b/`, on QEMU 11.0.3 with `-icount shift=0,sleep=off`, ten blocks a boot (null, then ABBA twice, then null) through a draft of the bench EFI. A part of 1,000 `nop`s costs exactly the null decoder plus 1,000 on every one of 864 bytes, at `-smp 1`, 2 and 4. Five boots each: every cost identical, block to block and boot to boot. The generic against itself: every block equal, costs and events, so order has no effect. The null decoder's raw cost is 13 instructions. Wall time 3.2 s at `-smp 1`. Deviation 5 stands: the bench runs at `-smp 1`, as the fastest of three that are all exact. One finding for the recipe: the bench's FAT32 ESP must be at least about 33 MB or OVMF does not see it (`Not Found`); 48 MB as `mkimage.sh` does.
 
+**Item 3** — the serial and restart probes, private, on a draft of the guest (65,536 bytes) in the twin at `-smp 4`, through `-chardev socket,…,logfile=` and `-serial chardev:s0`. Measured:
+- orders reach both loops: a boot with no molt note answers nothing; a boot with one answers `order: count`, `order: not healthy yet` before the health mark, `order: ?` to anything else, `order: busy` within 5 s of a key, and a half-typed line older than that is rubbed out with Backspace before the word;
+- `0xCF9` resets q35. 4.06 s from `order: restart` to the firmware's first byte; the disk persists; two boots in one QEMU; the next boot is `molt boot <n+1>`, no evidence bit and no recovery; `restarting in 3 s` is on the conversation;
+- the take by order, then a live boot: `order:` answered in `part_loop` live; `! trial` is not refused by a live part (`no mouse` until a packet arrives, ring 7d's refusal);
+- `parts.py --serial` reads a log holding `order:` lines. The chardev passes `check_argv_7c` (only its stage7 path rule complains, as ring 8a's seam already handles);
+- every new command shape is allowed by the hook.
+
+**One change the probe forced, for the review.** The plan had a `tsc:` line at every count point. Ring 8a's frozen `judge` compares everything after the ready line with the expected echo and strips only `S8:` and `molt:` lines, so a raw `tsc:` line at the health mark would turn 8a's gate red. So `tsc:` is printed only in answer to an order (`germos count`, and at `germos restart` before the reset): no input, no line, and the frozen checks see nothing. `order:` lines are the same by construction. It confirms and does not decide, as before, and it is a different path from the bench: the part's side includes `part_call` and the shadow upcalls (`generic 200 part 2604` in the twin), so only each column's trend means anything.
+
+**One finding for the harness.** A unix-socket chardev whose client does not read blocks the guest's UART after about 277 bytes, the guest stops petting, and the TCO resets it. A harness that connects must drain.
+
 ## Next action
 
-**Ring 8b is OPEN (8 November 2026).** Items 0 to 2 are done; the next item is item 3 of `stage8/plan-8b.md`.
+**Ring 8b is OPEN (8 November 2026).** Items 0 to 3 are done; the next item is item 4 of `stage8/plan-8b.md`.
 
 Earlier — **Ring 8t is CLOSED (8 November 2026), by the owner's word: verdict B.** Four sittings on the HP gave `verdict B 77`: sitting 1 on 29 September, and sittings 2–4 with the verdict boot on 8 November. The verdict boot draws the choices row as boxes (`trial2: concluded verdict B default B`). The record is under ring 8t's closure section, and the chart and the photographs are in `history/`.
 
