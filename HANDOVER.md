@@ -5381,9 +5381,19 @@ The plan is `stage8/plan-8b.md`, approved at the plan gate with Cowork's amendme
 
 **One finding for the harness.** A unix-socket chardev whose client does not read blocks the guest's UART after about 277 bytes, the guest stops petting, and the TCO resets it. A harness that connects must drain.
 
+**Item 4** — `plans/parts/i8042.md`, the pre-registration, committed before any grow exists. The corpus is 7,896 byte events, 3,948 from each device, hash `26895e47…`. The plan's text at grow time hashes `151fac3c…`.
+
+**Item 5** — the canned parts, each with the same events as `good`. Bench numbers against the generic's median 17, worst 27, size 1,152: `fast` 13, 20, 1,160, which beats; `slow` 21, 31, 1,152, the generic stays; `sick` 17, 27, 1,144, the generic stays by the bench, and its `health` always answers 7 for test 3's watchdog path.
+
+**Item 6** — `stage8/bench.asm` and `stage8/bench.py`. Ten blocks a boot, under `-icount` at `-smp 1`, in 3.6 s. The null decoder costs 13 instructions. FAT32 under OVMF needs an ESP of about 33 MB or more; the bench's is 48 MB.
+
+**Item 7** — `stage8/rehearse8b.py`, five boots on `fast`, 185 s. Its threshold is its own (1 boot, 60, 60), so a rehearsal is short.
+
+**Item 8** — `broker/molt.py` gains `--grow`, `--collect`, `--canned` and `--backend-cmd`; `broker/claude_backend.py` gains the brief and `refuse_api_keys`. The mocked pipeline on `fast` gave `beats` in 188 s. No token was spent; only the stub can reach a backend until item 19.
+
 ## Next action
 
-**Ring 8b is OPEN (8 November 2026).** Items 0 to 3 are done; the next item is item 4 of `stage8/plan-8b.md`.
+**Ring 8b is OPEN (8 November 2026).** Items 0 to 8 are done; the next item is item 9 of `stage8/plan-8b.md`.
 
 Earlier — **Ring 8t is CLOSED (8 November 2026), by the owner's word: verdict B.** Four sittings on the HP gave `verdict B 77`: sitting 1 on 29 September, and sittings 2–4 with the verdict boot on 8 November. The verdict boot draws the choices row as boxes (`trial2: concluded verdict B default B`). The record is under ring 8t's closure section, and the chart and the photographs are in `history/`.
 
