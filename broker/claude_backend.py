@@ -23,8 +23,10 @@ CLI's own login, so it stays off.
 
 import os
 import re
+import shlex
 import struct
 import subprocess
+import sys
 import tempfile
 import unicodedata
 
@@ -359,3 +361,128 @@ def _grow(request, failure, timeout, model, brief, want_source):
                   "Write the whole program again, corrected. Output only NASM source."
                   % (request, last_error))
     return normalise("broker: could not grow it - " + str(last_error))
+
+
+# ------------------------------------------------------------- Ring 8b ----
+
+PARTS_DOC = os.path.join(REPO, "stage8", "PARTS.md")
+CLAUDE_MD = os.path.join(REPO, "CLAUDE.md")
+# The CLAUDE.md gotchas this slot's device has cost, read by name so the
+# brief and the file can never disagree.
+I8042_GOTCHAS = ("A 0xE0 scancode prefix swallows its successor",
+                 "Two devices on one i8042: read the status byte before port 0x60",
+                 "An i8042 self-test may re-enable both ports",
+                 "Nothing survives a call into grown code but memory and the stack")
+
+
+def refuse_api_keys():
+    """No API key, anywhere, ever: the grow runs on the CLI's own login. Any
+    variable that looks like one ends the process before anything is spawned."""
+    bad = sorted(k for k in os.environ if "API_KEY" in k.upper() or k == "ANTHROPIC_AUTH_TOKEN")
+    if bad:
+        sys.stderr.write("broker: refusing to run: %s is set. The grow runs on the claude CLI's own login "
+                         "and no API key is ever used.\n" % ", ".join(bad))
+        sys.exit(3)
+
+
+def part_sections():
+    """PARTS.md's own sections on a part and on ABI 3, verbatim."""
+    doc = open(PARTS_DOC, encoding="utf-8").read()
+    out = []
+    for heading in ("## A part", "## ABI 3's service table"):
+        i = doc.find(heading)
+        if i < 0:
+            continue
+        j = doc.find("\n## ", i + 1)
+        out.append(doc[i:j if j > 0 else None].strip())
+    return "\n\n".join(out)
+
+
+def gotcha_bullets():
+    """The named gotcha bullets of CLAUDE.md, whole."""
+    doc = open(CLAUDE_MD, encoding="utf-8").read()
+    out = []
+    for name in I8042_GOTCHAS:
+        m = re.search(r"^- \*\*%s.*?(?=^- \*\*|^## |\Z)" % re.escape(name), doc, re.S | re.M)
+        if m:
+            out.append(m.group(0).strip())
+    return "\n".join(out)
+
+
+PART_BRIEF = (
+    "You are writing a part for GermOS, a tiny operating system grown on each "
+    "machine rather than shipped to it: machine code that replaces one of its "
+    "drivers, for this machine only. It will be judged by the rule in the plan "
+    "below: event for event identical to the generic decoder on a fixed corpus, "
+    "and fewer instructions per byte. Read the generic's rules and write the "
+    "shortest correct path. Rules, all of them hard:\n"
+    "- Output ONLY NASM source, nothing else: no prose, no markdown, no code fences. "
+    "The first line is `bits 64`, the second `default rel`. It is assembled with "
+    "`nasm -f bin`. No `org`, no sections, no `global`, no `extern`, no `%include`.\n"
+    "- Output the part's BODY, flat. Its first 12 bytes are three u32 offsets from "
+    "the start of the body: `dd init, byte_entry, health`, with those labels; the "
+    "code and data follow. The host adds the 96-byte header and its hash; do not "
+    "write one. Every offset the section below counts from the header, so the host "
+    "adds 96 to each of yours.\n"
+    "- Every memory reference is RIP-relative (`default rel` does this for labels). "
+    "`[label + reg]` is never RIP-relative: `lea` the label first. No absolute "
+    "address, ever. No `dq label`: a table of addresses in data is a table of offsets.\n"
+    "- Keep all state inside the part; it must be valid as assembled, because in "
+    "shadow `byte_entry` runs with no `init` before it. No SSE/AVX. Use under 4 KB of "
+    "stack. Stay under 1,200 bytes in all with the header: the size is measured.\n"
+    "- `byte_entry` never touches a port. `init` may use ports 0x60 and 0x64 and "
+    "nothing else. Nothing but the service table reaches the serial port.\n\n"
+)
+
+
+def part_prompt(plan_text, key, failure):
+    """The user turn of a part grow: the plan verbatim, the key, the gotchas."""
+    prompt = ("The germline key of this part is: %s\nIt is grown for this machine only: the key "
+              "carries the machine's CPUID signature and its PCI id, and the guest reads its own "
+              "identity when it asks, so this part reaches no other machine.\n\n"
+              "The plan, verbatim, which is what you are judged against:\n\n%s\n\n"
+              "The device's gotchas, from CLAUDE.md, which each cost a bug:\n\n%s\n"
+              % (key, plan_text, gotcha_bullets()))
+    if failure:
+        prompt += ("\nA previous attempt at this part was rejected: %s. Write it again, "
+                   "more carefully.\n" % failure)
+    return prompt
+
+
+def grow_part(plan_text, key, failure=None, timeout=900.0, model=None, backend_cmd=None):
+    """One candidate: the plan in, a flat body out. Returns (body, source) or
+    a refusal string. Never an exception. backend_cmd replaces the word
+    `claude` (the gate's stub); everything after it is the same argv."""
+    refuse_api_keys()
+    brief = PART_BRIEF + part_sections()
+    base = shlex.split(backend_cmd) if backend_cmd else ["claude"]
+    prompt = part_prompt(plan_text, key, failure)
+    last_error = "no source produced"
+    for _ in range(ASSEMBLY_ROUNDS):
+        cmd = base + ["-p", "--output-format", "text", "--tools", "",
+                      "--no-session-persistence", "--system-prompt", brief]
+        if model:
+            cmd += ["--model", model]
+        cmd += ["--", prompt]
+        with tempfile.TemporaryDirectory(prefix="germos-part-") as cwd:
+            try:
+                proc = subprocess.run(cmd, cwd=cwd, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                      timeout=timeout, env=dict(os.environ, TERM="dumb"))
+            except subprocess.TimeoutExpired:
+                return "claude did not answer within %d s" % int(timeout)
+            except OSError as exc:
+                return "could not run the backend (%s)" % exc
+            if proc.returncode != 0:
+                tail = normalise(proc.stderr or proc.stdout).strip().splitlines()[-1:] or [""]
+                return "the backend failed (%d) %s" % (proc.returncode, tail[0])
+            src = extract_source(proc.stdout)
+            asm = os.path.join(cwd, "part.asm")
+            out = os.path.join(cwd, "part.bin")
+            with open(asm, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            n = subprocess.run(["nasm", "-f", "bin", asm, "-o", out], capture_output=True, text=True)
+            if n.returncode == 0:
+                return open(out, "rb").read(), src
+            last_error = n.stderr.strip()
+            prompt = part_prompt(plan_text, key, failure) + ("\nThe assembler rejected the last source:\n%s\n" % last_error)
+    return "the source did not assemble in %d rounds: %s" % (ASSEMBLY_ROUNDS, last_error)
