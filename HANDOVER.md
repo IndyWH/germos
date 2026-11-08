@@ -5366,9 +5366,11 @@ The plan is `stage8/plan-8b.md`, approved at the plan gate with Cowork's amendme
 
 **Item 0** — this record; `stage8/plan-8b.md` committed verbatim; the "Where we are" rows (Stage, Status, Toolchain, Model); `CLAUDE.md`'s fresh-clone gotcha made whole, its second correction. Tonight's facts before any code: the gate of 18:35 (`./trials/test-trial2.sh`, `8t gate: PASS`) with 8a, 7d, 7c, 7b and 7a inside it, after a first run that failed only on the missing `stage7/out/metal`; the policy gate re-checked by Cowork (help centre article of 7 October 2026, `claude -p` draws from subscription limits; the rule stands, no API key anywhere). `stage8/out/probe8a/` went with the Omarchy drive; item 2 re-measures and nothing leans on it.
 
+**Item 1** — `gcc` 15.3.0, `make` and `xz` present, no sudo block needed. `stage8/mknasm.sh` built NASM 3.02 under `stage8/out/toolchain/nasm-3.02/` from `nasm.us` (tarball sha256 `87336eba53b4acfe917424ab5d500d2b0054d9f5148d35c2273ccf2cfb712f0d`). `PATH=stage8/out/toolchain/nasm-3.02/bin:$PATH python3 stage8/parts.py --seed`: seeds 0, 1 and 2 rebuilt and agreeing, exit 0, the witness naming the 3.01 build in `stage8/out/` seed 2.
+
 ## Next action
 
-**Ring 8b is OPEN (8 November 2026).** The next item is item 1 of `stage8/plan-8b.md`.
+**Ring 8b is OPEN (8 November 2026).** Item 1 is done; the next item is item 2 of `stage8/plan-8b.md`.
 
 Earlier — **Ring 8t is CLOSED (8 November 2026), by the owner's word: verdict B.** Four sittings on the HP gave `verdict B 77`: sitting 1 on 29 September, and sittings 2–4 with the verdict boot on 8 November. The verdict boot draws the choices row as boxes (`trial2: concluded verdict B default B`). The record is under ring 8t's closure section, and the chart and the photographs are in `history/`.
 
