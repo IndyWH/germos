@@ -930,6 +930,8 @@ seed_main:
         ; immediately above the first prompt (plan decisions 2 and 3).
         call    notebook_replay
         call    console_prompt
+        mov     eax, [ms_any]           ; ring 8b: orders only on a boot whose
+        mov     [orders_on], eax        ; notebook held a molt note at boot
         cmp     dword [part_loaded], 0  ; ring 8a: a part loaded, the loop polls
         jne     part_loop
 
@@ -943,6 +945,10 @@ seed_main:
         ; wake instead of letting it fire uselessly before the hlt sleeps.
         ; -------------------------------------------------------------------
 main_loop:
+        cmp     dword [orders_on], 0    ; ring 8b: the serial order line
+        je      .no_orders
+        call    order_poll
+.no_orders:
         ; The eighteenth line (GLASS.md): once, serial only, the first time
         ; the mouse's packet counter is above zero.
         cmp     dword [mouse_announced], 0
@@ -964,8 +970,14 @@ main_loop:
         jne     .trial_turn             ; a sitting watches the clock (TRIALS.md)
         cmp     dword [app_running], 0
         jne     .app_turn               ; an app never lets the loop sleep
+        cmp     dword [orders_on], 0    ; ring 8b: polled, as part_loop is
+        jne     .poll_turn
         sti                             ; the shadow: no interrupt lands
         hlt                             ; between these two instructions
+        jmp     main_loop
+.poll_turn:
+        sti
+        pause
         jmp     main_loop
 .have_mouse:
         sti
@@ -999,6 +1011,13 @@ main_loop:
 ; takes (ring 6c, plan decision 7): the tee, the journal, the parse, the
 ; app. Returns when the key has been acted on. Clobbers registers freely.
 handle_key:
+        cmp     dword [order_typing], 0 ; ring 8b: an order's own keys are not
+        jne     .not_a_human            ; a human's
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        mov     [order_last_key], rax
+.not_a_human:
         ; In a sitting (TRIALS.md): every key is counted and dropped, but Esc
         ; aborts the sitting.
         cmp     dword [trial_active], 0
@@ -10091,6 +10110,7 @@ note_overflow:
 ; to the part, shadow's comparison, the health mark, then ring 7d's turn -
 ; keys (the generic's, or the part's in live), packets, the trial, the app.
 part_loop:
+        call    order_poll              ; ring 8b: the serial order line
         cmp     dword [mouse_announced], 0
         jne     .announced
         cmp     qword [obs_page + OBS_PACKETS], 0
@@ -10663,6 +10683,284 @@ molt_finish:
         jae     .ret
         mov     [gen_kfront], edx
         ret
+
+
+; ---------------------------------------------------- the serial orders ---
+; Ring 8b (stage8/PARTS.md, "The order line"). On a boot whose notebook held
+; a molt note the main loop polls COM1's receiver. A line must begin
+; "germos ". Six orders; a molt order is typed through handle_key, the path
+; a click takes. Called from the top of both loops. Clobbers freely.
+
+%define ORDER_MAX       40
+%define ORDER_BUSY_MS   5000
+%define ORDER_NOTICE_MS 3000
+%define ORDER_RESET_MS  200
+
+order_poll:
+        cmp     dword [restart_pending], 0
+        je      .rx
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        cmp     rax, [restart_at]
+        jae     order_do_reset
+.rx:
+        mov     dx, COM1 + 5
+        in      al, dx
+        test    al, 1
+        jz      .ret
+        mov     dx, COM1
+        in      al, dx
+        cmp     al, 13
+        je      .eol
+        cmp     al, 10
+        je      .eol
+        mov     ecx, [order_len]
+        cmp     ecx, ORDER_MAX
+        jae     .full
+        lea     rdx, [order_buf]
+        mov     [rdx + rcx], al
+        inc     dword [order_len]
+.ret:   ret
+.full:  mov     dword [order_over], 1
+        ret
+.eol:
+        mov     ecx, [order_len]
+        test    ecx, ecx
+        jz      .ret                    ; the LF of a CR LF
+        mov     dword [order_len], 0
+        cmp     dword [order_over], 0
+        mov     dword [order_over], 0
+        jne     order_unknown
+        lea     rsi, [order_buf]
+        lea     rdi, [ow_germos]
+        mov     edx, 7
+        call    order_prefix
+        jne     order_unknown
+        lea     rsi, [order_buf + 7]
+        sub     ecx, 7
+        lea     rdi, [ow_count]
+        call    order_word
+        je      order_count
+        lea     rdi, [ow_restart]
+        call    order_word
+        je      order_restart
+        lea     rdi, [ow_molt]
+        call    order_word
+        je      order_molt
+        lea     rdi, [ow_molt_slot]
+        call    order_word
+        je      order_molt
+        lea     rdi, [ow_molt_take]
+        call    order_word
+        je      order_molt
+        lea     rdi, [ow_molt_undo]
+        call    order_word
+        je      order_molt
+order_unknown:
+        lea     rsi, [msg_order_q]
+        jmp     serial_raw_puts
+
+; order_prefix - RSI, ECX = the line, RDI = the word, EDX = its length: ZF
+; set when the line begins with the word. Preserves RSI, RCX.
+order_prefix:
+        cmp     ecx, edx
+        jb      .no
+        push    rsi
+        push    rcx
+        mov     ecx, edx
+        repe    cmpsb
+        pop     rcx
+        pop     rsi
+        ret
+.no:    or      eax, 1                  ; ZF clear
+        ret
+
+; order_word - RSI, ECX = the order, RDI = a NUL-terminated word: ZF set when
+; they are the same. Preserves RSI, RCX.
+order_word:
+        push    rdi
+        xor     edx, edx
+.l:     cmp     byte [rdi + rdx], 0
+        je      .have
+        inc     edx
+        jmp     .l
+.have:  pop     rdi
+        cmp     ecx, edx
+        jne     .out
+        push    rsi
+        push    rcx
+        repe    cmpsb
+        pop     rcx
+        pop     rsi
+.out:   ret
+
+; order_count - read-only, never busy: this boot's counts.
+order_count:
+        lea     rdi, [order_out]
+        lea     rsi, [msg_order_count]
+        call    str_copy
+        mov     eax, [cnt_kb]
+        call    put_dec
+        mov     al, ' '
+        stosb
+        mov     eax, [cnt_pk]
+        call    put_dec
+        mov     al, ' '
+        stosb
+        mov     eax, [cnt_d]
+        call    put_dec
+        mov     word [rdi], 0x0A0D
+        mov     byte [rdi + 2], 0
+        lea     rsi, [order_out]
+        jmp     serial_raw_puts
+
+; order_restart - the line on serial, the notice on the console, and the
+; reset order_poll makes when ORDER_NOTICE_MS have passed.
+order_restart:
+        cmp     dword [restart_pending], 0
+        jne     .ret
+        cmp     dword [trial_active], 0
+        jne     order_busy
+        cmp     dword [part_loaded], 0
+        je      .go
+        cmp     dword [health_done], 0
+        jne     .go
+        lea     rsi, [msg_order_unhealthy]
+        jmp     serial_raw_puts
+.go:
+        lea     rsi, [msg_order_restart]
+        call    serial_raw_puts
+        cmp     dword [cur_col], 0
+        je      .say
+        mov     al, 10
+        call    console_putc
+.say:
+        lea     rsi, [msg_restarting]
+        call    console_puts
+        mov     al, 10
+        call    console_putc
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        mov     rcx, [tsc_per_ms]
+        imul    rcx, rcx, ORDER_NOTICE_MS
+        add     rax, rcx
+        mov     [restart_at], rax
+        mov     dword [restart_pending], 1
+.ret:   ret
+
+order_busy:
+        lea     rsi, [msg_order_busy]
+        jmp     serial_raw_puts
+
+; order_spin - ORDER_RESET_MS by the TSC, interrupts as they are.
+order_spin:
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        mov     r8, rax
+        mov     rcx, [tsc_per_ms]
+        imul    rcx, rcx, ORDER_RESET_MS
+.w:     rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        sub     rax, r8
+        cmp     rax, rcx
+        jb      .w
+        ret
+
+; order_do_reset - the count note, the disk's cache flushed, the TCO halted
+; so that the firmware's boot leans on nothing, then the reset register, and
+; two fallbacks. Returns only with "order: reset failed" said.
+order_do_reset:
+        mov     dword [restart_pending], 0
+        cmp     dword [part_loaded], 0
+        je      .flush
+        call    count_point
+.flush:
+        mov     al, 0xEA
+        xor     ebx, ebx
+        xor     edx, edx
+        lea     rdi, [flush_buf]
+        call    ahci_cmd
+        call    tco_halt
+        mov     dx, 0xCF9
+        mov     al, 0x06
+        out     dx, al
+        call    order_spin
+        mov     dx, 0xCF9
+        mov     al, 0x0E
+        out     dx, al
+        call    order_spin
+        mov     al, 0xFE
+        out     0x64, al
+        call    order_spin
+        lea     rsi, [msg_order_reset_failed]
+        jmp     serial_raw_puts
+
+; order_molt - RSI, ECX = the order ("molt ..."): any half-typed line older
+; than the five-second rule rubbed out, then "! " and the order typed, and
+; Enter. "order: done" when the word has finished.
+order_molt:
+        cmp     dword [trial_active], 0
+        jne     order_busy
+        rdtsc
+        shl     rdx, 32
+        or      rax, rdx
+        sub     rax, [order_last_key]
+        mov     rdx, [tsc_per_ms]
+        imul    rdx, rdx, ORDER_BUSY_MS
+        cmp     rax, rdx
+        jb      order_busy
+        lea     rdi, [order_body]
+        mov     [order_body_len], ecx
+        rep     movsb
+        call    app_close_if_running
+        mov     dword [order_typing], 1
+.rub:
+        cmp     dword [line_len], 0
+        je      .bang
+        mov     ebx, 8
+        call    handle_key
+        jmp     .rub
+.bang:
+        mov     ebx, '!'
+        call    handle_key
+        mov     ebx, ' '
+        call    handle_key
+        mov     dword [order_i], 0
+.type:
+        mov     eax, [order_i]
+        cmp     eax, [order_body_len]
+        jae     .enter
+        lea     rdx, [order_body]
+        movzx   ebx, byte [rdx + rax]
+        inc     dword [order_i]
+        call    handle_key
+        jmp     .type
+.enter:
+        mov     ebx, 13
+        call    handle_key
+        mov     dword [order_typing], 0
+        lea     rsi, [msg_order_done]
+        jmp     serial_raw_puts
+
+ow_germos:              db 'germos ', 0
+ow_count:               db 'count', 0
+ow_restart:             db 'restart', 0
+ow_molt:                db 'molt', 0
+ow_molt_slot:           db 'molt i8042', 0
+ow_molt_take:           db 'molt take i8042', 0
+ow_molt_undo:           db 'molt undo', 0
+msg_order_q:            db 'order: ?', 13, 10, 0
+msg_order_busy:         db 'order: busy', 13, 10, 0
+msg_order_done:         db 'order: done', 13, 10, 0
+msg_order_restart:      db 'order: restart', 13, 10, 0
+msg_order_unhealthy:    db 'order: not healthy yet', 13, 10, 0
+msg_order_reset_failed: db 'order: reset failed', 13, 10, 0
+msg_order_count:        db 'order: count ', 0
+msg_restarting:         db 'restarting in 3 s', 0
 
 ; ------------------------------------------------------ the words -------
 
@@ -12273,6 +12571,19 @@ cnt_pk:         resd    1               ; packets (shadow: the generic's from by
 cnt_d:          resd    1               ; disagreements
 cnt_dnotes:     resd    1
 part_events:    resd    1               ; the part's events this boot, keys and packets
+orders_on:      resd    1               ; ring 8b: the notebook held a molt note at boot
+order_len:      resd    1               ; the serial line so far
+order_over:     resd    1               ; the line ran past ORDER_MAX
+order_typing:   resd    1               ; an order is at the keys
+order_i:        resd    1
+order_body_len: resd    1
+restart_pending: resd   1
+                alignb  8
+restart_at:     resq    1               ; the TSC of the reset
+order_last_key: resq    1               ; the TSC of the last key handle_key took
+order_buf:      resb    48
+order_body:     resb    48
+order_out:      resb    80
 gen_events:     resd    1               ; the generic's events this boot
 cmp_ended:      resd    1               ; shadow: the raw ring overflowed, the comparison is over
 cmp_end:        resd    1               ; ... at this sequence number, the first byte not given to the part
