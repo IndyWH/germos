@@ -45,3 +45,6 @@ germline/
 !stage8/fixtures/i8042-hang.bin
 !stage8/fixtures/i8042-fault.bin
 !stage8/fixtures/i8042-liar.bin
+!stage8/fixtures/i8042-fast.bin
+!stage8/fixtures/i8042-slow.bin
+!stage8/fixtures/i8042-sick.bin
