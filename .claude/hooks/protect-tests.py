@@ -327,6 +327,20 @@ PROTECTED = (
     "trials/trials2.py",
     "trials/checktrials2.py",
     "trials/test-trial2.sh",
+    # Ring 8b (stage8/plan-8b.md item 14): the pre-registration, the bench, the
+    # rehearsal, the canned parts and the gate. A bent bench is a bent verdict.
+    "plans/parts/i8042.md",
+    "stage8/bench.asm",
+    "stage8/bench.py",
+    "stage8/rehearse8b.py",
+    "stage8/test-8b.sh",
+    "stage8/checkmolt8b.py",
+    "stage8/fixtures/i8042-fast.asm",
+    "stage8/fixtures/i8042-fast.bin",
+    "stage8/fixtures/i8042-slow.asm",
+    "stage8/fixtures/i8042-slow.bin",
+    "stage8/fixtures/i8042-sick.asm",
+    "stage8/fixtures/i8042-sick.bin",
 )
 
 BASENAMES = sorted({os.path.basename(p) for p in PROTECTED})

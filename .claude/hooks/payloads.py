@@ -1072,6 +1072,41 @@ CASES += [(bash(c), ALLOW, "ring 8a directory rule allows: " + w) for c, w in [
 ]]
 
 
+# Ring 8b (stage8/plan-8b.md item 14).
+FROZEN_8B = ["plans/parts/i8042.md", "stage8/bench.asm", "stage8/bench.py", "stage8/rehearse8b.py", "stage8/test-8b.sh", "stage8/checkmolt8b.py"] + \
+    ["stage8/fixtures/i8042-%s.%s" % (f, x) for f in ("fast", "slow", "sick") for x in ("asm", "bin")]
+CASES += [(c, v, "ring 8b freeze: " + w) for c, v, w in freeze_cases(FROZEN_8B)]
+CASES += [
+    (write("plans/parts/i8042.md"), DENY, "ring 8b freeze: the pre-registration"),
+    (edit("stage8/bench.py"), DENY, "ring 8b freeze: Edit on the bench's judge"),
+    (write("stage8/bench.asm"), DENY, "ring 8b freeze: the bench"),
+    (write("stage8/rehearse8b.py"), DENY, "ring 8b freeze: the rehearsal"),
+    (edit("stage8/checkmolt8b.py"), DENY, "ring 8b freeze: Edit on the checker"),
+    (write("stage8/test-8b.sh"), DENY, "ring 8b freeze: the gate"),
+    (write("stage8/fixtures/i8042-fast.bin"), DENY, "ring 8b freeze: a canned part"),
+    (bash("sed -i 's/- primary: 5/- primary: 1/' plans/parts/i8042.md"), DENY, "ring 8b freeze: sed -i on a margin"),
+    (bash("echo x >> plans/parts/i8042.md"), DENY, "ring 8b freeze: appending to the pre-registration"),
+    (bash("nasm -f bin stage8/fixtures/i8042-fast.asm -o stage8/fixtures/i8042-fast.bin"), DENY, "ring 8b freeze: a canned part rebuilt over itself"),
+    (bash("python3 - <<'EOF'\nopen('stage8/bench.py','w').write('x')\nEOF"), DENY, "ring 8b freeze: python writing the judge"),
+    (bash("rm -f stage8/fixtures/i8042-fast.*"), DENY, "ring 8b directory rule: a glob on a canned part"),
+    (bash("rm -rf plans"), DENY, "ring 8b directory rule: plans/ holds the pre-registration"),
+    (bash("rm -rf plans/parts"), DENY, "ring 8b directory rule: plans/parts"),
+    (bash("mv plans old-plans"), DENY, "ring 8b directory rule: plans/ moved"),
+    (bash("python3 broker/molt.py --grow i8042 --model claude-opus-5-5 2>&1 | tee stage8/out/grow-8b.log"), ALLOW, "ring 8b allows: the grow and its log"),
+    (bash("python3 stage8/hp-day.py"), ALLOW, "ring 8b allows: the day driver"),
+    (bash("python3 broker/molt.py --collect"), ALLOW, "ring 8b allows: the collect path"),
+    (bash("./stage8/test-8b.sh 1 2"), ALLOW, "ring 8b allows: running the gate"),
+    (bash("python3 stage8/bench.py --plan plans/parts/i8042.md --candidate stage8/fixtures/i8042-fast.bin"), ALLOW, "ring 8b allows: the bench run by hand"),
+    (bash("python3 stage8/rehearse8b.py stage8/fixtures/i8042-fast.bin --workdir stage8/out/rehearse8b"), ALLOW, "ring 8b allows: a rehearsal run by hand"),
+    (bash("nasm -f bin stage8/fixtures/i8042-fast.asm -o stage8/out/check8b.fast.bin"), ALLOW, "ring 8b allows: a canned part reassembled under out/"),
+    (write("stage8/stage8.asm"), ALLOW, "ring 8b allows: the guest is not frozen"),
+    (write("broker/molt.py"), ALLOW, "ring 8b allows: the broker is not frozen"),
+    (write("stage8/hp-day.py"), ALLOW, "ring 8b allows: the day driver is not frozen"),
+    (write("stage8/HP-8b.md"), ALLOW, "ring 8b allows: the owner's procedure is paperwork"),
+    (write("stage8/out/probe8b/patch_guest.py"), ALLOW, "ring 8b allows: the draft under out/"),
+]
+
+
 def run(case):
     tool, tool_input = case
     payload = json.dumps({"tool_name": tool, "tool_input": tool_input})
