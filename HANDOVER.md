@@ -5391,9 +5391,17 @@ The plan is `stage8/plan-8b.md`, approved at the plan gate with Cowork's amendme
 
 **Item 8** — `broker/molt.py` gains `--grow`, `--collect`, `--canned` and `--backend-cmd`; `broker/claude_backend.py` gains the brief and `refuse_api_keys`. The mocked pipeline on `fast` gave `beats` in 188 s. No token was spent; only the stub can reach a backend until item 19.
 
+**Item 9** — `stage8/test-8b.sh` and `stage8/checkmolt8b.py`, tests 1 and 2. Test 1 is red only on the PARTS.md section. Test 2 is green on the present seed in 439 s, earlier than the plan's "red until item 15", because it needs only the fetch and the refusal, which ring 8a's guest already has. **One departure from the plan's wording, for the review:** the plan says `hang` fails the rehearsal in the grow. The frozen `hang` loses on the measures (median 19 against 17), so the grow, cheap steps first, never rehearses it. Test 2 asks the rehearsal for `hang` directly (it fails at `r-live1`, the watchdog demoting it), and meets the grow's rehearsal gate with `fast` carrying a `jmp $` at `init`, built by the checker: it beats the bench at 13 against 17, fails the rehearsal, and is not stored.
+
+**Item 10** — test 3: orders over a socket chardev with a drain thread. Red on the seed at the first order.
+
+**Item 11** — test 4's own checks. Red until the freeze.
+
+**Item 12** — the private draft, `stage8/out/probe8b/patch_guest.py`, against test 3: **PASS whole**, about 12 minutes. Inert with no molt note; a fetch typed, an undo and a fetch by order; every refusal; three shadow boots by restart with `restarting in 3 s`; the counts against the human and the disk, 40 packets sent during a notice counted; the `tsc:` lines; the take; three live boots to `probation 3/3`; a note across a reboot, a click, a sitting through the part; `sick` to the watchdog, demoted, the generic serving. One expectation was mine and wrong, corrected before any freeze: PARTS.md counts the current boot in the take, so the first shadow boot's refusal says `boots 1/3`, not `0/3`. Test 1 passes with the drafted PARTS.md section on a private copy of the document, and `parts.py --example` passes on that copy.
+
 ## Next action
 
-**Ring 8b is OPEN (8 November 2026).** Items 0 to 8 are done; the next item is item 9 of `stage8/plan-8b.md`.
+**Ring 8b is OPEN (8 November 2026). STOPPED at item 13**: the owner's one `cat >>` onto `stage8/PARTS.md`, the project's eleventh freeze opening, planned. Items 0 to 12 are done. After it, `python3 stage8/parts.py --example`, then item 14, the freeze.
 
 Earlier — **Ring 8t is CLOSED (8 November 2026), by the owner's word: verdict B.** Four sittings on the HP gave `verdict B 77`: sitting 1 on 29 September, and sittings 2–4 with the verdict boot on 8 November. The verdict boot draws the choices row as boxes (`trial2: concluded verdict B default B`). The record is under ring 8t's closure section, and the chart and the photographs are in `history/`.
 

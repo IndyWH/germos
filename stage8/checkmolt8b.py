@@ -720,7 +720,7 @@ def judge_chain(cm, f, parts, reads, disk, before, sha):
     if re.search(rb"ERR:|S8: recovery|exception", cap):
         p.append("the chain: the guest said an error or a recovery")
     got = conv(reads, "early")
-    if got[-2:-1] != ["below threshold: boots 0/3 keys 0/1000 mouse 0/5000"]:
+    if got[-2:-1] != ["below threshold: boots 1/3 keys 0/1000 mouse 0/5000"]:      # PARTS.md: the current boot is among them
         p.append("the take below threshold left %r" % got[-3:])
     notes = f.notes(disk)
     new = notes[len(before):]
