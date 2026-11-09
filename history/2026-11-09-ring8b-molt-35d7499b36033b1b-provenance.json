@@ -1,0 +1,38 @@
+{
+  "key": "molt i8042|abi3|cpu 000306a9 pci 8086:1e47:04",
+  "slot": "i8042",
+  "identity": "cpu 000306a9 pci 8086:1e47:04",
+  "plan": "plans/parts/i8042.md",
+  "plan_sha256": "151fac3c9c913620e9e126cdd80fc66d3a29f1db72468d0f334dbfafa89c60b4",
+  "corpus_sha256": "26895e47a12d3cf5880d35f63caa80605a953502c3e193f61a0c35e2f5d20499",
+  "model": "claude -p 2.1.317 --model claude-opus-5-5",
+  "date": "2026-11-09T07:16:17Z",
+  "sha256": "dd052b56e8cee593e7761b16a7f36a1a1783b8a8e2e0760165ea08059126a52c",
+  "size": 1038,
+  "name": "grown2",
+  "threshold": {
+    "boots": 3,
+    "keyboard bytes": 1000,
+    "mouse packets": 5000,
+    "disagreements": 0,
+    "probation": 3
+  },
+  "candidate": 2,
+  "null": 13,
+  "generic": {
+    "median": 17,
+    "worst": 27,
+    "size": 1152
+  },
+  "part": {
+    "median": 10,
+    "worst": 17,
+    "size": 1038
+  },
+  "lines": [
+    "primary: median 10 against 17, at least 5% lower: yes",
+    "secondary worst: 17 against 27, no more than 5% higher: yes",
+    "secondary size: 1038 against 1152, no more than 5% higher: yes"
+  ],
+  "verdict": "beats"
+}
