@@ -33,8 +33,8 @@ names the stick. Move the stick to the HP when it says DONE.
 **3. The second address on mlrig, one block.**
 
 ```bash
-sudo nmcli con mod ETH_UUID +ipv4.addresses 10.0.2.4/24
-sudo nmcli con up ETH_UUID
+sudo nmcli con mod 80ab1970-e833-372e-8635-f330b7d9f1f0 +ipv4.addresses 10.0.2.4/24
+sudo nmcli con up 80ab1970-e833-372e-8635-f330b7d9f1f0
 sudo ufw status | grep -qw active && sudo ufw allow in on eno2 from 10.0.2.15 to 10.0.2.4 port 9999 proto tcp comment germos-hp
 ip -4 addr show eno2
 ```

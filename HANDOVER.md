@@ -5418,11 +5418,11 @@ The plan is `stage8/plan-8b.md`, approved at the plan gate with Cowork's amendme
 - **Proven in the twin, all seven boots:** the driver in `--twin` mode, the guest's serial on a socket chardev, the synthetic human at the keys and mouse, `take` fed to its terminal, on a copy of test 3's demoted disk. Driver exit 0. Boot 1 fetched and installed, three shadow boots by restart, the counts met at 1,096 keys and 5,004 mouse packets, the take, three live boots. `parts.py --serial` read the driver's log unchanged: `i8042 live`, `boots 3/3`, `disagreements 0 probation 3/3`, and `--disk` says the same.
 - **One bug found by the proof and fixed:** the first run stopped at shadow 1 with `the HP did not answer germos count`. The guest had answered, after the echo of a half-typed line (`the calculator liorder: count 244 0 0`), and the driver read only a line's start. It now reads from the last marker, as `parts.py` does. On the HP the owner's first word would have stopped the day. Gotcha added.
 - **What the twin cannot prove:** the real serial adapter through `broker/probe.py`, the second address and the HP itself. The preflight's real branch was run once with a port name that does not exist; it printed its plain lines and started nothing.
-- `HP-8b.md`'s sudo block holds the placeholder `ETH_UUID` until the owner's paste below.
+- `HP-8b.md`'s sudo block carries the connection for `eno2`, `80ab1970-e833-372e-8635-f330b7d9f1f0`, from the owner's paste of 9 November 2026.
 
 ## Next action
 
-**Ring 8b is GREEN PENDING THE ORACLE (9 November 2026). STOPPED at item 18** for the owner's one paste, into `stage8/out/eno2-connection.txt`; CC then writes the UUID into `stage8/HP-8b.md`, which Cowork reviews. **Item 19, the real grow,** waits for Cowork's policy re-check that day and the owner's word, and the verdict is reported before any flash. Nothing is pushed, flashed or grown yet, and no token has been spent.
+**Ring 8b is GREEN PENDING THE ORACLE (9 November 2026). STOPPED after item 18:** the owner's paste is done and `stage8/HP-8b.md` is ready for Cowork's review. **Item 19, the real grow,** waits for Cowork's policy re-check that day and the owner's word, and the verdict is reported before any flash. Nothing is pushed, flashed or grown yet, and no token has been spent.
 
 Earlier — **Ring 8t is CLOSED (8 November 2026), by the owner's word: verdict B.** Four sittings on the HP gave `verdict B 77`: sitting 1 on 29 September, and sittings 2–4 with the verdict boot on 8 November. The verdict boot draws the choices row as boxes (`trial2: concluded verdict B default B`). The record is under ring 8t's closure section, and the chart and the photographs are in `history/`.
 
