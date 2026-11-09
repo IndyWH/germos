@@ -5399,9 +5399,24 @@ The plan is `stage8/plan-8b.md`, approved at the plan gate with Cowork's amendme
 
 **Item 12** — the private draft, `stage8/out/probe8b/patch_guest.py`, against test 3: **PASS whole**, about 12 minutes. Inert with no molt note; a fetch typed, an undo and a fetch by order; every refusal; three shadow boots by restart with `restarting in 3 s`; the counts against the human and the disk, 40 packets sent during a notice counted; the `tsc:` lines; the take; three live boots to `probation 3/3`; a note across a reboot, a click, a sitting through the part; `sick` to the watchdog, demoted, the generic serving. One expectation was mine and wrong, corrected before any freeze: PARTS.md counts the current boot in the take, so the first shadow boot's refusal says `boots 1/3`, not `0/3`. Test 1 passes with the drafted PARTS.md section on a private copy of the document, and `parts.py --example` passes on that copy.
 
+**Item 13 (`617d02e`)** — the project's eleventh freeze opening, planned and by the owner's hand: one `cat >>` onto `stage8/PARTS.md`, 77 lines added and none changed. `python3 stage8/parts.py --example` passed on it.
+
+**Item 14 (`6ee7680`)** — the freeze: twelve new paths in `PROTECTED` (the plan, the three canned parts in both forms, the bench and its host half, the rehearsal, the gate and its checker). The payload table is 2,407 cases, 1,677 denied and 730 allowed, 0 wrong.
+
+**Item 15 (`d18ab5b`)** — the order line, `germos count` and the restart with its 3 s notice, in `stage8/stage8.asm`.
+
+**Item 16 (`a6f78c3`)** — the TSC medians on the shadow path. The build is 65,536 bytes, `0032884eeb0c5c86…`, byte for byte the draft test 3 was proven on. Tests 1 to 3 green. **This is the commit seed 3 names.**
+
+**Item 17 (9 November 2026): the whole gate, seed 3, the regressions.**
+- **`./stage8/test-8b.sh`, whole and alone, on `a6f78c3`: `8b gate: PASS`**, 85.7 min. Test 1, 8 s; test 2, 438 s; test 3, 701 s; test 4, 3,998 s, with `8t gate: PASS` inside it and 8a, 7d, 7c, 7b and 7a inside that. Mock only, no token. No freeze opening beyond the planned one.
+- **Seed 3,** by SEED.md's recipe, the line written by `parts.seed_line`: `seed 3 0032884eeb0c5c86f110b673196f664a65eae24c734a9eac1387f8e1d108d651 65536 a6f78c3 2026-11-08 nasm 3.02`. The private NASM 3.02 and Ubuntu's 3.01 build the same bytes, and those equal the gate's build.
+- **`PATH=stage8/out/toolchain/nasm-3.02/bin:$PATH python3 stage8/parts.py --seed`: exit 0,** all four seeds rebuilt and agreeing, the build in `stage8/out/` is seed 3. After the line went in, test 1 of this ring and `parts.py --example` were run again and pass. The whole gate was not run again for one record line: its run is on the commit the line names.
+- **Stages 0 to 6, each green once on this machine, one at a time:** stage 0, 14 s; 1, 182 s; 2, 76 s; 3, 91 s; 4, 102 s; 5, 229 s; ring 6a, 382 s; 6b, 394 s; 6c, 206 s. The payload table, 0 wrong.
+- CLAUDE.md gains ring 8b's commands and four gotchas; README a row, a bullet and a running note.
+
 ## Next action
 
-**Ring 8b is OPEN (8 November 2026). STOPPED at item 13**: the owner's one `cat >>` onto `stage8/PARTS.md`, the project's eleventh freeze opening, planned. Items 0 to 12 are done. After it, `python3 stage8/parts.py --example`, then item 14, the freeze.
+**Ring 8b is OPEN (8 November 2026).** Items 0 to 17 are done. Next is item 18: `stage8/hp-day.py` proven in the twin, `stage8/HP-8b.md`, and the stop for the owner's one paste for `eno2`. Item 19, the real grow, waits for Cowork's same-day policy check and the owner's word.
 
 Earlier — **Ring 8t is CLOSED (8 November 2026), by the owner's word: verdict B.** Four sittings on the HP gave `verdict B 77`: sitting 1 on 29 September, and sittings 2–4 with the verdict boot on 8 November. The verdict boot draws the choices row as boxes (`trial2: concluded verdict B default B`). The record is under ring 8t's closure section, and the chart and the photographs are in `history/`.
 

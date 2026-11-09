@@ -177,6 +177,31 @@ python3 trials/trials2.py --status trials/out/hp-8t.log   # the blind read of th
                        # chart: procedure facts only, no time or score before a
                        # verdict line; --disk IMG, --serial LOG, --example
 
+# Stage 8 ring 8b - the first molt; the build is seed 3
+./stage8/test-8b.sh    # acceptance tests 1-4 on the 7c twin, every run appended
+                       # to stage8/out/gate-8b.log with "8b test <n>: PASS|FAIL"
+                       # lines and a last "8b gate: PASS|FAIL": the plan and the
+                       # bench read cold, the API-key refusal; the pipeline with
+                       # canned parts (fast beats, slow does not); shadow to
+                       # live by serial orders and warm restarts, sick to the
+                       # watchdog; the payload table and ring 8t's whole gate
+                       # with 8a, 7d, 7c, 7b and 7a inside it. Mock only, no
+                       # token. Needs 9999, 9998 and 9997 free. About 86 min.
+python3 stage8/bench.py --candidate PART.bin   # one boot under -icount at -smp 1:
+                       # the differential, the measures and the plan's verdict
+                       # (plans/parts/i8042.md, frozen). Exit 0 only on "beats"
+python3 stage8/rehearse8b.py PART.bin   # the five-boot rehearsal in the twin
+python3 broker/molt.py --grow i8042 --model claude-opus-5-5   # REAL claude -p, the
+                       # owner's word only, after Cowork's same-day policy check;
+                       # refuses to start with any API key set. --canned and
+                       # --backend-cmd are the gate's. --collect serves the
+                       # germline and can call no backend at all
+python3 stage8/hp-day.py <serial port>   # the HP's day, started by the owner on
+                       # mlrig (stage8/HP-8b.md): services, orders, chart to
+                       # stage8/out/hp-8b.log, unfrozen; --twin SOCK proves it
+PATH=$PWD/stage8/out/toolchain/nasm-3.02/bin:$PATH python3 stage8/parts.py --seed
+                       # every seed rebuilt; the private 3.02 from stage8/mknasm.sh
+
 # The mock brokers (what the gates talk to; never spend a token)
 python3 broker/broker.py --mock --port 9999     # Stage 4
 python3 broker/plans.py --mock                  # Stage 6 (answers, apps, installs)
@@ -556,6 +581,20 @@ test in the twin.
   `{8,16}` (22 September 2026). A parser of the host's tools is a criterion's
   eye, not the criterion, and the tools move under it: pin nothing about a
   tool's output format that the tool does not document.
+- **A QEMU socket chardev must be drained.** Orders to a guest over
+  `-chardev socket,...,logfile=` need a thread reading the socket for the
+  whole boot, or the guest's serial output backs up behind it (ring 8b, test
+  3). The logfile is still the chart.
+- **The current boot is counted in the take.** PARTS.md's rule: the first
+  shadow boot's refusal says `boots 1/3`, not `0/3`. The expectation was typed
+  from arithmetic and corrected from the document before the freeze (ring 8b
+  item 12), the counter's-rule class again.
+- **A loser on the bench never reaches the rehearsal.** The pipeline runs cheap
+  steps first, so a part meant to fail a later step must first beat the
+  measures: the frozen `hang` loses 19 to 17 and never rehearses. Test 2
+  carries `fast` with a `jmp $` at `init` (ring 8b item 9).
+- **FAT32 under OVMF wants an ESP of about 33 MB or more.** Measured for the
+  bench's own image, which is 48 MB (ring 8b item 6).
 
 ## Working with the hooks
 
