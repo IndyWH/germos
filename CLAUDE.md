@@ -593,6 +593,11 @@ test in the twin.
   steps first, so a part meant to fail a later step must first beat the
   measures: the frozen `hang` loses 19 to 17 and never rehearses. Test 2
   carries `fast` with a `jmp $` at `init` (ring 8b item 9).
+- **A guest's serial line can start mid-line.** The echo of a half-typed word
+  has no line end, so an answer lands after it: `the calculator liorder: count
+  244 0 0`. Read a chart by searching for the marker, as `parts.py` does, never
+  by the line's start. The twin proof of `hp-day.py` found it; on the HP the
+  owner's first word would have stopped the day (ring 8b item 18).
 - **FAT32 under OVMF wants an ESP of about 33 MB or more.** Measured for the
   bench's own image, which is 48 MB (ring 8b item 6).
 
