@@ -5420,9 +5420,15 @@ The plan is `stage8/plan-8b.md`, approved at the plan gate with Cowork's amendme
 - **What the twin cannot prove:** the real serial adapter through `broker/probe.py`, the second address and the HP itself. The preflight's real branch was run once with a port name that does not exist; it printed its plain lines and started nothing.
 - `HP-8b.md`'s sudo block carries the connection for `eno2`, `80ab1970-e833-372e-8635-f330b7d9f1f0`, from the owner's paste of 9 November 2026.
 
+**Item 19 (9 November 2026): the real grow.** On the owner's word, after Cowork's policy re-check that day (help centre article, latest note 7 October 2026; no API key anywhere). Run once on mlrig, exit 0, the whole output in `stage8/out/grow-8b.log`:
+`env -u CLAUDECODE python3 broker/molt.py --grow i8042 --model claude-opus-5-5 2>&1 | tee stage8/out/grow-8b.log`
+- **Verdict: `beats`.** The verdict line carries no numbers; the measure lines above it do, against the generic: **median 10 against 17, worst 17 against 27, size 1,038 against 1,152.** Null decoder 13 instructions. Rehearsal PASS in 184.8 s, all boots ok (`r-blank`, `r-fetch`, `r-shadow`, `r-live1`, `r-sitting`).
+- **Candidates spent: 2 of 2.** Candidate 1 (1,008 bytes, `d40c7a42…`) passed the door and failed the differential at corpus byte 110: the generic gave no event, the part gave `k 2a 6f00`. Candidate 2 (1,038 bytes, `dd052b56e8cee593…`, name `grown2`) had every event identical.
+- Stored at `germline/molt-35d7499b36033b1b` (`part.bin`, `provenance.json`), which is gitignored. Model line: `claude -p 2.1.317 --model claude-opus-5-5`. Plan `151fac3c…`, corpus `26895e47…`.
+
 ## Next action
 
-**Ring 8b is GREEN PENDING THE ORACLE (9 November 2026). STOPPED after item 18:** the owner's paste is done and `stage8/HP-8b.md` is ready for Cowork's review. **Item 19, the real grow,** waits for Cowork's policy re-check that day and the owner's word, and the verdict is reported before any flash. Nothing is pushed, flashed or grown yet, and no token has been spent.
+**Ring 8b is GREEN PENDING THE ORACLE (9 November 2026). STOPPED after item 19:** the real grow ran once and gave `beats` (the record above). **Cowork reads `stage8/out/grow-8b.log` next.** Nothing is pushed or flashed, and the stick and the HP day have not been touched.
 
 Earlier — **Ring 8t is CLOSED (8 November 2026), by the owner's word: verdict B.** Four sittings on the HP gave `verdict B 77`: sitting 1 on 29 September, and sittings 2–4 with the verdict boot on 8 November. The verdict boot draws the choices row as boxes (`trial2: concluded verdict B default B`). The record is under ring 8t's closure section, and the chart and the photographs are in `history/`.
 
