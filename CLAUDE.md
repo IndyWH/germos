@@ -1,6 +1,7 @@
 # CLAUDE.md
 
-Kept under one page. Source of truth is `ai-os-foundation.md`; current state is
+Kept short: only what every session needs. The rest is in GATES.md and
+GOTCHAS.md. Source of truth is `ai-os-foundation.md`; current state is
 `HANDOVER.md`.
 
 ## Build and test
@@ -49,22 +50,30 @@ every commit that should pass it, and earlier stages stay green forever.
   Freezing a new stage's tests is one line: add the paths to `PROTECTED`.
 - **The gate is frozen; the builder is not.** `test.sh` and the pixel checkers
   hold the criteria. `mkimage.sh` holds the recipe, and stays fixable.
-- **QEMU only.** Nothing outside this folder is written. No real disk device is
-  touched, ever, at any stage before Stage 7 — and since Stage 3 the same hook
-  is the **storage bodyguard**: any `/dev` path bar the harmless sources and
+- **QEMU only, for Claude Code.** A session writes nothing outside this folder
+  and touches no real disk device, ever, at any stage. Since Stage 3 the same
+  hook is the **storage bodyguard**: any `/dev` path bar the harmless sources and
   sinks, mount/umount/losetup/mkfs and the partitioning tools, `sudo`, a QEMU
   `-drive file=` outside a repo `out/`, the disk shorthands, and `qemu-img`
   outside `out/` are denied in any Bash command, prose included. The only
-  disks are raw files the harness makes under `<stage>/out/`.
-- **The network is a cage too (Stage 4).** slirp with `restrict=on` and one
-  `guestfwd`: the guest reaches nothing but the broker on `127.0.0.1:9999`,
-  and every other destination gets a RST. The broker binds `127.0.0.1` only.
-  The automated gate talks only to `broker/broker.py --mock`, which calls
-  nothing, and `stage4/test.sh` refuses to run while anything else holds the
-  port — so the gate never spends a token or reaches the real Claude. Only
-  Wajira's test 5, with `python3 broker/broker.py`, makes a real `claude -p`
-  call, over ordinary HTTPS from the broker; the guest link stays plaintext
-  inside the cage until the TLS ring (Stage 7).
+  disks a session uses are raw files the harness makes under a repo `out/`.
+  The flash is the owner's hand alone, and a machine GermOS boots on holds only
+  sacrificial disks, never one with real data.
+- **The network is a cage too (Stage 4).** In the twin, slirp with
+  `restrict=on` and one `guestfwd`: the guest reaches one door and nothing
+  else, and every other destination gets a RST. The door is the broker on
+  `127.0.0.1:9999`, or from ring 7b the relay on `9997`, which forwards to the
+  broker; a rehearsal's door is its own listener on `9998`. The broker binds
+  `127.0.0.1` only, and the relay refuses every bind but `10.0.2.4` and
+  `127.0.0.1`. On the HP there is no slirp: the guest has no gateway and no
+  route, and reaches only the relay on mlrig at `10.0.2.4`. Every automated
+  gate talks only to a mock, a stub or `molt.py --collect`, none of which calls
+  Claude, and refuses to run while anything else holds its ports, so no gate
+  spends a token or reaches the real Claude. A real `claude -p` call is made
+  only through `broker/claude_backend.py`, and only on the owner's word, over
+  ordinary HTTPS from the broker. The guest link is plaintext: inside the cage
+  in the twin, and across the owner's home network on the HP. TLS joins the
+  guest at the ring where its traffic first crosses a network he does not own.
 
 ## Bare-metal gotchas
 
