@@ -61,7 +61,8 @@ nasm -f bin stage0/stage0.asm -o stage0/out/stage0.img
 ./stage5/mkimage.sh    # assemble stage5.asm, pack the FAT image (not frozen)
 ./stage5/test.sh       # acceptance tests 1-4: the grow request, the component
                        # rehearsed in the twin, the germline; needs 9999 and
-                       # 9998 free. Five boots plus six rehearsals, ~8 min.
+                       # 9998 free. Five boots plus six rehearsals, 229 s on
+                       # 9 Nov 2026.
 ```
 
 ## Stage 6 ring 6a
@@ -71,8 +72,9 @@ nasm -f bin stage0/stage0.asm -o stage0/out/stage0.img
 ./stage6/mkimage.sh    # assemble stage6.asm, pack the FAT image (not frozen)
 ./stage6/test.sh       # acceptance tests 1-4 at 1440x1440 with ONE virtio disk:
                        # sixteen lines, the app in its panel, the truth on the
-                       # strip. ~14 min. Still the regression for ring 6b: the
-                       # same binary without a home image is ring 6a's.
+                       # strip. 382 s on 9 Nov 2026. Still the regression for
+                       # ring 6b: the same binary without a home image is
+                       # ring 6a's.
 ```
 
 ## Stage 6 ring 6b
@@ -82,7 +84,7 @@ nasm -f bin stage0/stage0.asm -o stage0/out/stage0.img
 ./stage6/test-6b.sh    # acceptance tests 1-4 at 1920x1080 with TWO virtio disks
                        # (notes and home): seventeen lines, "! install echo"
                        # rehearsed against the plan's tests, the launch with no
-                       # broker, the liar refused, the undo. ~12 min.
+                       # broker, the liar refused, the undo. 394 s on 9 Nov 2026.
 ```
 
 ## Stage 6 ring 6c
@@ -94,7 +96,8 @@ nasm -f bin stage0/stage0.asm -o stage0/out/stage0.img
                        # lines then "S6: mouse ready" on the first packet, the
                        # arrow and the strip's pt field, a click on the choices
                        # row doing what its key does, point in the point app's
-                       # panel, packets counted equal packets sent. ~9 min.
+                       # panel, packets counted equal packets sent. 206 s on
+                       # 9 Nov 2026.
                        # Rings 6a and 6b stay the regressions: the same binary
                        # with a mouse that never moves is ring 6a's to the pixel.
 ```
@@ -191,8 +194,8 @@ python3 stage7/trials.py --disk stage7/out/disk.img   # the sitting tables and t
 ```bash
 # Stage 8 ring 8a - the floor
 ./stage8/mkimage.sh    # assemble stage8.asm (it includes the frozen loader.asm),
-                       # pack esp.img (not frozen); the build is seed 1 while
-                       # stage8/seed-record.md's last line names it
+                       # pack esp.img (not frozen); the build is the seed
+                       # stage8/seed-record.md's last line names
 python3 stage8/mkstick.py   # after mkimage.sh: stage8/out/stick.img, 7c's shape
 ./stage8/test-8a.sh    # acceptance tests 1-4 on the 7c twin, every run
                        # appended to stage8/out/gate-8a.log: the artefact,
@@ -218,7 +221,7 @@ python3 stage8/parts.py --disk stage8/out/molt/disk.G.img   # the molt table and
 ## Ring 8t
 
 ```bash
-# Ring 8t - trial two (G against B), between rings 8a and 8b; the build is seed 2
+# Ring 8t - trial two (G against B), between rings 8a and 8b; seed 2 in this ring only
 ./trials/test-trial2.sh   # acceptance tests 1-4 on the 7c twin, every run appended
                        # to trials/out/gate-8t.log with "8t test <n>: PASS|FAIL"
                        # lines and a last "8t gate: PASS|FAIL": TRIALS2.md read
@@ -282,7 +285,7 @@ python3 broker/relay.py --bind 127.0.0.1 --port 9997   # the relay in the twin, 
 
 ```bash
 # The hook's payload table - every freeze and bodyguard case, 0 wrong or exit 1
-python3 .claude/hooks/payloads.py       # 2064 cases at ring 8a item 16b
+python3 .claude/hooks/payloads.py
 ```
 
 ## The windowed oracle
@@ -294,7 +297,7 @@ booted from a COPY of the stick over qemu-xhci + usb-storage with no
 `esp.img` on SATA, on an e1000e carrying the HP's MAC with its cage landing
 on the relay; one 64 MB SATA disk the guest partitions on its first boot -
 remove `disk.img` first for a blank one, `truncate` on a file already 64 MB
-changes nothing, and no gate touches that path; the copy because QEMU locks
+changes nothing, and ring 7a's gate overwrites that path; the copy because QEMU locks
 the file it boots and the owner flashes `stick.img` as built; click in the
 QEMU window to grab the mouse, Ctrl+Alt+G releases it; for ring 7d's sitting
 type `! trial` at the prompt and click the cued item - eighty clicks and

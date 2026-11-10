@@ -62,14 +62,18 @@ test in the twin.
   own lines out of the firmware's noise.
 - **Repeated log lines mean a triple fault, not a repeated print.** After
   ExitBootServices there is no IDT, so any exception reboots. That is why the
-  test demands *exactly* seven lines rather than at least seven.
+  test demands *exactly* seven lines rather than at least seven. True of Stage
+  1; from Stage 2 the guest installs an IDT, and an exception after that prints
+  an `ERR:` line and stops.
 - **OVMF writes to the ESP on every boot.** With `-bios OVMF.fd` and no
   separate variable store the firmware keeps its variables in a file,
   `NvVars`, on the first FAT volume: FSInfo, the FAT, the root directory
   and a few data sectors change on every boot, and no two boots leave
   the same bytes. "The boot image is byte-identical before and after" can
   never be a criterion; what the guest must never do to it can (ring 7a
-  item 1, amendment A1's test).
+  item 1, amendment A1's test). True wherever a ring boots an `esp.img` on
+  SATA, as measured in ring 7a; on a stick copy on `usb-storage`, the twin from
+  ring 7c, the next entry records none in eight boots.
 - **OVMF wrote no `NvVars` to a stick copy on `usb-storage` in eight
   boots**, though it writes them to an `esp.img` on SATA every boot (ring
   7a). Neither is a promise: assert what the guest must never do to a boot
@@ -198,7 +202,8 @@ test in the twin.
   from q35's own controller, so a driver that takes "the first port with a
   disk" takes the boot image, and a rule that formats "anything not ours"
   formats it. Identify every port, choose by what the disk holds, and
-  never write a disk that is not blank (ring 7a, amendment A1).
+  never write a disk that is not blank (ring 7a, amendment A1). True of the
+  twin in rings 7a and 7b; from ring 7c it boots over USB with one SATA disk.
 - **A fresh clone has no `out/` directories.** Every `<stage>/out/` is
   gitignored, and the frozen checkers assume they exist (test 3 of the 7c
   gate assembles `stage6/app.asm` into `stage6/out/app.check.bin` and fails

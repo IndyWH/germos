@@ -15,10 +15,10 @@ the tools, the mock brokers, the windowed oracle command, and the real
 ./stage2/test.sh         # ~76 s; no ports
 ./stage3/test.sh         # ~4 min; no ports
 ./stage4/test.sh         # ~2 min; ports free: 9999
-./stage5/test.sh         # ~8 min; ports free: 9999 9998
-./stage6/test.sh         # ring 6a; ~14 min; ports free: 9999 9998
-./stage6/test-6b.sh      # ~12 min; ports free: 9999 9998
-./stage6/test-6c.sh      # ~9 min; ports free: 9999 9998
+./stage5/test.sh         # 229 s on 9 Nov 2026; ports free: 9999 9998
+./stage6/test.sh         # ring 6a; 382 s on 9 Nov 2026; ports free: 9999 9998
+./stage6/test-6b.sh      # 394 s on 9 Nov 2026; ports free: 9999 9998
+./stage6/test-6c.sh      # 206 s on 9 Nov 2026; ports free: 9999 9998
 ./stage7/test.sh         # ring 7a; ~8 min; ports free: 9999 9998
 ./stage7/test-7b.sh      # ~5 min; ports free: 9999 9998 9997
 ./stage7/test-7c.sh      # ~2 min; ports free: 9999 9998 9997
@@ -29,16 +29,16 @@ the tools, the mock brokers, the windowed oracle command, and the real
 python3 .claude/hooks/payloads.py # the hook's table; seconds; no ports; 0 wrong or exit 1
 ```
 
-Each stage's `test.sh` is its gate. It must be green before every commit that
-should pass it, and earlier stages stay green forever.
+Each script above is the gate of its stage or ring. It must be green before
+every commit that should pass it, and earlier stages stay green forever.
 
 ## Conventions
 
 - **Evaluation-first.** Acceptance tests are written before the code they judge.
-- **Draft until approved.** `plan.md` is committed and approved before any
-  implementation code is written.
-- **One commit per numbered item** from `plan.md`. Small commits; the last known
-  good state is minutes away.
+- **Draft until approved.** The plan file, `plan.md` or `plan-<ring>.md`, is
+  committed and approved before any implementation code is written.
+- **One commit per numbered item** from the plan file, `plan.md` or
+  `plan-<ring>.md`. Small commits; the last known good state is minutes away.
 - **Tests green before every commit.** No exceptions once the tests are expected
   to pass.
 - **Update `HANDOVER.md` as you go**, not at the end of the week.
